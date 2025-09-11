@@ -1,0 +1,5 @@
+com\bottrading\beans\BaseEntity.class
+com\bottrading\daos\BaseEntityDAO.class
+com\bottrading\daos\UsuarioDAO.class
+com\bottrading\beans\Usuario.class
+com\bottrading\AppBot.class
