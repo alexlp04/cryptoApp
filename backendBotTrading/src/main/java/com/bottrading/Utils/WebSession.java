@@ -12,8 +12,6 @@ public class WebSession {
 
     private WebSession() {
         EntityManagerFactory emf = Persistence.createEntityManagerFactory("botTradingPU");
-
-        // Constructor privado para evitar instanciación externa
     }
 
     public static WebSession getInstance() {
