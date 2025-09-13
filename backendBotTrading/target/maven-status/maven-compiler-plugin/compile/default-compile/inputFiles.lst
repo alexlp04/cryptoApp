@@ -1,5 +1,7 @@
-C:\Users\Alejandro\Desktop\Informatica\ProyectoTFG\backendBotTrading\src\main\java\com\bottrading\AppBot.java
-C:\Users\Alejandro\Desktop\Informatica\ProyectoTFG\backendBotTrading\src\main\java\com\bottrading\daos\UsuarioDAO.java
-C:\Users\Alejandro\Desktop\Informatica\ProyectoTFG\backendBotTrading\src\main\java\com\bottrading\beans\BaseEntity.java
-C:\Users\Alejandro\Desktop\Informatica\ProyectoTFG\backendBotTrading\src\main\java\com\bottrading\daos\BaseEntityDAO.java
-C:\Users\Alejandro\Desktop\Informatica\ProyectoTFG\backendBotTrading\src\main\java\com\bottrading\beans\Usuario.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\AppBot.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\beans\BaseEntity.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\beans\Usuario.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\controllers\ControladorUsuario.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\daos\BaseEntityDAO.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\daos\UsuarioDAO.java
+C:\Users\Alejandro\Desktop\Informatica\cryptoApp\backendBotTrading\src\main\java\com\bottrading\Utils\WebSession.java

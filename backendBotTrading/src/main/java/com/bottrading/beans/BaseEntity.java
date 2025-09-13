@@ -14,6 +14,8 @@ public abstract class BaseEntity {
     private Long id;
     private String nombre;
     private LocalDateTime fechaCreacion;
+    private boolean eliminado;
+
 
     public BaseEntity() {
         this.fechaCreacion = LocalDateTime.now();
@@ -33,5 +35,12 @@ public abstract class BaseEntity {
 
     public LocalDateTime getFechaCreacion() {
         return fechaCreacion;
+    }
+
+    public boolean isEliminado() {
+        return eliminado;
+    }
+    public void setEliminado(boolean eliminado) {
+        this.eliminado = eliminado;
     }
 }

@@ -2,9 +2,7 @@ package com.bottrading.daos;
 
 import com.bottrading.Utils.WebSession;
 import com.bottrading.beans.Usuario;
-
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityManagerFactory;
 
 public class UsuarioDAO extends BaseEntityDAO<com.bottrading.beans.Usuario> {
 
@@ -21,18 +19,18 @@ public class UsuarioDAO extends BaseEntityDAO<com.bottrading.beans.Usuario> {
         return instance;
     }
 
-    public Usuario crearUsuario(String email, String nombre, String password) {
-        Usuario nuevoUsuario = new Usuario(nombre, email, password);
+    public Usuario crearUsuario(String nombre, String password) {
+        Usuario nuevoUsuario = new Usuario(nombre, password);
         EntityManager em = WebSession.getInstance().getEntityManager();
         return save(em, nuevoUsuario);
     }
 
-    public boolean existeUsuario(String email) {
+    public boolean existeUsuario(String nombre) {
         EntityManager em = WebSession.getInstance().getEntityManager();
 
         try {
-            long count = em.createQuery("SELECT COUNT(u) FROM Usuario u WHERE u.email = :email", Long.class)
-                    .setParameter("email", email)
+            long count = em.createQuery("SELECT COUNT(u) FROM Usuario u WHERE u.nombre = :nombre", Long.class)
+                    .setParameter("nombre", nombre)
                     .getSingleResult();
             return count > 0;
         } finally {

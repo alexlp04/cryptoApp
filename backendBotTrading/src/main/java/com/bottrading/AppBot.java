@@ -1,12 +1,8 @@
 package com.bottrading;
 
 import com.bottrading.beans.Usuario;
+import com.bottrading.controllers.ControladorEmail;
 import com.bottrading.controllers.ControladorUsuario;
-
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityManagerFactory;
-import jakarta.persistence.Persistence;
-import java.util.List;
 import java.util.Scanner;
 
 public class AppBot {
@@ -38,8 +34,8 @@ public class AppBot {
                     System.out.print("Password: ");
                     password = scanner.nextLine();
                     ControladorUsuario controlador = new ControladorUsuario();
-                    if (!controlador.existeUsuario(email)) {
-                        Usuario user = controlador.crearUsuario(email, nombre, password);
+                    if (!controlador.existeUsuario(email, nombre)) {
+                        Usuario user = controlador.crearUsuario(nombre, password);
                         if (user != null) {
                             System.out.println("Usuario creado exitosamente.");
                         } else {
@@ -55,6 +51,12 @@ public class AppBot {
                     String loginEmail = scanner.nextLine();
                     System.out.print("Password: ");
                     String loginPassword = scanner.nextLine();
+                    ControladorEmail controladorEmail = new ControladorEmail();
+                    if (!controladorEmail.existeEmail(loginEmail)) {
+                        System.out.println("Email no registrado.");
+                        break;
+                    }
+                    
                    // TODO: Implementar lógica de login
                    break;   
 
