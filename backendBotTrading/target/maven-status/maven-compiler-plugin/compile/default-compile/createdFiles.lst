@@ -1,7 +1,11 @@
 com\bottrading\beans\BaseEntity.class
 com\bottrading\daos\BaseEntityDAO.class
+com\bottrading\beans\Email.class
+com\bottrading\Utils\HashUtils.class
+com\bottrading\controllers\ControladorEmail.class
 com\bottrading\daos\UsuarioDAO.class
 com\bottrading\beans\Usuario.class
 com\bottrading\controllers\ControladorUsuario.class
 com\bottrading\AppBot.class
+com\bottrading\daos\EmailDAO.class
 com\bottrading\Utils\WebSession.class

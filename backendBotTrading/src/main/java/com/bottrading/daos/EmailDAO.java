@@ -20,7 +20,7 @@ public class EmailDAO extends BaseEntityDAO<Email> {
         return instance;
     }
 
-        public boolean existeEmail(String email) {
+    public boolean existeEmail(String email) {
         EntityManager em = WebSession.getInstance().getEntityManager();
 
         try {
@@ -28,6 +28,18 @@ public class EmailDAO extends BaseEntityDAO<Email> {
                     .setParameter("email", email)
                     .getSingleResult();
             return count > 0;
+        } finally {
+            if (em != null)
+                em.close();
+        }
+    }
+
+    public Email findByEmail(String email) {
+        EntityManager em = WebSession.getInstance().getEntityManager();
+        try {
+            return em.createQuery("SELECT e FROM Email e WHERE e.eliminado = false AND e.email = :email", Email.class)
+                    .setParameter("email", email)
+                    .getSingleResult();
         } finally {
             if (em != null)
                 em.close();

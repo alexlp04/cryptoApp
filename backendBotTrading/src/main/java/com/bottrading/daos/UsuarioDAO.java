@@ -39,4 +39,18 @@ public class UsuarioDAO extends BaseEntityDAO<com.bottrading.beans.Usuario> {
         }
     }
 
+    public Usuario obtenerUsuarioPorEmail(String email) {
+        EntityManager em = WebSession.getInstance().getEntityManager();
+        try {
+            return em.createQuery("SELECT u FROM Usuario u WHERE u.id = (SELECT e.usuario.id FROM Email e WHERE e.email = :email AND e.eliminado = false) AND u.eliminado = false", Usuario.class)
+                    .setParameter("email", email)
+                    .getSingleResult();
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (em != null)
+                em.close();
+        }
+    }
+
 }
