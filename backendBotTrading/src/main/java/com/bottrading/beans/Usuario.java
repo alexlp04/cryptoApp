@@ -1,8 +1,10 @@
 package com.bottrading.beans;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
 
 @Entity
+@Table(name = "usuario")
 public class Usuario extends BaseEntity {
 
     private String password;

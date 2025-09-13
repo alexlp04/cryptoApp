@@ -1,15 +1,14 @@
 package com.bottrading;
 
-import com.bottrading.beans.Usuario;
-import com.bottrading.controllers.ControladorEmail;
-import com.bottrading.controllers.ControladorUsuario;
+import com.bottrading.Utils.WebSession;
 import java.util.Scanner;
 
 public class AppBot {
-  public static void main(String[] args) {
+    public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
 
-        System.out.println("Bienvenido al programa de comandos. Escribe 'ayuda' para ver opciones, o 'salir' para terminar.");
+        System.out.println(
+                "Bienvenido al programa de comandos. Escribe 'ayuda' para ver opciones, o 'salir' para terminar.");
 
         while (true) {
             System.out.print("> ");
@@ -22,7 +21,7 @@ public class AppBot {
 
             switch (comando) {
                 case "ayuda":
-                    System.out.println("Comandos disponibles: ayuda, signup, login, listar, salir");
+                    System.out.println("Comandos disponibles: ayuda, signup, login, salir");
                     break;
 
                 case "signup":
@@ -33,37 +32,24 @@ public class AppBot {
                     email = scanner.nextLine();
                     System.out.print("Password: ");
                     password = scanner.nextLine();
-                    ControladorUsuario controlador = new ControladorUsuario();
-                    if (!controlador.existeUsuario(email, nombre)) {
-                        Usuario user = controlador.crearUsuario(nombre, password);
-                        if (user != null) {
-                            System.out.println("Usuario creado exitosamente.");
-                        } else {
-                            System.out.println("Error al crear el usuario. El email puede estar en uso.");
-                        }
+                    if (WebSession.getInstance().signup(nombre, email, password)) {
+                        System.out.println("Usuario creado exitosamente.");
                     } else {
-                        System.out.println("El usuario ya existe.");
+                        System.out.println("Error al crear el usuario.");
                     }
                     break;
-
                 case "login":
                     System.out.print("Email: ");
                     String loginEmail = scanner.nextLine();
                     System.out.print("Password: ");
                     String loginPassword = scanner.nextLine();
-                    ControladorEmail controladorEmail = new ControladorEmail();
-                    if (!controladorEmail.existeEmail(loginEmail)) {
-                        System.out.println("Email no registrado.");
-                        break;
+                    if (WebSession.getInstance().login(loginEmail, loginPassword)) {
+                        System.out.println("Login exitoso. Usuario actual: "
+                                + WebSession.getInstance().getCurrentUser().getNombre());
+                    } else {
+                        System.out.println("Error en el login. Credenciales incorrectas.");
                     }
-                    
-                   // TODO: Implementar lógica de login
-                   break;   
-
-                case "listar":
-                    // TODO
                     break;
-
                 default:
                     System.out.println("Comando desconocido: " + comando);
             }
@@ -72,4 +58,3 @@ public class AppBot {
         scanner.close();
     }
 }
-
