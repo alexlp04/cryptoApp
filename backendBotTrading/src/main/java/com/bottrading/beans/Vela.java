@@ -64,6 +64,27 @@ public class Vela {
 
     // --- Getters y Setters ---
 
+    public Vela() {
+    }
+
+    public Vela(String symbol, String interval, Long openTime, BigDecimal open, BigDecimal high, BigDecimal low,
+            BigDecimal close, BigDecimal volume, Long closeTime, BigDecimal quoteVolume, Integer trades,
+            BigDecimal takerBaseVolume, BigDecimal takerQuoteVolume) {
+        this.symbol = symbol;
+        this.interval = interval;
+        this.openTime = openTime;
+        this.open = open;
+        this.high = high;
+        this.low = low;
+        this.close = close;
+        this.volume = volume;
+        this.closeTime = closeTime;
+        this.quoteVolume = quoteVolume;
+        this.trades = trades;
+        this.takerBaseVolume = takerBaseVolume;
+        this.takerQuoteVolume = takerQuoteVolume;
+    }
+
     public Long getId() {
         return id;
     }

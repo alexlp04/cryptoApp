@@ -59,11 +59,11 @@ public class AppBot {
                     }
                     break;
                 case "fetch":
-                    if (parts.length < 3) {
-                        System.out.println("Uso: fetch <symbol> <interval> [limit]");
+                    if (parts.length < 2) {
+                        System.out.println("Uso: fetch <symbol> <interval> ");
                         break;
                     }
-                    FetchService.fetch(parts[1], parts[2], parts.length >= 4 ? Integer.parseInt(parts[3]) : 1000);
+                    FetchService.fetch(parts[1], parts[2]);
                     break;
 
                 case "backtest":
