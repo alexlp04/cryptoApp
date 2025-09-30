@@ -11,15 +11,12 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(
-    name = "velas",
-    uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"symbol", "interval", "open_time"})
-    }
-)
+@Table(name = "velas", uniqueConstraints = {
+        @UniqueConstraint(columnNames = { "symbol", "interval", "open_time" })
+})
 
 public class Vela {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -27,7 +24,7 @@ public class Vela {
     @Column(length = 10, nullable = false)
     private String symbol;
 
-@Column(name = "time_interval", length = 10, nullable = false)
+    @Column(name = "time_interval", length = 10, nullable = false)
     private String interval;
 
     @Column(name = "open_time", nullable = false)

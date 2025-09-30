@@ -8,7 +8,9 @@ import com.bottrading.daos.EmailDAO;
 import jakarta.persistence.EntityManager;
 
 public class ControladorEmail {
+    
     private EmailDAO emailDAO;
+
     public ControladorEmail() {
         emailDAO = EmailDAO.getInstance();
     }
