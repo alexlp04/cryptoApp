@@ -43,7 +43,7 @@ public class FetchService {
     }
 
     private static void callPythonAndSave(String symbol, String interval, EntityManager em) {
-        callPythonAndSave(symbol, interval, em, 0L);
+        callPythonAndSave(symbol, interval, em, null);
     }
 
     private static void callPythonAndSave(String symbol, String interval, EntityManager em,
@@ -52,8 +52,7 @@ public class FetchService {
             ProcessBuilder pb;
             if (fromTimestamp == null) {
                 pb = new ProcessBuilder("python3",
-                        "C:/Users/Alejandro/Desktop/Informatica/cryptoApp/python-scripts/fetcher.py", symbol, interval,
-                        null);
+                        "C:/Users/Alejandro/Desktop/Informatica/cryptoApp/python-scripts/fetcher.py", symbol, interval);
             } else {
                 pb = new ProcessBuilder("python3",
                         "C:/Users/Alejandro/Desktop/Informatica/cryptoApp/python-scripts/fetcher.py", symbol, interval,
@@ -64,7 +63,28 @@ public class FetchService {
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            guardarInputStream(reader);
+            StringBuilder output = new StringBuilder();
+            String line;
+
+            System.out.println("Leyendo datos de la salida del proceso Python...");
+
+            while ((line = reader.readLine()) != null) {
+                output.append(line);
+            }
+
+            // Ahora output contiene todo el JSON
+            String jsonOutput = output.toString();
+            System.out.println("DEBUG JSON recibido: " + jsonOutput);
+
+            // Parsear directamente con Gson
+            Gson gson = new Gson();
+            Type listType = new TypeToken<List<VelaDTO>>(){}.getType();
+            List<VelaDTO> dtoList = gson.fromJson(jsonOutput, listType);
+
+            // Mapear a tus entidades
+            ControladorVela controladorVela = new ControladorVela();
+            dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
+            System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -73,28 +93,7 @@ public class FetchService {
     }
 
     public static void guardarInputStream(BufferedReader reader) throws Exception {
-        StringBuilder output = new StringBuilder();
-        String line;
 
-        System.out.println("Leyendo datos de la salida del proceso Python...");
-
-        while ((line = reader.readLine()) != null) {
-            output.append(line);
-        }
-
-        // Ahora output contiene todo el JSON
-        String jsonOutput = output.toString();
-        System.out.println("DEBUG JSON recibido: " + jsonOutput);
-
-        // Parsear directamente con Gson
-        Gson gson = new Gson();
-        Type listType = new TypeToken<List<VelaDTO>>(){}.getType();
-        List<VelaDTO> dtoList = gson.fromJson(jsonOutput, listType);
-
-        // Mapear a tus entidades
-        ControladorVela controladorVela = new ControladorVela();
-        dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
-        System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
     }
 
     private static long getIntervalMillis(String interval) {

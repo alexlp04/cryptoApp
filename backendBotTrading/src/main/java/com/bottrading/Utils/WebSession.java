@@ -1,5 +1,8 @@
 package com.bottrading.Utils;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import com.bottrading.beans.Email;
 import com.bottrading.beans.Usuario;
 import com.bottrading.controllers.ControladorEmail;
@@ -19,7 +22,14 @@ public class WebSession {
     private ControladorEmail controladorEmail = new ControladorEmail();
 
     private WebSession() {
-        this.emf = Persistence.createEntityManagerFactory("botTradingPU");
+        String dbUrl = System.getenv("DB_URL_TFG");
+        String dbUser = System.getenv("DB_USER_TFG");
+        String dbPass = System.getenv("DB_PASS_TFG");
+        Map<String, String> props = new HashMap<>();
+        props.put("javax.persistence.jdbc.url", dbUrl);
+        props.put("javax.persistence.jdbc.user", dbUser);
+        props.put("javax.persistence.jdbc.password", dbPass);
+        this.emf = Persistence.createEntityManagerFactory("botTradingPU", props);
     }
 
     public static WebSession getInstance() {

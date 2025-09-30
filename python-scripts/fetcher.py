@@ -1,12 +1,12 @@
 import sys
-import ccxt
 import time
 from datetime import datetime, timezone
+import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
 
-URL_FETCH = "https://api.binance.com/api/v3/klines";
+URL_FETCH = "https://api.binance.com/api/v3/klines"
 
 UPDATE_THRESHOLD = {
     "1m": timedelta(minutes=1),
@@ -45,7 +45,7 @@ def obtener_params(symbol, interval, since):
 
 
 def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
-    # print(f"📥 Descargando datos desde {pd.to_datetime(since_binance, unit='ms')} para {symbol} ({timeframe})...")
+    #print(f"📥 Descargando datos desde {pd.to_datetime(since_binance, unit='ms')} para {symbol} ({timeframe})...")
     all_data = []
     params = obtener_params(symbol, timeframe, since_binance)
     while True:
@@ -76,11 +76,11 @@ def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
 
     return all_data    
 
-def fetch(symbol, timeframe, since=None):
-    if since is None:
-        since = obtener_fecha_listado(symbol)
-        if since is not None:
-            since_binance = since
+def fetch(symbol, timeframe, since_binance=None):
+    if since_binance is None:
+        since_binance = obtener_fecha_listado(symbol)
+        if since_binance is not None:
+            since_binance = since_binance
         else:
             since_binance = 1502928000000
 
@@ -111,9 +111,12 @@ def fetch(symbol, timeframe, since=None):
     return json_data
 
 if __name__ == "__main__":
-    symbol = sys.argv[0]        # BTCUSDT
-    timeframe = sys.argv[1]      # 1D, 1h, etc.
-    since = sys.argv[2] if len(sys.argv) > 2 else None  # timestamp en ms o None
+    symbol = sys.argv[1]        
+    timeframe = sys.argv[2]
+    if len(sys.argv) == 4:
+        since = sys.argv[3]
+    else:
+        since = None
 
 
     json_data = fetch(symbol, timeframe, since)
