@@ -1,7 +1,9 @@
 package com.bottrading;
 
-import com.bottrading.Services.FetchService;
+import com.bottrading.Services.IndicatorsService;
 import com.bottrading.Utils.WebSession;
+import com.bottrading.controllers.ControladorIndicador;
+import com.bottrading.controllers.ControladorVela;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +35,11 @@ public class AppBot {
                     break;
 
                 case "signup":
+                    if (WebSession.getInstance().isLoggedIn()) {
+                        System.out.println("Ya hay un usuario logueado: "
+                                + WebSession.getInstance().getCurrentUser().getNombre());
+                        break;
+                    }
                     String nombre, email, password;
                     System.out.print("Nombre: ");
                     nombre = scanner.nextLine();
@@ -47,6 +54,11 @@ public class AppBot {
                     }
                     break;
                 case "login":
+                    if (WebSession.getInstance().isLoggedIn()) {
+                        System.out.println("Ya hay un usuario logueado: "
+                                + WebSession.getInstance().getCurrentUser().getNombre());
+                        break;
+                    }
                     System.out.print("Email: ");
                     String loginEmail = scanner.nextLine();
                     System.out.print("Password: ");
@@ -59,11 +71,37 @@ public class AppBot {
                     }
                     break;
                 case "fetch":
+                    // if (!WebSession.getInstance().isLoggedIn()) {
+                    //     System.out.println("Debes iniciar sesión primero.");
+                    //     break;
+                    // }
                     if (parts.length < 2) {
                         System.out.println("Uso: fetch <symbol> <interval> ");
                         break;
                     }
-                    FetchService.fetch(parts[1], parts[2]);
+                    ControladorVela.actualizarDatos(parts[1], parts[2]);
+                    break;
+                case "calculate":
+                    // if (!WebSession.getInstance().isLoggedIn()) {
+                    //     System.out.println("Debes iniciar sesión primero.");
+                    //     break;
+                    // }
+                    if (parts.length < 2) {
+                        System.out.println("Uso: calculate <symbol> <interval>");
+                        break;
+                    }
+                    ControladorIndicador.calcularIndicadores(parts[1], parts[2]);
+                    break;
+                case "optimize":
+                    if (!WebSession.getInstance().isLoggedIn()) {
+                        System.out.println("Debes iniciar sesión primero.");
+                        break;
+                    }
+                    if (parts.length < 2) {
+                        System.out.println("Uso: optimize <symbol> <interval>");
+                        break;
+                    }
+                    IndicatorsService.optimizeIndicators(parts[1], parts[2]);
                     break;
 
                 case "backtest":

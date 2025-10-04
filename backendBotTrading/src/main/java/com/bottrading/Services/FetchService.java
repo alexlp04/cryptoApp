@@ -12,27 +12,28 @@ import com.bottrading.beans.VelaDTO;
 import com.bottrading.controllers.ControladorVela;
 
 public class FetchService {
+    
+    private ControladorVela controladorVela = new ControladorVela();
 
-    public static void fetch(String symbol, String interval) {
+    public FetchService() {
+    }
+
+    public void fetch(String symbol, String interval) {
         EntityManager em = WebSession.getInstance().getEntityManager();
         System.out.println("Iniciando fetch para " + symbol);
         try {
             // Buscar el último registro en BD
-            Long lastTimestamp = (Long) em.createQuery(
-                    "SELECT MAX(v.openTime) FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval")
-                    .setParameter("symbol", symbol)
-                    .setParameter("interval", interval)
-                    .getSingleResult();
+            Long lastTimestamp = controladorVela.getUltimoTimeStamp(symbol, interval);
 
             if (lastTimestamp == null) {
                 System.out.println("No hay datos en la BD. Descargando todo...");
-                callPythonAndSave(symbol, interval, em);
+                this.callPythonAndSave(symbol, interval, em);
             } else {
                 // comprobar si hay nuevas velas
                 long now = System.currentTimeMillis();
                 if (now - lastTimestamp > getIntervalMillis(interval)) {
                     System.out.println("Datos desactualizados. Descargando desde " + lastTimestamp);
-                    callPythonAndSave(symbol, interval, em, lastTimestamp);
+                    this.callPythonAndSave(symbol, interval, em, lastTimestamp);
                 } else {
                     System.out.println("Los datos ya están al día.");
                 }
@@ -42,11 +43,11 @@ public class FetchService {
         }
     }
 
-    private static void callPythonAndSave(String symbol, String interval, EntityManager em) {
-        callPythonAndSave(symbol, interval, em, null);
+    private void callPythonAndSave(String symbol, String interval, EntityManager em) {
+        this.callPythonAndSave(symbol, interval, em, null);
     }
 
-    private static void callPythonAndSave(String symbol, String interval, EntityManager em,
+    private void callPythonAndSave(String symbol, String interval, EntityManager em,
             Long fromTimestamp) {
         try {
             ProcessBuilder pb;
@@ -82,7 +83,6 @@ public class FetchService {
             List<VelaDTO> dtoList = gson.fromJson(jsonOutput, listType);
 
             // Mapear a tus entidades
-            ControladorVela controladorVela = new ControladorVela();
             dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
             System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
 
