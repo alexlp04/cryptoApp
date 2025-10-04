@@ -23,6 +23,8 @@ public class BaseEntityDAO<T> {
             if (tx.isActive()) tx.rollback();
             e.printStackTrace();
             return null;
+        } finally {
+            em.close();
         }
     }
 
@@ -36,6 +38,8 @@ public class BaseEntityDAO<T> {
         } catch (Exception e) {
             if (tx.isActive()) tx.rollback();
             throw e;
+        } finally {
+            em.close();
         }
     }
 
@@ -48,6 +52,8 @@ public class BaseEntityDAO<T> {
         } catch (Exception e) {
             if (tx.isActive()) tx.rollback();
             throw e;
+        } finally {
+            em.close();
         }
     }
 

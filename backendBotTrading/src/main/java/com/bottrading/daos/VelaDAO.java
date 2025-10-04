@@ -1,6 +1,7 @@
 package com.bottrading.daos;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import com.bottrading.Utils.WebSession;
 import com.bottrading.beans.Vela;
@@ -52,8 +53,7 @@ public class VelaDAO extends BaseEntityDAO<Vela> {
     }
 
     public Vela save(Vela vela){
-                EntityManager em = WebSession.getInstance().getEntityManager();
-
+        EntityManager em = WebSession.getInstance().getEntityManager();
         return super.save(em, vela);
     }
 
@@ -61,4 +61,19 @@ public class VelaDAO extends BaseEntityDAO<Vela> {
         return (val != null && !val.isEmpty()) ? new BigDecimal(val) : BigDecimal.ZERO;
     }
 
+    public List<Vela> findBySymbolAndInterval(String symbol, String interval) {
+        EntityManager em = WebSession.getInstance().getEntityManager();
+        List<Vela> velas = null;
+        try {
+            velas = em.createQuery("SELECT v FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval", Vela.class)
+                    .setParameter("symbol", symbol)
+                    .setParameter("interval", interval)
+                    .getResultList();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            em.close();
+        }
+        return velas;
+    }
 }

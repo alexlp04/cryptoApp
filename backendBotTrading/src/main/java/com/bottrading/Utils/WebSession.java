@@ -87,4 +87,8 @@ public class WebSession {
 
     }
 
+    public boolean isLoggedIn() {
+        return currentUser != null;
+    }
+
 }
