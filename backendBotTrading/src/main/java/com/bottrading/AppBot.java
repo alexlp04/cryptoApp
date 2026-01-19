@@ -1,12 +1,12 @@
 package com.bottrading;
 
-import com.bottrading.Services.IndicatorsService;
 import com.bottrading.Utils.WebSession;
+import com.bottrading.controllers.ControladorEstrategia;
 import com.bottrading.controllers.ControladorIndicador;
 import com.bottrading.controllers.ControladorVela;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.Scanner;
 
 public class AppBot {
@@ -19,14 +19,19 @@ public class AppBot {
         while (true) {
             System.out.print("> ");
             String comando = scanner.nextLine().trim();
+            if (comando.isEmpty())
+                continue;
+
+            // Separar partes y detectar sudo
             String[] parts = comando.split(" ");
+
+            // Salir del programa
             if (parts[0].equals("exit")) {
                 System.out.println("Saliendo del programa...");
                 break;
             }
 
-            List<String> cmd = new ArrayList<>();
-            cmd.add("python");
+            ControladorEstrategia controladorEstrategia;
 
             switch (parts[0]) {
 
@@ -71,44 +76,51 @@ public class AppBot {
                     }
                     break;
                 case "fetch":
-                    // if (!WebSession.getInstance().isLoggedIn()) {
-                    //     System.out.println("Debes iniciar sesión primero.");
-                    //     break;
-                    // }
                     if (parts.length < 2) {
                         System.out.println("Uso: fetch <symbol> <interval> ");
                         break;
                     }
                     ControladorVela.actualizarDatos(parts[1], parts[2]);
                     break;
-                case "calculate":
-                    // if (!WebSession.getInstance().isLoggedIn()) {
-                    //     System.out.println("Debes iniciar sesión primero.");
-                    //     break;
-                    // }
+                case "cbi":
                     if (parts.length < 2) {
-                        System.out.println("Uso: calculate <symbol> <interval>");
+                        System.out.println("Uso: cbi <symbol> <interval>");
                         break;
                     }
-                    ControladorIndicador.calcularIndicadores(parts[1], parts[2]);
+                    ControladorIndicador.calcularIndicadoresBasicos(parts[1], parts[2]);
                     break;
-                case "optimize":
+
+                case "backtest":
+                    if (parts.length < 4) {
+                        System.out.println("Uso: execute <name> <timeframe> coin1 [coin2] ...");
+                        break;
+                    }
+                    controladorEstrategia = new ControladorEstrategia();
+                    try {
+                        LinkedList<String> coins = new LinkedList<>(Arrays.asList(Arrays.copyOfRange(parts, 3, parts.length)));
+                        controladorEstrategia.backtestEstrategia(parts[1], parts[2], coins);
+                    } catch (Exception e) {
+                        System.out.println("Error al ejecutar la estrategia: " + e.getMessage());
+                    }
+                    break;
+                case "trade":
                     if (!WebSession.getInstance().isLoggedIn()) {
                         System.out.println("Debes iniciar sesión primero.");
                         break;
                     }
                     if (parts.length < 2) {
-                        System.out.println("Uso: optimize <symbol> <interval>");
+                        System.out.println("Uso: execute <name> [args...]");
                         break;
                     }
-                    IndicatorsService.optimizeIndicators(parts[1], parts[2]);
-                    break;
-
-                case "backtest":
-                    // TODO: Implement backtesting logic
-                    break;
-                case "trade":
-                    // TODO: Implement trading logic
+                    controladorEstrategia = new ControladorEstrategia();
+                    // TODO: pensar los tipos de parametros que se le pueden pasar a la estrategia
+                    try {
+                        controladorEstrategia.ejecutarEstrategiaEnTiempoReal(parts[1], parts[2],
+                                Arrays.copyOfRange(parts, 3, parts.length));
+                    } catch (Exception e) {
+                        System.out.println("Error al ejecutar la estrategia: " + e.getMessage());
+                    }
+                    // TODO: Implementar logica post trading
                     break;
                 default:
                     System.out.println("Comando desconocido: " + comando);

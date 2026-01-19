@@ -41,12 +41,14 @@
             <version>6.3.1.Final</version>
         </dependency>
 
-        <!-- Driver MySQL -->
+        <!-- Source: https://mvnrepository.com/artifact/com.mysql/mysql-connector-j -->
         <dependency>
-            <groupId>mysql</groupId>
+            <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
-            <version>8.0.33</version>
+            <version>9.5.0</version>
+            <scope>compile</scope>
         </dependency>
+
 
         <!-- Logging (opcional pero recomendado) -->
         <dependency>
