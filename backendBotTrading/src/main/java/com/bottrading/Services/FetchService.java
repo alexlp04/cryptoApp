@@ -1,5 +1,6 @@
 package com.bottrading.Services;
 
+import com.bottrading.Utils.ConsoleLoader;
 import com.bottrading.Utils.WebSession;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -14,6 +15,7 @@ import com.bottrading.controllers.ControladorVela;
 public class FetchService {
     
     private ControladorVela controladorVela = new ControladorVela();
+    private static final String FETCHER_ENGINE_PATH = "D:\\Users\\Alejandro\\Documents\\Informatica\\cryptoApp\\python-scripts\\fetcher.py";
 
     public FetchService() {
     }
@@ -44,38 +46,41 @@ public class FetchService {
     }
 
     private void callPythonAndSave(String symbol, String interval, EntityManager em) {
+        ConsoleLoader loader = ConsoleLoader.getInstance();
+        loader.startDots();
         this.callPythonAndSave(symbol, interval, em, null);
+        loader.stop();
     }
 
     private void callPythonAndSave(String symbol, String interval, EntityManager em,
             Long fromTimestamp) {
+        ConsoleLoader loader = ConsoleLoader.getInstance();
+
         try {
             ProcessBuilder pb;
             if (fromTimestamp == null) {
-                pb = new ProcessBuilder("python3",
-                        "C:/Users/Alejandro/Desktop/Informatica/cryptoApp/python-scripts/fetcher.py", symbol, interval);
+                pb = new ProcessBuilder("python3", FETCHER_ENGINE_PATH, symbol, interval);
             } else {
-                pb = new ProcessBuilder("python3",
-                        "C:/Users/Alejandro/Desktop/Informatica/cryptoApp/python-scripts/fetcher.py", symbol, interval,
+                pb = new ProcessBuilder("python3", FETCHER_ENGINE_PATH, symbol, interval,
                         String.valueOf(fromTimestamp));
             }
 
             pb.redirectErrorStream(true);
+            loader.startDots();
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             StringBuilder output = new StringBuilder();
             String line;
 
-            System.out.println("Leyendo datos de la salida del proceso Python...");
-
             while ((line = reader.readLine()) != null) {
                 output.append(line);
             }
 
+            loader.stop();
+
             // Ahora output contiene todo el JSON
             String jsonOutput = output.toString();
-            System.out.println("DEBUG JSON recibido: " + jsonOutput);
 
             // Parsear directamente con Gson
             Gson gson = new Gson();
@@ -84,15 +89,14 @@ public class FetchService {
 
             // Mapear a tus entidades
             dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
-            System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
+            if (dtoList.isEmpty())
+                System.out.println("No existe ese símbolo dentro del exchange o el intervalo no esta bien escrito.");
+            else
+                System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
 
         } catch (Exception e) {
             e.printStackTrace();
         }
-
-    }
-
-    public static void guardarInputStream(BufferedReader reader) throws Exception {
 
     }
 

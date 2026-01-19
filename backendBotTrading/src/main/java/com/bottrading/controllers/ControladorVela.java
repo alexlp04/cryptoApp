@@ -48,7 +48,6 @@ public class ControladorVela  {
                     .setParameter("symbol", symbol)
                     .setParameter("interval", interval)
                     .getSingleResult();
-            System.out.println("Último timestamp para " + symbol + " en intervalo " + interval + ": " + lastTimestamp);
             return lastTimestamp;
         } finally {
             em.close();
