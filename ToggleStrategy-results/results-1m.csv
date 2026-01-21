@@ -1,0 +1,3 @@
+symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown,retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado
+symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown,retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado
+BTCUSDT,1m,0,1,1,null,null,-0.0018709109229300136,-9.354433625767822E-4,0,null,null,1769016715,PERDIDA

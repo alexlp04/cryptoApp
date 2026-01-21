@@ -18,7 +18,7 @@ public class IndicatorsService {
 
     private ControladorIndicador controladorIndicador = new ControladorIndicador();
     private static final String INDICATORS_ENGINE_PATH = "D:\\Users\\Alejandro\\Documents\\Informatica\\cryptoApp\\python-scripts\\indicators.py";
-    
+
     public IndicatorsService() {
     }
 

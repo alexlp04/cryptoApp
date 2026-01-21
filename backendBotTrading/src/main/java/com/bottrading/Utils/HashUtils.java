@@ -7,7 +7,8 @@ public class HashUtils {
     private static final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
     public static String hashPassword(String password) {
-        return encoder.encode(password);
+        String hashed = encoder.encode(password);
+        return hashed;
     }
 
     public static boolean verificarPassword(String rawPassword, String hashedPassword) {

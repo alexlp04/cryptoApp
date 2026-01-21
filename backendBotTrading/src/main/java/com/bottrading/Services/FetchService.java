@@ -13,7 +13,7 @@ import com.bottrading.beans.VelaDTO;
 import com.bottrading.controllers.ControladorVela;
 
 public class FetchService {
-    
+
     private ControladorVela controladorVela = new ControladorVela();
     private static final String FETCHER_ENGINE_PATH = "D:\\Users\\Alejandro\\Documents\\Informatica\\cryptoApp\\python-scripts\\fetcher.py";
 
@@ -84,16 +84,19 @@ public class FetchService {
 
             // Parsear directamente con Gson
             Gson gson = new Gson();
-            Type listType = new TypeToken<List<VelaDTO>>(){}.getType();
+            Type listType = new TypeToken<List<VelaDTO>>() {
+            }.getType();
             List<VelaDTO> dtoList = gson.fromJson(jsonOutput, listType);
-
+            ConsoleLoader.getInstance().startDots();
             // Mapear a tus entidades
             dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
             if (dtoList.isEmpty())
                 System.out.println("No existe ese símbolo dentro del exchange o el intervalo no esta bien escrito.");
-            else
+            else {
+                ConsoleLoader.getInstance().startDots();
                 System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
-
+            }
+            
         } catch (Exception e) {
             e.printStackTrace();
         }

@@ -16,7 +16,6 @@ public abstract class BaseEntity {
     private LocalDateTime fechaCreacion;
     private boolean eliminado;
 
-
     public BaseEntity() {
         this.fechaCreacion = LocalDateTime.now();
     }
@@ -40,6 +39,7 @@ public abstract class BaseEntity {
     public boolean isEliminado() {
         return eliminado;
     }
+
     public void setEliminado(boolean eliminado) {
         this.eliminado = eliminado;
     }
