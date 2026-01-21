@@ -3,9 +3,7 @@ package com.bottrading.Utils;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.bottrading.beans.Email;
 import com.bottrading.beans.Usuario;
-import com.bottrading.controllers.ControladorEmail;
 import com.bottrading.controllers.ControladorUsuario;
 
 import jakarta.persistence.EntityManager;
@@ -16,10 +14,8 @@ public class WebSession {
 
     private static WebSession instance;
     private EntityManagerFactory emf;
-    private Usuario currentUser;
-    private Email currentUserEmail;
-    private ControladorUsuario controladroUsuario = new ControladorUsuario();
-    private ControladorEmail controladorEmail = new ControladorEmail();
+    private static Usuario currentUser;
+    private ControladorUsuario controladorUsuario;
 
     private WebSession() {
         String dbUrl = System.getenv("DB_URL_TFG");
@@ -30,9 +26,10 @@ public class WebSession {
         props.put("javax.persistence.jdbc.user", dbUser);
         props.put("javax.persistence.jdbc.password", dbPass);
         this.emf = Persistence.createEntityManagerFactory("botTradingPU", props);
+        this.controladorUsuario = new ControladorUsuario();
     }
 
-    public static WebSession getInstance() {
+    public static synchronized WebSession getInstance() {
         if (instance == null) {
             instance = new WebSession();
         }
@@ -43,44 +40,29 @@ public class WebSession {
         return emf.createEntityManager();
     }
 
-    public Email getCurrentUserEmail() {
-        return currentUserEmail;
-    }
-
-    public void setCurrentUserEmail(Email email) {
-        this.currentUserEmail = email;
-    }
-
     public Usuario getCurrentUser() {
         return currentUser;
     }
 
     public void setCurrentUser(Usuario user) {
-        this.currentUser = user;
+
+        WebSession.currentUser = user;
     }
 
-    public boolean signup(String nombre, String email, String password) {
-        if (controladroUsuario.existeUsuario(email, nombre)) {
-            System.out.println("El usuario o email ya existen.");
+    public boolean signup(String nombre, String password) {
+        if (controladorUsuario.existeUsuario(nombre)) {
+            System.out.println("El usuario ya existe.");
             return false;
         }
-        currentUser = controladroUsuario.crearUsuario(nombre, password);
-        if (currentUser != null) {
-            currentUserEmail = controladorEmail.crearEmail(email, currentUser);
-            return true;
-        } else {
-            return false;
-        }
+        currentUser = controladorUsuario.crearUsuario(nombre, password);
+        return currentUser != null;
+
     }
 
-    public boolean login(String email, String password) {
-        if (!controladorEmail.existeEmail(email)) {
-            return false;
-        }
-        if (controladroUsuario.validarCredenciales(email, password)) {
-            Usuario usuario = controladroUsuario.obtenerUsuarioPorEmail(email);
+    public boolean login(String nombre, String password) {
+        if (controladorUsuario.validarCredenciales(nombre, password)) {
+            Usuario usuario = controladorUsuario.obtenerUsuarioPorNombre(nombre);
             setCurrentUser(usuario);
-            setCurrentUserEmail(controladorEmail.obtenerEmail(email));
             return true;
         }
         return false;
