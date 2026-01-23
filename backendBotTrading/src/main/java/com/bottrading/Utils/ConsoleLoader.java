@@ -1,4 +1,4 @@
-package com.bottrading.Utils;
+package com.bottrading.utils;
 
 public class ConsoleLoader {
 
@@ -7,7 +7,8 @@ public class ConsoleLoader {
 
     private static ConsoleLoader instance = new ConsoleLoader();
 
-    private ConsoleLoader() {}
+    private ConsoleLoader() {
+    }
 
     public static ConsoleLoader getInstance() {
         return instance;
@@ -18,7 +19,7 @@ public class ConsoleLoader {
      */
     public void startDots() {
         start(() -> {
-            String[] dots = {".  ", ".. ", "..."};
+            String[] dots = { ".  ", ".. ", "..." };
             int i = 0;
             while (running) {
                 System.out.print("\rCargando" + dots[i % dots.length]);
@@ -33,7 +34,7 @@ public class ConsoleLoader {
      */
     public void startSpinner() {
         start(() -> {
-            char[] spinner = {'|', '/', '-', '\\'};
+            char[] spinner = { '|', '/', '-', '\\' };
             int i = 0;
             while (running) {
                 System.out.print("\rCargando " + spinner[i % spinner.length]);
@@ -62,7 +63,8 @@ public class ConsoleLoader {
      * Función interna que inicia el hilo con la animación
      */
     private void start(Runnable animationLogic) {
-        if (running) return; // ya está corriendo
+        if (running)
+            return; // ya está corriendo
         running = true;
         loaderThread = new Thread(animationLogic);
         loaderThread.start();

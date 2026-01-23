@@ -1,89 +1,59 @@
 package com.bottrading.beans;
 
-import jakarta.persistence.*;
-import java.util.concurrent.locks.ReentrantLock;
+import java.math.BigDecimal;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "wallet")
 public class Wallet extends BaseEntity {
 
+    @Column(nullable = false)
+    private String nombre;
+
     @ManyToOne(optional = false)
     private Usuario usuario;
 
     @Column(nullable = false)
-    private double balance;
+    private BigDecimal balanceReal; // dinero real en broker
 
     @Column(nullable = false)
-    private double balanceDisponible; // balance - órdenes pendientes
+    private BigDecimal balanceDisponible; // AVAILABLE
 
     @Enumerated(EnumType.STRING)
     private WalletType type;
 
     private boolean isActive;
 
-    // Lock transient (no se persiste en BD)
-    @Transient
-    private final ReentrantLock lock = new ReentrantLock();
+    // ===== getters/setters =====
 
-    // Métodos synchronized para operaciones críticas
-    public synchronized boolean reservarCapital(double cantidad) {
-        if (balanceDisponible >= cantidad) {
-            balanceDisponible -= cantidad;
-            return true;
-        }
-        return false;
+    public BigDecimal getBalanceReal() {
+        return balanceReal;
     }
 
-    public synchronized void liberarCapital(double cantidad) {
-        balanceDisponible += cantidad;
+    public void setBalanceReal(BigDecimal balanceReal) {
+        this.balanceReal = balanceReal;
     }
 
-    public synchronized boolean ejecutarCompra(double cantidad) {
-        if (balance >= cantidad) {
-            balance -= cantidad;
-            balanceDisponible -= cantidad;
-            return true;
-        }
-        return false;
+    public BigDecimal getBalanceDisponible() {
+        return balanceDisponible;
     }
 
-    public synchronized void ejecutarVenta(double cantidad) {
-        balance += cantidad;
-        balanceDisponible += cantidad;
+    public void setBalanceDisponible(BigDecimal balanceDisponible) {
+        this.balanceDisponible = balanceDisponible;
     }
 
-    public synchronized boolean canRisk(double riskAmount) {
-        return balanceDisponible >= riskAmount;
-    }
-
-    public synchronized void adjustBalance(double amount) {
-        this.balance += amount;
-        this.balanceDisponible += amount;
-    }
-
-    // Getters y setters
     public Usuario getUsuario() {
         return usuario;
     }
 
     public void setUsuario(Usuario usuario) {
         this.usuario = usuario;
-    }
-
-    public double getBalance() {
-        return balance;
-    }
-
-    public void setBalance(double balance) {
-        this.balance = balance;
-        // Inicializar balanceDisponible si es nuevo
-        if (this.balanceDisponible == 0) {
-            this.balanceDisponible = balance;
-        }
-    }
-
-    public double getBalanceDisponible() {
-        return balanceDisponible;
     }
 
     public WalletType getType() {
@@ -98,24 +68,16 @@ public class Wallet extends BaseEntity {
         return isActive;
     }
 
-    public void setActive(boolean isActive) {
-        this.isActive = isActive;
+    public void setActive(boolean active) {
+        isActive = active;
     }
 
-    public boolean isPaper() {
-        return this.type == WalletType.PAPER;
+    public String getNombre() {
+        return nombre;
     }
 
-    public boolean isReal() {
-        return this.type == WalletType.REAL;
+    public void setNombre(String nombre) {
+        this.nombre = nombre;
     }
 
-    @Override
-    public String toString() {
-        return String.format("%s | %.2f USD (%s) %s", 
-            getNombre(), 
-            balance, 
-            type, 
-            isActive ? "[ACTIVA]" : "");
-    }
 }

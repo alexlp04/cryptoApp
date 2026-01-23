@@ -4,22 +4,15 @@ import java.math.BigDecimal;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "velas", uniqueConstraints = {
+@Table(name = "vela", uniqueConstraints = {
         @UniqueConstraint(columnNames = { "symbol", "interval", "open_time" })
 })
 
-public class Vela {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+public class Vela extends BaseEntity {
 
     @Column(length = 10, nullable = false)
     private String symbol;
@@ -80,14 +73,6 @@ public class Vela {
         this.trades = trades;
         this.takerBaseVolume = takerBaseVolume;
         this.takerQuoteVolume = takerQuoteVolume;
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
     }
 
     public String getSymbol() {

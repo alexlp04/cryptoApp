@@ -1,10 +1,12 @@
 package com.bottrading.beans;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.MappedSuperclass;
-import java.time.LocalDateTime;
+
+import java.time.Instant;
 
 @MappedSuperclass
 public abstract class BaseEntity {
@@ -12,27 +14,21 @@ public abstract class BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    private String nombre;
-    private LocalDateTime fechaCreacion;
+
+    @Column(name = "fecha_creacion")
+    private Instant fechaCreacion;
+    @Column(nullable = false)
     private boolean eliminado;
 
     public BaseEntity() {
-        this.fechaCreacion = LocalDateTime.now();
+        this.fechaCreacion = Instant.now();
     }
 
     public Long getId() {
         return id;
     }
 
-    public String getNombre() {
-        return nombre;
-    }
-
-    public void setNombre(String nombre) {
-        this.nombre = nombre;
-    }
-
-    public LocalDateTime getFechaCreacion() {
+    public Instant getFechaCreacion() {
         return fechaCreacion;
     }
 

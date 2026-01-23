@@ -1,295 +1,192 @@
 package com.bottrading;
 
-import com.bottrading.Utils.WebSession;
-import com.bottrading.controllers.ControladorEstrategia;
-import com.bottrading.controllers.ControladorIndicador;
-import com.bottrading.controllers.ControladorVela;
-import com.bottrading.controllers.ControladorWallet;
+import com.bottrading.services.*;
+import com.bottrading.beans.*;
+import com.bottrading.utils.SessionManager;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
-import java.util.LinkedList;
-import java.util.Scanner;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.stream.Collectors;
+import java.math.BigDecimal;
+import java.util.*;
 
-public class AppBot {
+@Component
+public class AppBot implements CommandLineRunner {
 
-    private static ControladorEstrategia controladorEstrategia;
-    private static ControladorWallet controladorWallet;
+    @Autowired
+    private EstrategiaService estrategiaService;
+    @Autowired
+    private MarketDataService marketDataService;
+    @Autowired
+    private UsuarioService usuarioService;
+    @Autowired
+    private WalletService walletService;
+    @Autowired
+    private SessionManager sessionManager;
 
-    public static void main(String[] args) {
-        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn");
-        System.setProperty("org.slf4j.simpleLogger.showThreadName", "false");
-        System.setProperty("org.slf4j.simpleLogger.showLogName", "false");
-        Logger.getLogger("org.hibernate").setLevel(Level.OFF);
-        Scanner scanner = new Scanner(System.in);
+    private final Scanner scanner = new Scanner(System.in);
 
-        System.out.println(
-                "Bienvenido al programa de comandos. Escribe 'ayuda' para ver opciones, o 'exit' para terminar.");
+    @Override
+    public void run(String... args) throws Exception {
+        System.out.println("=================================================");
+        System.out.println("   BACKEND BOT TRADING - SPRING BOOT ENGINE      ");
+        System.out.println("=================================================");
+        System.out.println("Escribe 'ayuda' para ver los comandos.");
 
         while (true) {
             System.out.print("> ");
-            String comando = scanner.nextLine().trim();
-            if (comando.isEmpty())
+            String linea = scanner.nextLine().trim();
+            if (linea.isEmpty())
                 continue;
-
-            String[] parts = comando.split(" ");
-            String cmd = parts[0];
-
-            if (cmd.equals("exit")) {
-                System.out.println("Saliendo del programa...");
+            if (linea.equalsIgnoreCase("exit"))
                 break;
-            }
 
+            procesarComando(linea);
+        }
+    }
+
+    private void procesarComando(String comando) {
+        String[] parts = comando.split(" ");
+        String cmd = parts[0];
+
+        try {
             switch (cmd) {
+                // --- GESTIÓN DE USUARIOS ---
+                case "signup" -> flujoSignup();
+                case "login" -> flujoLogin();
 
-                case "ayuda":
-                    System.out.println(
-                            """
-                                    Comandos disponibles:
-                                    - Usuario: signup, login
-                                    - Wallet: mkpwallet <nombre>, rmpwallet <nombre>, active-wallet <nombre>, unset-wallet <nombre>, lw
-                                    - Estrategias: le
-                                    - Datos: fetch <symbol> <interval>, cbi <symbol> <interval>
-                                    - Trading: backtest <estrategia> <timeframe> coin1 [coin2...], trade -v|-r <estrategia.py> <timeframe> <capital> <risk> coin1 [coin2...]
-                                    - exit, ayuda
-                                    """);
-                    break;
+                // --- GESTIÓN DE WALLETS ---
+                case "mkpwallet" -> {
+                    validarLogin();
+                    // Usamos BigDecimal para el balance inicial
+                    walletService.crearWallet(parts[1], new BigDecimal("10000.00"), false);
+                    System.out.println("✅ Wallet de papel '" + parts[1] + "' creada con 10,000 USD.");
+                }
+                case "lw" -> {
+                    validarLogin();
+                    System.out.println("--- Tus Billeteras ---");
+                    walletService.listarWallets().forEach(System.out::println);
+                }
 
-                case "signup":
-                    if (WebSession.getInstance().isLoggedIn()) {
-                        System.out.println(
-                                "Ya hay un usuario logueado: " + WebSession.getInstance().getCurrentUser().getNombre());
-                        break;
-                    }
-                    System.out.print("Nombre: ");
-                    String nombre = scanner.nextLine().trim();
-                    System.out.print("Password: ");
-                    String password = scanner.nextLine().trim();
-                    if (WebSession.getInstance().signup(nombre, password)) {
-                        System.out.println("Usuario creado exitosamente.");
-                        controladorEstrategia = new ControladorEstrategia();
-                        controladorWallet = new ControladorWallet();
-                        controladorWallet.crearWallet("default", 10000.0, false);
-                        System.out.println("Wallet 'default' creada y activa con 10000 USD Paper.");
-                    } else {
-                        System.out.println("Error al crear el usuario.");
-                    }
-                    break;
+                // --- DATOS Y ESTRATEGIAS ---
+                case "le" -> {
+                    System.out.println("--- Estrategias Disponibles (.py) ---");
+                    estrategiaService.listarEstrategias().forEach(System.out::println);
+                }
+                case "fetch" -> {
+                    marketDataService.actualizarDatosMercado(Arrays.asList(parts[2].split(",")), parts[1]);
+                    System.out.println("✅ Sincronización completa (Velas + Indicadores).");
+                }
 
-                case "login":
-                    if (WebSession.getInstance().isLoggedIn()) {
-                        System.out.println(
-                                "Ya hay un usuario logueado: " + WebSession.getInstance().getCurrentUser().getNombre());
-                        break;
-                    }
-                    System.out.print("Nombre: ");
-                    String loginNombre = scanner.nextLine().trim();
-                    System.out.print("Password: ");
-                    String loginPassword = scanner.nextLine().trim();
-                    if (WebSession.getInstance().login(loginNombre, loginPassword)) {
-                        controladorWallet = new ControladorWallet();
-                        controladorEstrategia = new ControladorEstrategia();
-                    } else {
-                        System.out.println("Error en el login. Credenciales incorrectas.");
-                    }
-                    break;
+                // --- OPERACIONES DE TRADING ---
+                case "backtest" -> {
+                    if (parts.length < 4)
+                        throw new RuntimeException("Uso: backtest <estrategia> <tf> <coin1>...");
+                    List<String> coins = Arrays.asList(Arrays.copyOfRange(parts, 3, parts.length));
+                    estrategiaService.ejecutarBacktest(parts[1], parts[2], coins);
+                }
+                case "trade" -> iniciarFlujoTrade(parts);
 
-                // --- Wallet commands ---
-                case "mkpwallet":
-                    if (!checkLogin())
-                        break;
-                    if (parts.length < 2) {
-                        System.out.println("Uso: mkpwallet <nombre>");
-                        break;
-                    }
-                    String newWallet = parts[1];
-                    controladorWallet.crearWallet(newWallet, 10000.0, false);
-                    System.out.println("Wallet Paper '" + newWallet + "' creada con 10000 USD.");
-                    break;
-
-                case "rmpwallet":
-                    if (!checkLogin())
-                        break;
-                    if (parts.length < 2) {
-                        System.out.println("Uso: rmpwallet <nombre>");
-                        break;
-                    }
-                    String delWallet = parts[1];
-                    controladorWallet.eliminarWallet(delWallet);
-                    System.out.println("Wallet '" + delWallet + "' eliminada.");
-                    break;
-
-                case "active-wallet":
-                    if (!checkLogin())
-                        break;
-                    if (parts.length < 2) {
-                        System.out.println("Uso: active-wallet <nombre>");
-                        break;
-                    }
-                    String activeWallet = parts[1];
-                    controladorWallet.setWalletActiva(activeWallet);
-                    System.out.println("Wallet '" + activeWallet + "' seleccionada como activa.");
-                    break;
-
-                case "unset-wallet":
-                    if (!checkLogin())
-                        break;
-                    if (parts.length < 2) {
-                        System.out.println("Uso: unset-wallet <nombre>");
-                        break;
-                    }
-                    String disactiveWallet = parts[1];
-                    controladorWallet.unsetWalletActiva(disactiveWallet);
-                    System.out.println("Wallet activa desactivada.");
-                    break;
-
-                case "lw": // listar wallets
-                    if (!checkLogin())
-                        break;
-                    controladorWallet.listarWallets().forEach(System.out::println);
-                    break;
-
-                case "le": // listar estrategias
-                    controladorEstrategia.listarEstrategias().forEach(System.out::println);
-                    break;
-                // --- Otros comandos existentes ---
-                case "fetch":
-                    if (parts.length < 3) {
-                        System.out.println("Uso: fetch <symbol> <interval>");
-                        break;
-                    }
-                    ControladorVela.actualizarDatos(parts[1], parts[2]);
-                    break;
-
-                case "cbi":
-                    if (parts.length < 3) {
-                        System.out.println("Uso: cbi <symbol> <interval>");
-                        break;
-                    }
-                    ControladorIndicador.calcularIndicadoresBasicos(parts[1], parts[2]);
-                    break;
-
-                case "backtest":
-                    if (parts.length < 4) {
-                        System.out.println("Uso: backtest <estrategia> <timeframe> coin1 [coin2...]");
-                        break;
-                    }
-                    try {
-                        LinkedList<String> coins = new LinkedList<>(
-                                Arrays.asList(Arrays.copyOfRange(parts, 3, parts.length)));
-                        controladorEstrategia.backtestEstrategia(parts[1], parts[2], coins);
-                    } catch (Exception e) {
-                        System.out.println("Error al ejecutar la estrategia: " + e.getMessage());
-                    }
-                    break;
-
-                case "trade":
-                    if (!checkLogin())
-                        break;
-                    if (parts.length < 4) {
-                        System.out.println("Uso: trade -v|-r <estrategia> <timeframe> coin1 [coin2...]");
-                        break;
-                    }
-
-                    boolean isReal = parts[1].equals("-r");
-                    String estrategia = parts[2];
-                    String timeframe = parts[3];
-                    LinkedList<String> coins = new LinkedList<>(
-                            Arrays.asList(Arrays.copyOfRange(parts, 4, parts.length)));
-
-                    ejecutarTrade(isReal, estrategia, timeframe, coins, scanner);
-                    break;
-                default:
-                    System.out.println("Comando desconocido: " + comando);
+                case "ayuda" -> mostrarAyuda();
+                default -> System.out.println("❓ Comando desconocido. Escribe 'ayuda'.");
             }
+        } catch (Exception e) {
+            System.err.println("❌ Error: " + e.getMessage());
         }
-
-        scanner.close();
     }
 
-    private static boolean checkLogin() {
-        if (!WebSession.getInstance().isLoggedIn()) {
-            System.out.println("Debes loguearte primero.");
-            return false;
-        }
-        return true;
-    }
-
-    private static void ejecutarTrade(boolean isReal, String estrategia, String timeframe, 
-                                    LinkedList<String> coins, Scanner mainScanner) {
-
-        // 1. Wallets disponibles
-        LinkedList<String> wallets = new LinkedList<>(controladorWallet.listarWallets());
-        if (wallets.isEmpty()) return;
-
-        // 2. Selección de Wallet
-        String walletSeleccionada = seleccionarWallet(wallets, mainScanner);
-        if (walletSeleccionada == null) return;
-
-        // 3. NUEVO: Validación de Capital Disponible (Silo)
-        double balanceTotal = controladorWallet.getBalance(walletSeleccionada);
-        double capitalComprometido = controladorEstrategia.getCapitalComprometido(walletSeleccionada);
-        double saldoLibre = balanceTotal - capitalComprometido;
-
-        System.out.printf("Balance Total: %.2f | Comprometido: %.2f | DISPONIBLE: %.2f USD%n", 
-                        balanceTotal, capitalComprometido, saldoLibre);
-        
-        System.out.print("Capital a asignar a esta instancia: ");
-        double capitalAsignar = Double.parseDouble(mainScanner.nextLine().trim());
-
-        if (capitalAsignar <= 0 || capitalAsignar > saldoLibre) {
-            System.out.println("Capital inválido o insuficiente saldo libre.");
+    private void iniciarFlujoTrade(String[] parts) throws Exception {
+        validarLogin();
+        if (parts.length < 5) {
+            System.out.println("Uso: trade -v|-r <estrategia> <timeframe> coin1 coin2...");
             return;
         }
 
-        // 4. Obtener risk
-        double risk = pedirRisk(mainScanner);
-        if (risk <= 0) return;
+        boolean isReal = parts[1].equalsIgnoreCase("-r");
+        String estraNombre = parts[2];
+        String tf = parts[3];
+        List<String> coins = Arrays.asList(Arrays.copyOfRange(parts, 4, parts.length));
 
-        // 5. Ejecución
-        try {
-            // Marcamos la wallet como activa para el usuario (opcional si permites múltiples)
-            controladorWallet.setWalletActiva(walletSeleccionada);
-            
-            controladorEstrategia.tradeRT(estrategia, timeframe, coins, isReal, walletSeleccionada, risk, capitalAsignar);
+        // 1. Selección de Wallet
+        System.out.println("\nSelecciona una wallet:");
+        walletService.listarWallets().forEach(System.out::println);
+        System.out.print("Nombre de la wallet: ");
+        String wName = scanner.nextLine().trim();
 
-        } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+        // 2. Lógica de Silos con BigDecimal
+        BigDecimal balanceTotal = walletService.getBalance(wName);
+        BigDecimal comprometido = estrategiaService.getCapitalComprometido(wName);
+        BigDecimal disponible = balanceTotal.subtract(comprometido);
+
+        System.out.printf("💰 Saldo Real: %s | Comprometido en Silos: %s | LIBRE: %s USD%n",
+                balanceTotal.toPlainString(), comprometido.toPlainString(), disponible.toPlainString());
+
+        // 3. Asignación de presupuesto
+        System.out.print("Capital a asignar a este nuevo hilo: ");
+        BigDecimal capitalAsignado = new BigDecimal(scanner.nextLine().trim());
+
+        if (capitalAsignado.compareTo(disponible) > 0) {
+            throw new RuntimeException("No tienes suficiente saldo disponible en esa wallet.");
         }
+
+        System.out.print("Riesgo por trade (ej: 0.02 para 2%): ");
+        BigDecimal risk = new BigDecimal(scanner.nextLine().trim());
+
+        // 4. Lanzamiento
+        Long walletId = walletService.obtenerIdPorNombre(wName);
+        estrategiaService.iniciarTradeRT(estraNombre, tf, coins, isReal, walletId, risk, capitalAsignado);
+
+        System.out.println("🚀 Estrategia lanzada. Monitoreando en hilos de fondo.");
     }
 
-    private static String seleccionarWallet(LinkedList<String> wallets, Scanner scanner) {
-        System.out.println("\n Wallets disponibles:");
-        wallets.forEach(w -> System.out.println("  • " + w));
+    // --- MÉTODOS AUXILIARES ---
 
-        LinkedList<String> nombres = wallets.stream()
-                .map(w -> w.split(" \\| ")[0])
-                .collect(Collectors.toCollection(LinkedList::new));
+    private void flujoSignup() {
+        System.out.print("Nuevo Usuario: ");
+        String nombre = scanner.nextLine().trim();
+        System.out.print("Password: ");
+        String pass = scanner.nextLine().trim();
+        if (usuarioService.registrar(nombre, pass) == null) {
+            System.out.println("❌ No se pudo registrar el usuario.");
+            return;
+        }
+        System.out.println("✅ Registro exitoso.");
+    }
 
-        System.out.print("\nSelecciona wallet: ");
-        String input = scanner.nextLine().trim();
+    private void flujoLogin() {
+        System.out.print("Usuario: ");
+        String nombre = scanner.nextLine().trim();
+        System.out.print("Password: ");
+        String pass = scanner.nextLine().trim();
 
-        if (nombres.contains(input)) {
-            return input;
+        if (usuarioService.validarCredenciales(nombre, pass)) {
+            Usuario u = usuarioService.obtenerPorNombre(nombre);
+            sessionManager.login(u);
+            System.out.println("🔓 Sesión iniciada como " + u.getNombre());
         } else {
-            System.out.println("Wallet inválida o ya en uso.");
-            return null;
+            System.out.println("❌ Credenciales incorrectas.");
         }
     }
 
-    private static double pedirRisk(Scanner scanner) {
-        System.out.print("Risk por operación (0.01 = 1%, 0.02 = 2%): ");
-        try {
-            double risk = Double.parseDouble(scanner.nextLine().trim());
-            if (risk > 0 && risk <= 1.0) {
-                return risk;
-            }
-        } catch (NumberFormatException e) {
-            // ignorar
+    private void validarLogin() {
+        if (!sessionManager.isLoggedIn()) {
+            throw new RuntimeException("Acceso denegado. Debes hacer 'login' primero.");
         }
-        System.out.println("Risk inválido. Debe estar entre 0 y 1.");
-        return -1;
+    }
+
+    private void mostrarAyuda() {
+        System.out.println("""
+                ----------------------------------------------------------------------
+                COMANDOS DISPONIBLES:
+                ----------------------------------------------------------------------
+                [USUARIO]  signup, login
+                [WALLETS]  mkpwallet <nombre>, lw
+                [DATOS]    fetch <simbolo> <timeframe> (Descarga velas e indicadores)
+                [TRADING]  le (Listar archivos .py),
+                           backtest <archivo> <tf> <coins...>
+                           trade -v|-r <archivo> <tf> <coins...>
+                [SISTEMA]  exit, ayuda
+                ----------------------------------------------------------------------
+                """);
     }
 }

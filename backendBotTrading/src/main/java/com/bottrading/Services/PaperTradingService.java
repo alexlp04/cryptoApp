@@ -1,129 +1,112 @@
-package com.bottrading.Services;
+package com.bottrading.services;
 
-import com.bottrading.beans.SignalDTO;
-import com.bottrading.beans.InstanciaEstrategia;
-import com.bottrading.controllers.ControladorWallet;
-import com.bottrading.daos.InstanciaEstrategiaDAO;
-import java.util.HashMap;
+import com.bottrading.beans.*;
+import com.bottrading.repositories.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
+@Service
 public class PaperTradingService {
 
-    private final String nombreWallet;
-    private final InstanciaEstrategia instancia;
-    private final ControladorWallet controladorWallet;
-    private final SaveFileService saveFileService;
+    @Autowired
+    private AccountingService accountingService;
 
-    // Rastrear precio de entrada
-    private static final ConcurrentHashMap<String, Double> openPositions = new ConcurrentHashMap<>();
-    // Rastrear monto exacto invertido (en USD) para cerrar el silo con precisión
-    private static final ConcurrentHashMap<String, Double> montoInvertidoExacto = new ConcurrentHashMap<>();
+    @Autowired
+    private InstanciaEstrategiaRepository instanciaRepo;
 
-    public PaperTradingService(InstanciaEstrategia instancia, String nombreWallet) {
-        this.instancia = instancia;
-        this.nombreWallet = nombreWallet;
-        this.controladorWallet = new ControladorWallet();
-        this.saveFileService = new SaveFileService(instancia.getNombreEstrategia());
-    }
+    @Autowired
+    private PosicionRepository posicionRepo;
 
-    public synchronized void onSignal(SignalDTO signal) {
-        // Verificación de seguridad: si la instancia se quedó sin fondos, no opera
-        if (!instancia.estaActiva()) {
-            System.out.println("Instancia [" + instancia.getId() + "] sin fondos suficientes para operar.");
+    @Autowired
+    private SaveFileService saveFileService;
+
+    @Transactional
+    public void onSignal(Long instanciaId, SignalDTO signal) {
+        InstanciaEstrategia instancia = instanciaRepo.findByIdWithLock(instanciaId)
+                .orElseThrow(() -> new RuntimeException("Instancia no encontrada"));
+
+        if (!"ACTIVA".equals(instancia.getEstado()))
             return;
-        }
 
-        String key = signal.getSymbol() + "_" + signal.getTimeframe();
-        
         if ("BUY".equals(signal.getAction())) {
-            handleBuy(key, signal);
+            handleBuy(instancia, signal);
         } else if ("SELL".equals(signal.getAction())) {
-            handleSell(key, signal);
+            handleSell(instancia, signal);
         }
     }
 
-    private void handleBuy(String key, SignalDTO signal) {
-        if (openPositions.containsKey(key)) return;
+    private void handleBuy(InstanciaEstrategia e, SignalDTO signal) {
+        if (posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol()))
+            return;
 
-        // 1. El capital se basa en el SILO de la instancia, no en la wallet total
-        double balanceSilo = instancia.getCapitalAsignadoActual();
-        double montoAInvertir = balanceSilo * instancia.getRiskPerTrade();
+        // CORRECCIÓN: Multiplicación con BigDecimal
+        BigDecimal montoAInvertir = e.getCapitalReservado().multiply(e.getRiskPerTrade());
 
-        if (montoAInvertir <= 0) return;
+        // CORRECCIÓN: Comparación con BigDecimal (monto > 0 && monto <= reservado)
+        if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
+                montoAInvertir.compareTo(e.getCapitalReservado()) > 0)
+            return;
+        // CORRECCIÓN: Asegúrate de que el Bean tenga el método o usa el atributo
+        // adecuado
+        // Si no tienes getWalletId(), usa la propiedad correcta (ej.
+        // e.getWalletAsociada())
+        // Aquí asumo que pasamos el ID o el objeto necesario
+        accountingService.commitCapital(e.getId(), montoAInvertir, e.getRiskPerTrade());
 
-        // 2. Ejecutar transacción real en la base de datos (Bloqueo Pesimista)
-        if (controladorWallet.intentarCompra(nombreWallet, montoAInvertir)) {
-            openPositions.put(key, signal.getPrice());
-            montoInvertidoExacto.put(key, montoAInvertir);
+        Posicion pos = new Posicion();
+        pos.setInstancia(e);
+        pos.setSimbolo(signal.getSymbol());
+        pos.setPrecioEntrada(signal.getPrice());
+        pos.setMargenInvertido(montoAInvertir);
+        pos.setAbierta(true);
+        posicionRepo.save(pos);
 
-            // 3. Actualizar balance local de la instancia y persistir en DB
-            double nuevoBalanceSilo = balanceSilo - montoAInvertir;
-            actualizarSilo(nuevoBalanceSilo);
-
-            // 4. Registrar logs
-            registrarTrade(signal, "BUY", 0, nuevoBalanceSilo);
-
-        }
+        saveFileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(),
+                mapearLog(signal, "BUY", BigDecimal.ZERO, e.getCapitalReservado()), false);
     }
 
-    private void handleSell(String key, SignalDTO signal) {
-        if (!openPositions.containsKey(key)) return;
+    private void handleSell(InstanciaEstrategia e, SignalDTO signal) {
+        Posicion pos = posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol())
+                .orElse(null);
+        if (pos == null)
+            return;
 
-        double precioEntrada = openPositions.remove(key);
-        double inversionOriginal = montoInvertidoExacto.remove(key);
-        double precioSalida = signal.getPrice();
-        
-        // 1. Calcular PnL real basado en el multiplicador de precio
-        double multiplicador = precioSalida / precioEntrada;
-        double montoADevolver = inversionOriginal * multiplicador;
-        double pnlNeto = montoADevolver - inversionOriginal;
+        BigDecimal precioSalida = signal.getPrice();
 
-        // 2. Aumentar balance en Wallet física (BD)
-        controladorWallet.registrarVenta(nombreWallet, montoADevolver);
+        // CORRECCIÓN: División con BigDecimal (Salida / Entrada)
+        BigDecimal multiplicador = (precioSalida).divide(pos.getPrecioEntrada(), 8, RoundingMode.HALF_UP);
 
-        // 3. Actualizar Silo de la instancia (Interés compuesto local)
-        double nuevoBalanceSilo = instancia.getCapitalAsignadoActual() + montoADevolver;
-        actualizarSilo(nuevoBalanceSilo);
+        // CORRECCIÓN: MontoFinal = Margen * Multiplicador
+        BigDecimal montoFinal = pos.getMargenInvertido().multiply(multiplicador);
+        BigDecimal pnlNeto = montoFinal.subtract(pos.getMargenInvertido());
 
-        // 4. Registrar logs y estadísticas
-        registrarTrade(signal, "SELL", pnlNeto, nuevoBalanceSilo);
-        actualizarEstadisticas(signal, pnlNeto, multiplicador);
+        // CORRECCIÓN: Uso de BigDecimal en la llamada al servicio contable
+        // Ajusta los argumentos según la firma de tu AccountingService
+        accountingService.closeTrade(null, e.getId(), pos.getMargenInvertido(), pnlNeto, BigDecimal.ZERO);
 
+        pos.setAbierta(false);
+        posicionRepo.save(pos);
+
+        saveFileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(),
+                mapearLog(signal, "SELL", pnlNeto, e.getCapitalReservado()), false);
+
+        saveFileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(),
+                Map.of("symbol", signal.getSymbol(), "pnl", pnlNeto.doubleValue()), false);
     }
 
-    private void actualizarSilo(double nuevoMonto) {
-        this.instancia.setCapitalAsignadoActual(nuevoMonto);
-        // Persistencia en la tabla instancias_estrategia
-        InstanciaEstrategiaDAO.getInstance().updateCapital(instancia.getId(), nuevoMonto);
-    }
-
-    private void registrarTrade(SignalDTO signal, String side, double pnl, double capitalSilo) {
-        Map<String, Object> tradeLog = new HashMap<>();
-        tradeLog.put("symbol", signal.getSymbol());
-        tradeLog.put("timeframe", signal.getTimeframe());
-        tradeLog.put("side", side);
-        tradeLog.put("price", signal.getPrice());
-        tradeLog.put("timestamp", System.currentTimeMillis() / 1000);
-        tradeLog.put("pnl", pnl != 0 ? pnl : "");
-        tradeLog.put("capital", capitalSilo);
-
-        saveFileService.guardarTrade(signal.getTimeframe(), tradeLog);
-    }
-
-    private void actualizarEstadisticas(SignalDTO signal, double pnlNeto, double multiplicador) {
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("symbol", signal.getSymbol());
-        stats.put("timeframe", signal.getTimeframe());
-        stats.put("op_ganadas", pnlNeto > 0 ? 1 : 0);
-        stats.put("op_perdidas", pnlNeto <= 0 ? 1 : 0);
-        stats.put("op_totales", 1);
-        stats.put("retorno_acumulado", pnlNeto);
-        stats.put("retorno_total", (multiplicador - 1));
-        stats.put("win_rate", pnlNeto > 0 ? 1 : 0);
-        stats.put("resultado", pnlNeto > 0 ? "GANANCIA" : "PERDIDA");
-        stats.put("fecha_fin", System.currentTimeMillis() / 1000);
-
-        saveFileService.guardarResultados(signal.getTimeframe(), stats);
+    // CORRECCIÓN: Cambiado double/int por BigDecimal para que coincida con lo
+    // enviado
+    private Map<String, Object> mapearLog(SignalDTO s, String side, BigDecimal pnl, BigDecimal cap) {
+        return Map.of(
+                "symbol", s.getSymbol(),
+                "side", side,
+                "price", s.getPrice(),
+                "pnl", pnl.toPlainString(),
+                "capital", cap.toPlainString());
     }
 }

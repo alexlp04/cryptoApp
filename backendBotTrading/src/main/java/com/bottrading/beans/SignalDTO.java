@@ -1,11 +1,13 @@
 package com.bottrading.beans;
 
+import java.math.BigDecimal;
+
 public class SignalDTO {
 
     private String type; // SIGNAL
     private String symbol;
     private String action; // BUY / SELL
-    private double price;
+    private BigDecimal price;
     private String timeframe;
     private long timestamp;
     private boolean isReal;
@@ -37,11 +39,11 @@ public class SignalDTO {
         this.action = action;
     }
 
-    public double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 

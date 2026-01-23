@@ -7,10 +7,6 @@ import java.math.BigDecimal;
 @Table(name = "indicador_tecnico")
 public class IndicadorTecnico extends BaseEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "vela_id", nullable = false)
     private Vela vela;
@@ -23,15 +19,6 @@ public class IndicadorTecnico extends BaseEntity {
 
     @Column(name = "valor", precision = 20, scale = 8, nullable = false)
     private BigDecimal valor;
-
-    // Getters y setters
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
 
     public Vela getVela() {
         return vela;
