@@ -14,13 +14,12 @@ public class Usuario extends BaseEntity {
     @Column(nullable = false)
     private String passwordHash;
 
-    @Column(nullable = false)
-    private boolean active = true;
-
     protected Usuario() {
+        super();
     }
 
     public Usuario(String nombre, String passwordHash) {
+        super();
         this.nombre = nombre;
         this.passwordHash = passwordHash;
     }
@@ -29,11 +28,13 @@ public class Usuario extends BaseEntity {
         return passwordHash;
     }
 
-    @Override
-    public String toString() {
-        return "Usuario [nombre=" + nombre + ", passwordHash=" + passwordHash + ", active=" + active + "]";
+    public String getNombre() {
+        return nombre;
     }
 
-    
+    @Override
+    public String toString() {
+        return "Usuario [nombre=" + nombre + ", passwordHash=" + passwordHash + "]";
+    }
 
 }

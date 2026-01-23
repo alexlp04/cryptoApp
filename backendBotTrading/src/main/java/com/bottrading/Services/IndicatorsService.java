@@ -1,73 +1,59 @@
-package com.bottrading.Services;
+package com.bottrading.services;
 
-import com.bottrading.beans.IndicadorTecnico;
-import com.bottrading.beans.IndicadorTecnicoDTO;
-import com.bottrading.beans.Vela;
-import com.bottrading.controllers.ControladorIndicador;
+import com.bottrading.beans.*;
+import com.bottrading.repositories.*;
+import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.lang.reflect.Type;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
+@Service
 public class IndicatorsService {
 
-    private ControladorIndicador controladorIndicador = new ControladorIndicador();
-    private static final String INDICATORS_ENGINE_PATH = "D:\\Users\\Alejandro\\Documents\\Informatica\\cryptoApp\\python-scripts\\indicators.py";
+    @Autowired
+    private IndicadorRepository indicadorRepo;
+    @Autowired
+    private VelaRepository velaRepo;
 
-    public IndicatorsService() {
-    }
-
+    @Transactional
     public List<IndicadorTecnico> calculateBasicIndicators(String symbol, String interval, List<Vela> velas) {
-        System.out.println("Calculando indicadores para " + symbol + " en intervalo " + interval);
-        List<IndicadorTecnicoDTO> indicadoresDTO = new ArrayList<>();
-        List<IndicadorTecnico> indicadoresTecnicos = new ArrayList<>();
         try {
-            ProcessBuilder pb;
-            pb = new ProcessBuilder("python3", INDICATORS_ENGINE_PATH);
-            pb.redirectErrorStream(true);
+            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
             Process process = pb.start();
 
-            Gson gsonVelas = new Gson();
-            String jsonVelas = gsonVelas.toJson(velas);
-
-            OutputStream os = process.getOutputStream();
-            os.write(jsonVelas.getBytes(StandardCharsets.UTF_8));
-            os.flush();
-            os.close();
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            StringBuilder output = new StringBuilder();
-            String line;
-
-            System.out.println("Leyendo datos de la salida del proceso Python...");
-
-            while ((line = reader.readLine()) != null) {
-                System.err.println(line);
-                output.append(line);
+            // Enviar velas a Python vía stdin
+            try (OutputStream os = process.getOutputStream()) {
+                os.write(new Gson().toJson(velas).getBytes(StandardCharsets.UTF_8));
+                os.flush();
             }
 
-            // Ahora output contiene todo el JSON
-            String jsonOutput = output.toString();
-            System.out.println("DEBUG JSON recibido: " + jsonOutput);
+            // Leer JSON de indicadores vía stdout
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                List<IndicadorTecnicoDTO> dtos = new Gson().fromJson(reader,
+                        new TypeToken<List<IndicadorTecnicoDTO>>() {
+                        }.getType());
 
-            Gson gson = new Gson();
-            Type listType = new TypeToken<List<IndicadorTecnicoDTO>>() {
-            }.getType();
-            indicadoresDTO = gson.fromJson(jsonOutput, listType);
-            indicadoresDTO.stream().forEach(
-                    indicadorDTO -> indicadoresTecnicos.add(controladorIndicador.guardarIndicador(indicadorDTO)));
-            System.out.println("Guardadas " + indicadoresDTO.size() + " velas en la BD (batch incremental).");
+                List<IndicadorTecnico> resultados = dtos.stream().map(dto -> {
+                    IndicadorTecnico ind = new IndicadorTecnico();
+                    Vela v = velaRepo.findById(dto.getId())
+                            .orElseThrow(() -> new RuntimeException("Vela no encontrada"));
+                    ind.setVela(v);
+                    ind.setTipo(dto.getTipo());
+                    ind.setValor(dto.getValor());
+                    ind.setParametros(dto.getParametros());
+                    return ind;
+                }).collect(Collectors.toList());
 
+                return indicadorRepo.saveAll(resultados);
+            }
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException("❌ Error calculando indicadores: " + e.getMessage(), e);
         }
-        return indicadoresTecnicos;
-
     }
-
 }

@@ -1,118 +1,130 @@
-package com.bottrading.Services;
+package com.bottrading.services;
 
-import com.bottrading.Utils.ConsoleLoader;
-import com.bottrading.Utils.WebSession;
+import com.bottrading.beans.Vela;
+import com.bottrading.beans.VelaDTO;
+import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import jakarta.persistence.EntityManager;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.util.List;
-import com.bottrading.beans.VelaDTO;
-import com.bottrading.controllers.ControladorVela;
+import java.util.stream.Collectors;
 
+@Service
 public class FetchService {
 
-    private ControladorVela controladorVela = new ControladorVela();
-    private static final String FETCHER_ENGINE_PATH = "D:\\Users\\Alejandro\\Documents\\Informatica\\cryptoApp\\python-scripts\\fetcher.py";
+    @Autowired
+    private VelaRepository velaRepo;
 
-    public FetchService() {
-    }
+    private final Gson gson = new Gson();
 
+    /**
+     * Coordina la descarga incremental de velas para evitar duplicados.
+     */
     public void fetch(String symbol, String interval) {
-        EntityManager em = WebSession.getInstance().getEntityManager();
-        System.out.println("Iniciando fetch para " + symbol);
-        try {
-            // Buscar el último registro en BD
-            Long lastTimestamp = controladorVela.getUltimoTimeStamp(symbol, interval);
+        System.out.println("🔍 Comprobando datos para: " + symbol + " [" + interval + "]");
 
-            if (lastTimestamp == null) {
-                System.out.println("No hay datos en la BD. Descargando todo...");
-                this.callPythonAndSave(symbol, interval, em);
+        // 1. Buscamos el último timestamp registrado en la DB
+        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+
+        if (lastTimestamp == null) {
+            System.out.println("No hay datos previos. Iniciando descarga completa...");
+            callPythonAndSave(symbol, interval, null);
+        } else {
+            long now = System.currentTimeMillis();
+            // Comprobamos si ha pasado tiempo suficiente para necesitar una actualización
+            if (now - lastTimestamp > getIntervalMillis(interval)) {
+                System.out.println("⏳ Datos desactualizados. Descargando desde: " + lastTimestamp);
+                callPythonAndSave(symbol, interval, lastTimestamp);
             } else {
-                // comprobar si hay nuevas velas
-                long now = System.currentTimeMillis();
-                if (now - lastTimestamp > getIntervalMillis(interval)) {
-                    System.out.println("Datos desactualizados. Descargando desde " + lastTimestamp);
-                    this.callPythonAndSave(symbol, interval, em, lastTimestamp);
-                } else {
-                    System.out.println("Los datos ya están al día.");
-                }
+                System.out.println("Los datos ya están al día.");
             }
-        } finally {
-            em.close();
         }
     }
 
-    private void callPythonAndSave(String symbol, String interval, EntityManager em) {
-        ConsoleLoader loader = ConsoleLoader.getInstance();
-        loader.startDots();
-        this.callPythonAndSave(symbol, interval, em, null);
-        loader.stop();
-    }
-
-    private void callPythonAndSave(String symbol, String interval, EntityManager em,
-            Long fromTimestamp) {
-        ConsoleLoader loader = ConsoleLoader.getInstance();
-
+    /**
+     * Ejecuta el script de Python y persiste el resultado en lote (Batch).
+     */
+    @Transactional
+    private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         try {
-            ProcessBuilder pb;
-            if (fromTimestamp == null) {
-                pb = new ProcessBuilder("python3", FETCHER_ENGINE_PATH, symbol, interval);
-            } else {
-                pb = new ProcessBuilder("python3", FETCHER_ENGINE_PATH, symbol, interval,
-                        String.valueOf(fromTimestamp));
+            // Configurar comando: python3 fetcher.py SYMBOL INTERVAL [FROM_TIMESTAMP]
+            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval);
+            if (fromTimestamp != null) {
+                pb.command().add(String.valueOf(fromTimestamp));
             }
 
-            pb.redirectErrorStream(true);
-            loader.startDots();
             Process process = pb.start();
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            StringBuilder output = new StringBuilder();
-            String line;
+            // 2. Leer la salida JSON directamente del flujo (más eficiente en memoria)
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                List<VelaDTO> dtoList = gson.fromJson(reader, new TypeToken<List<VelaDTO>>() {
+                }.getType());
 
-            while ((line = reader.readLine()) != null) {
-                output.append(line);
+                if (dtoList == null || dtoList.isEmpty()) {
+                    System.out.println("No se han recibido velas nuevas.");
+                    return;
+                }
+
+                // 3. Transformar DTOs a Entidades y guardar en lote
+                List<Vela> entidades = dtoList.stream()
+                        .map(dto -> mapToEntity(dto, symbol, interval))
+                        .collect(Collectors.toList());
+
+                velaRepo.saveAll(entidades);
+                System.out.println("Guardadas " + entidades.size() + " velas en la base de datos.");
             }
 
-            loader.stop();
-
-            // Ahora output contiene todo el JSON
-            String jsonOutput = output.toString();
-
-            // Parsear directamente con Gson
-            Gson gson = new Gson();
-            Type listType = new TypeToken<List<VelaDTO>>() {
-            }.getType();
-            List<VelaDTO> dtoList = gson.fromJson(jsonOutput, listType);
-            ConsoleLoader.getInstance().startDots();
-            // Mapear a tus entidades
-            dtoList.stream().forEach(velaDTO -> controladorVela.guardarVela(velaDTO));
-            if (dtoList.isEmpty())
-                System.out.println("No existe ese símbolo dentro del exchange o el intervalo no esta bien escrito.");
-            else {
-                ConsoleLoader.getInstance().startDots();
-                System.out.println("Guardadas " + dtoList.size() + " velas en la BD (batch incremental).");
+            // Captura de errores del script de Python
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                System.err.println("El script de Python terminó con error (código " + exitCode + ")");
             }
-            
+
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException("Error crítico en FetchService: " + e.getMessage(), e);
         }
-
     }
 
-    private static long getIntervalMillis(String interval) {
+    /**
+     * Mapeo detallado de DTO a Entidad JPA con conversión de tipos.
+     */
+    private Vela mapToEntity(VelaDTO dto, String symbol, String interval) {
+        Vela v = new Vela();
+        v.setSymbol(symbol);
+        v.setInterval(interval);
+        v.setOpenTime(dto.open_time);
+        v.setCloseTime(dto.close_time);
+
+        // Conversión segura de String a BigDecimal para precisión financiera
+        v.setOpen(new BigDecimal(dto.open));
+        v.setHigh(new BigDecimal(dto.high));
+        v.setLow(new BigDecimal(dto.low));
+        v.setClose(new BigDecimal(dto.close));
+        v.setVolume(new BigDecimal(dto.volume));
+        v.setQuoteVolume(new BigDecimal(dto.quote_volume));
+        v.setTakerBaseVolume(new BigDecimal(dto.taker_base_volume));
+        v.setTakerQuoteVolume(new BigDecimal(dto.taker_quote_volume));
+
+        v.setTrades(dto.trades);
+        return v;
+    }
+
+    private long getIntervalMillis(String interval) {
         return switch (interval) {
             case "1m" -> 60_000L;
-            case "5m" -> 5 * 60_000L;
-            case "15m" -> 15 * 60_000L;
-            case "1h" -> 60 * 60_000L;
-            case "4h" -> 4 * 60 * 60_000L;
-            case "1d" -> 24 * 60 * 60_000L;
+            case "5m" -> 300_000L;
+            case "15m" -> 900_000L;
+            case "1h" -> 3_600_000L;
+            case "4h" -> 14_400_000L;
+            case "1d" -> 86_400_000L;
             default -> 60_000L;
         };
     }
-
 }
