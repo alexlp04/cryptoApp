@@ -12,7 +12,7 @@ public class DatabaseConfig {
     public DataSource dataSource() {
         // Leemos directamente del System.getProperty que llenamos en el Main
         String url = System.getProperty("DB_URL");
-        String user = System.getProperty("DB_USERNAME");
+        String user = System.getProperty("DB_USER");
         String pass = System.getProperty("DB_PASSWORD");
 
         return DataSourceBuilder.create()
