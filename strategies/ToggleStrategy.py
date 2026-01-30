@@ -6,11 +6,14 @@ class ToggleStrategy(BaseStrategy):
         self.toggle = False
 
     def populate_indicators(self, df):
-        return df
+            return df
 
     def should_buy(self, row):
-        self.toggle = not self.toggle
-        return self.toggle
+        # Compra si el timestamp es par (solo como prueba)
+        print("Evaluando compra en timestamp: " + str(row["timestamp"]))
+        return int(row["timestamp"]) % 2 == 0
 
     def should_sell(self, row):
-        return not self.toggle
+        # Vende si el timestamp es impar
+        print("Evaluando venta en timestamp: " + str(row["timestamp"]))
+        return int(row["timestamp"]) % 2 != 0

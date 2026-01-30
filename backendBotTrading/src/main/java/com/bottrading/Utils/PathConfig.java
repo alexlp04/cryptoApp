@@ -7,8 +7,20 @@ import java.nio.file.Paths;
 
 public class PathConfig {
     // BACKEND_ROOT = .../cryptoApp/backendBotTrading
-    public static final String PROJECT_ROOT = System.getProperty("user.dir");
+    public static final String PROJECT_ROOT = getValidatedProjectRoot();
 
+    private static String getValidatedProjectRoot() {
+        String userDir = System.getProperty("user.dir");
+        File currentDir = new File(userDir);
+
+        // Si el directorio actual es 'backendBotTrading', subimos un nivel a 'cryptoApp'
+        if (currentDir.getName().equals("backendBotTrading")) {
+            return currentDir.getParent();
+        }
+        
+        // Si ya estamos en 'cryptoApp' (o cualquier otro sitio), lo mantenemos
+        return userDir;
+    }
     // Rutas a carpetas hermanas
     public static final String PYTHON_SCRIPTS_DIR = PROJECT_ROOT + File.separator + "scripts";
     public static final String STRATEGIES_DIR = PROJECT_ROOT + File.separator + "strategies";

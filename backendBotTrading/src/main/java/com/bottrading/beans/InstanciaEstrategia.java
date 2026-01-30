@@ -15,9 +15,11 @@ import jakarta.persistence.Table;
 @Table(name = "instancia_estrategia")
 public class InstanciaEstrategia extends BaseEntity {
 
+    @Column(name = "nombre_estrategia")
     private String nombreEstrategia;
 
-    private String walletAsociada;
+    @Column(name = "wallet_asociada")
+    private Long walletAsociada;
 
     private String timeframe;
 
@@ -25,21 +27,34 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "capital_asignado")
     private BigDecimal capitalAsignado;
 
+    @Column(name = "risk_per_trade")
     private BigDecimal riskPerTrade;
 
     // Estados dinámicos
+
+    @Column(name = "capital_reservado")
     private BigDecimal capitalReservado; // RESERVED
+    
+    @Column(name = "capital_comprometido")
     private BigDecimal capitalComprometido; // COMMITTED
+
+    @Column(name = "riesgo_abierto")
     private BigDecimal riesgoAbierto; // riesgo vivo
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "instancia_simbolos", joinColumns = @JoinColumn(name = "instancia_id"))
-    @Column(name = "simbolo")
+    @Column(name = "simbolo")                           
     private List<String> simbolos;
 
+    @Column(name = "es_real")
     private boolean esReal;
 
+    @Column(name = "estado")
     private String estado; // ACTIVA, FINALIZADA, SIN_FONDOS
+
+    public InstanciaEstrategia() {
+        super();
+    }
 
     public String getNombreEstrategia() {
         return nombreEstrategia;
@@ -49,11 +64,11 @@ public class InstanciaEstrategia extends BaseEntity {
         this.nombreEstrategia = nombreEstrategia;
     }
 
-    public String getWalletAsociada() {
+    public Long getWalletAsociada() {
         return walletAsociada;
     }
 
-    public void setWalletAsociada(String walletAsociada) {
+    public void setWalletAsociada(Long walletAsociada) {
         this.walletAsociada = walletAsociada;
     }
 

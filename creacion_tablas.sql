@@ -1,5 +1,5 @@
 SET FOREIGN_KEY_CHECKS = 0;
-DROP TABLE IF EXISTS instancia_simbolos, indicador_tecnico, ledger_entries, posiciones, capital_reservado, instancias_estrategia, wallet, vela, usuario;
+DROP TABLE IF EXISTS  indicador_tecnico, ledger_entry, posicion, capital_reservado, instancia_estrategia, wallet, vela, usuario;
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- 1. USUARIO
@@ -47,10 +47,10 @@ CREATE TABLE wallet (
 );
 
 -- 4. INSTANCIAS ESTRATEGIA
-CREATE TABLE instancias_estrategia (
+CREATE TABLE instancia_estrategia (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     nombre_estrategia VARCHAR(255),
-    wallet_asociada VARCHAR(255),
+    wallet_asociada BIGINT,
     timeframe VARCHAR(20),
     capital_asignado DECIMAL(18, 8),
     risk_per_trade DECIMAL(18, 8),
@@ -69,9 +69,17 @@ CREATE TABLE instancia_simbolos (
     simbolo VARCHAR(20),
     CONSTRAINT fk_simbolos_instancia FOREIGN KEY (instancia_id) REFERENCES instancias_estrategia(id)
 );
+USE bottradingdb;
+CREATE TABLE instancia_simbolos (
+    instancia_id BIGINT NOT NULL,
+    simbolo VARCHAR(255),
+    CONSTRAINT fk_instancia_estrategia 
+        FOREIGN KEY (instancia_id) 
+        REFERENCES instancia_estrategia (id) -- Quitada la 's'
+);
 
--- 6. POSICIONES
-CREATE TABLE posiciones (
+-- 6. POSICIONES (Corregida la referencia FK)
+CREATE TABLE posicion (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     simbolo VARCHAR(20),
     precio_entrada DECIMAL(18, 8),
@@ -80,11 +88,13 @@ CREATE TABLE posiciones (
     instancia_id BIGINT,
     fecha_creacion DATETIME(6),
     eliminado BIT(1) NOT NULL DEFAULT 0,
-    CONSTRAINT fk_posicion_instancia FOREIGN KEY (instancia_id) REFERENCES instancias_estrategia(id)
+    CONSTRAINT fk_posicion_instancia 
+        FOREIGN KEY (instancia_id) 
+        REFERENCES instancia_estrategia (id) -- Quitada la 's'
 );
 
 -- 7. LEDGER ENTRIES
-CREATE TABLE ledger_entries (
+CREATE TABLE ledger_entry (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     wallet_id BIGINT,
     estrategia_id BIGINT,

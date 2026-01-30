@@ -13,8 +13,11 @@ import com.bottrading.beans.Vela;
 @Repository
 public interface VelaRepository extends JpaRepository<Vela, Long> {
 
-    // Buscar velas por símbolo e intervalo ordenadas (findBySymbolAndInterval)
-    List<Vela> findBySymbolAndIntervalOrderByOpenTimeAsc(String symbol, String interval);
+    @Query("SELECT v FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval ORDER BY v.openTime ASC")
+        List<Vela> findBySymbolAndIntervalOrderByOpenTimeAsc(
+            @Param("symbol") String symbol, 
+            @Param("interval") String interval
+        );
 
     // Obtener la última vela (findLastVela)
     Optional<Vela> findFirstBySymbolAndIntervalOrderByOpenTimeDesc(String symbol, String interval);

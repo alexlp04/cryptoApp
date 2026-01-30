@@ -57,10 +57,11 @@ public class AppBot implements CommandLineRunner {
 
                 // --- GESTIÓN DE WALLETS ---
                 case "mkpwallet" -> {
+                    if (parts.length < 2)
+                        throw new RuntimeException("Uso: mkpwallet <nombre>");
                     validarLogin();
-                    // Usamos BigDecimal para el balance inicial
                     walletService.crearWallet(parts[1], new BigDecimal("10000.00"), false);
-                    System.out.println("✅ Wallet de papel '" + parts[1] + "' creada con 10,000 USD.");
+                    System.out.println("Wallet de papel '" + parts[1] + "' creada con 10,000 USD.");
                 }
                 case "lw" -> {
                     validarLogin();
@@ -74,8 +75,10 @@ public class AppBot implements CommandLineRunner {
                     estrategiaService.listarEstrategias().forEach(System.out::println);
                 }
                 case "fetch" -> {
-                    marketDataService.actualizarDatosMercado(Arrays.asList(parts[2].split(",")), parts[1]);
-                    System.out.println("✅ Sincronización completa (Velas + Indicadores).");
+                    if (parts.length < 3)
+                        throw new RuntimeException("Uso: fetch <timeframe> <coin1> <coin2>...");
+                    marketDataService.actualizarDatosMercado(Arrays.asList(Arrays.copyOfRange(parts, 2, parts.length)), parts[1]);
+                    System.out.println("Sincronización completa (Velas + Indicadores).");
                 }
 
                 // --- OPERACIONES DE TRADING ---
@@ -88,10 +91,10 @@ public class AppBot implements CommandLineRunner {
                 case "trade" -> iniciarFlujoTrade(parts);
 
                 case "ayuda" -> mostrarAyuda();
-                default -> System.out.println("❓ Comando desconocido. Escribe 'ayuda'.");
+                default -> System.out.println("Comando desconocido. Escribe 'ayuda'.");
             }
         } catch (Exception e) {
-            System.err.println("❌ Error: " + e.getMessage());
+            System.err.println("Error: " + e.getMessage());
         }
     }
 
@@ -115,10 +118,12 @@ public class AppBot implements CommandLineRunner {
 
         // 2. Lógica de Silos con BigDecimal
         BigDecimal balanceTotal = walletService.getBalance(wName);
-        BigDecimal comprometido = estrategiaService.getCapitalComprometido(wName);
+        Long walletID = walletService.obtenerIdPorNombre(wName);
+
+        BigDecimal comprometido = estrategiaService.getCapitalComprometido(walletID);
         BigDecimal disponible = balanceTotal.subtract(comprometido);
 
-        System.out.printf("💰 Saldo Real: %s | Comprometido en Silos: %s | LIBRE: %s USD%n",
+        System.out.printf("Saldo Real: %s | Comprometido en Silos: %s | LIBRE: %s USD%n",
                 balanceTotal.toPlainString(), comprometido.toPlainString(), disponible.toPlainString());
 
         // 3. Asignación de presupuesto
@@ -136,7 +141,7 @@ public class AppBot implements CommandLineRunner {
         Long walletId = walletService.obtenerIdPorNombre(wName);
         estrategiaService.iniciarTradeRT(estraNombre, tf, coins, isReal, walletId, risk, capitalAsignado);
 
-        System.out.println("🚀 Estrategia lanzada. Monitoreando en hilos de fondo.");
+        System.out.println("Estrategia lanzada. Monitoreando en hilos de fondo.");
     }
 
     // --- MÉTODOS AUXILIARES ---
@@ -147,10 +152,10 @@ public class AppBot implements CommandLineRunner {
         System.out.print("Password: ");
         String pass = scanner.nextLine().trim();
         if (usuarioService.registrar(nombre, pass) == null) {
-            System.out.println("❌ No se pudo registrar el usuario.");
+            System.out.println("No se pudo registrar el usuario.");
             return;
         }
-        System.out.println("✅ Registro exitoso.");
+        System.out.println("Registro exitoso.");
     }
 
     private void flujoLogin() {
@@ -162,9 +167,9 @@ public class AppBot implements CommandLineRunner {
         if (usuarioService.validarCredenciales(nombre, pass)) {
             Usuario u = usuarioService.obtenerPorNombre(nombre);
             sessionManager.login(u);
-            System.out.println("🔓 Sesión iniciada como " + u.getNombre());
+            System.out.println("Sesión iniciada como " + u.getNombre());
         } else {
-            System.out.println("❌ Credenciales incorrectas.");
+            System.out.println("Credenciales incorrectas.");
         }
     }
 

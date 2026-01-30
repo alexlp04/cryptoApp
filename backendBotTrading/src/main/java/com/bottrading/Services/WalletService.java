@@ -78,7 +78,7 @@ public class WalletService {
         Usuario usuario = sessionManager.getCurrentUser();
         return walletRepo.findByUsuarioAndNombre(usuario, nombre)
                 .map(Wallet::getBalanceReal)
-                .orElse(BigDecimal.ZERO);
+                .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
     }
 
     public List<String> listarWallets() {
@@ -95,9 +95,9 @@ public class WalletService {
     }
 
     public Long obtenerIdPorNombre(String nombreWallet) {
-        Usuario actual = sessionManager.getCurrentUser();
+        Usuario usuario = sessionManager.getCurrentUser();
 
-        return walletRepo.findByUsuarioAndNombre(actual, nombreWallet)
+        return walletRepo.findByUsuarioAndNombre(usuario, nombreWallet)
                 .map(Wallet::getId)
                 .orElseThrow(() -> new RuntimeException(
                         "No se encontró la wallet '" + nombreWallet + "' para este usuario"));

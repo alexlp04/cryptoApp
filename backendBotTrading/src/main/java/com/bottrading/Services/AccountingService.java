@@ -32,30 +32,45 @@ public class AccountingService {
     // ACTIVAR ESTRATEGIA (Reserva de capital inicial)
     // =========================
     public void activateStrategy(Long walletId, Long estrategiaId, BigDecimal capital) {
-        // Usamos Lock para asegurar que nadie más modifique la wallet durante la
-        // lectura/escritura
-        Wallet w = walletRepo.findByIdWithLock(walletId)
-                .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
-        InstanciaEstrategia e = estrategiaRepo.findById(estrategiaId)
-                .orElseThrow(() -> new RuntimeException("Estrategia no encontrada"));
+        try {
+            // Usamos Lock para asegurar que nadie más modifique la wallet durante la
+            // lectura/escritura
+            Wallet w = walletRepo.findByIdWithLock(walletId)
+                    .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
+            InstanciaEstrategia e = estrategiaRepo.findById(estrategiaId)
+                    .orElseThrow(() -> new RuntimeException("Estrategia no encontrada"));
 
-        if (w.getBalanceDisponible().compareTo(capital) < 0) {
-            throw new RuntimeException("Fondos insuficientes en balance disponible");
+            if (w.getBalanceDisponible().compareTo(capital) < 0) {
+                throw new RuntimeException("Fondos insuficientes en balance disponible");
+            }
+
+            // Restar del disponible de la wallet
+            w.setBalanceDisponible(w.getBalanceDisponible().subtract(capital));
+
+            // Asignar al silo de la estrategia
+            e.setWalletAsociada(walletId);
+            e.setCapitalAsignado(capital);
+            e.setCapitalReservado(capital);
+            e.setEstado("ACTIVA");
+
+            saveLedger(w, e, LedgerType.RESERVED, capital.negate());
+
+            walletRepo.save(w);
+        } catch (org.springframework.dao.DataAccessException ex) {
+            // Captura errores específicos de base de datos (SQL, Constraints, tablas
+            // faltantes)
+            System.err.println("=== ERROR DE BASE DE DATOS ===");
+            System.err.println("Mensaje: " + ex.getMessage());
+            if (ex.getRootCause() != null) {
+                System.err.println("Causa raíz: " + ex.getRootCause().getMessage());
+            }
+            throw ex; // Re-lanzar para que la transacción haga rollback
+        } catch (Exception ex) {
+            // Captura cualquier otro error (NullPointer, etc.)
+            System.err.println("=== ERROR GENERAL ===");
+            ex.printStackTrace();
+            throw ex;
         }
-
-        // Restar del disponible de la wallet
-        w.setBalanceDisponible(w.getBalanceDisponible().subtract(capital));
-
-        // Asignar al silo de la estrategia
-        e.setCapitalAsignado(capital);
-        e.setCapitalReservado(capital);
-        e.setEstado("ACTIVA");
-
-        saveLedger(w, e, LedgerType.RESERVED, capital.negate()); // Negativo porque "sale" de la wallet hacia la
-                                                                 // estrategia
-
-        walletRepo.save(w);
-        estrategiaRepo.save(e);
     }
 
     // =========================

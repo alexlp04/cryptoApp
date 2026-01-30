@@ -54,13 +54,23 @@ public class FetchService {
     @Transactional
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         try {
-            // Configurar comando: python3 fetcher.py SYMBOL INTERVAL [FROM_TIMESTAMP]
             ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval);
             if (fromTimestamp != null) {
                 pb.command().add(String.valueOf(fromTimestamp));
             }
 
             Process process = pb.start();
+
+            // --- AÑADE ESTO PARA VER ERRORES REALES ---
+            new Thread(() -> {
+                try (BufferedReader err = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = err.readLine()) != null) {
+                        System.err.println("🐍 PYTHON ERROR: " + line);
+                    }
+                } catch (Exception e) {}
+            }).start();
+            // ------------------------------------------
 
             // 2. Leer la salida JSON directamente del flujo (más eficiente en memoria)
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {

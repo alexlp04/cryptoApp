@@ -74,7 +74,7 @@ public class BacktestingService {
             String errorMsg = stderr.isBlank() ? stdout : stderr;
             throw new Exception("Error en el motor de Backtest (Código " + exitCode + "):\n" + errorMsg);
         }
-
+        
         return stdout;
     }
 
