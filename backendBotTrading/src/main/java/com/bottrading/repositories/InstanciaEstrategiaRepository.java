@@ -17,11 +17,11 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
 
     // Sustituye sumCapitalActivoByWallet
     @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i " +
-            "WHERE i.walletAsociada = :nombreWallet AND i.estado = 'ACTIVA'")
-    Double sumCapitalActivoByWallet(String nombreWallet);
+            "WHERE i.walletAsociada = :walletAsociada AND i.estado = 'ACTIVA'")
+    Double sumCapitalActivoByWallet(Long walletAsociada);
 
     // Sustituye findActivasByWallet
-    List<InstanciaEstrategia> findByWalletAsociadaAndEstado(String nombreWallet, String estado);
+    List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, String estado);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT i FROM InstanciaEstrategia i WHERE i.id = :id")

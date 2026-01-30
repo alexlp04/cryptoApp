@@ -23,7 +23,7 @@ public class PaperTradingService {
     private PosicionRepository posicionRepo;
 
     @Autowired
-    private SaveFileService saveFileService;
+    private FileService fileService;
 
     @Transactional
     public void onSignal(Long instanciaId, SignalDTO signal) {
@@ -66,8 +66,8 @@ public class PaperTradingService {
         pos.setAbierta(true);
         posicionRepo.save(pos);
 
-        saveFileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(),
-                mapearLog(signal, "BUY", BigDecimal.ZERO, e.getCapitalReservado()), false);
+        fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
+                signal.getPrice(), signal.getTimestamp(), null, e.getCapitalReservado(), false);
     }
 
     private void handleSell(InstanciaEstrategia e, SignalDTO signal) {
@@ -92,21 +92,11 @@ public class PaperTradingService {
         pos.setAbierta(false);
         posicionRepo.save(pos);
 
-        saveFileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(),
-                mapearLog(signal, "SELL", pnlNeto, e.getCapitalReservado()), false);
+        fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
+                signal.getPrice(), signal.getTimestamp(), pnlNeto, e.getCapitalReservado(), false);
 
-        saveFileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(),
-                Map.of("symbol", signal.getSymbol(), "pnl", pnlNeto.doubleValue()), false);
+        fileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(),
+                Map.of("symbol", signal.getSymbol(), "pnl", pnlNeto), false);
     }
 
-    // CORRECCIÓN: Cambiado double/int por BigDecimal para que coincida con lo
-    // enviado
-    private Map<String, Object> mapearLog(SignalDTO s, String side, BigDecimal pnl, BigDecimal cap) {
-        return Map.of(
-                "symbol", s.getSymbol(),
-                "side", side,
-                "price", s.getPrice(),
-                "pnl", pnl.toPlainString(),
-                "capital", cap.toPlainString());
-    }
 }

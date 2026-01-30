@@ -4,12 +4,14 @@ import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.Vela;
 import com.bottrading.repositories.InstanciaEstrategiaRepository;
 import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.Console;
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.*;
@@ -33,16 +35,14 @@ public class EstrategiaService {
     @Autowired
     private BacktestingService backtestingService;
 
+    @Autowired
+    private FileService fileService;
+
     @Transactional
     public void iniciarTradeRT(String nombreEstra, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
-        String strategyPath;
-        try {
-            strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
-        } catch (Exception e) {
-            throw new RuntimeException(
-                    "La estrategia '" + nombreEstra + "' no existe en el directorio de estrategias.");
-        }
+        String strategyPath = validarEstrategia(nombreEstra);
+
         // 1. Persistir la instancia (Usamos el repo de Spring)
         InstanciaEstrategia instancia = new InstanciaEstrategia();
         instancia.setNombreEstrategia(strategyPath);
@@ -51,8 +51,12 @@ public class EstrategiaService {
         instancia.setRiskPerTrade(risk);
         instancia.setSimbolos(coins);
         instancia.setEsReal(isReal);
+        instancia.setWalletAsociada(null);
+        instancia.setCapitalReservado(BigDecimal.ZERO);
+        instancia.setCapitalComprometido(BigDecimal.ZERO);
+        instancia.setEliminado(false);
         instancia.setEstado("CREADA"); // Estado inicial
-
+ 
         instancia = instanciaRepo.save(instancia);
 
         // 2. Activar contablemente (Mueve el dinero a RESERVED)
@@ -62,17 +66,38 @@ public class EstrategiaService {
         tradingService.ejecutarTradeEnTiempoReal(instancia, coins);
     }
 
-    public BigDecimal getCapitalComprometido(String nombreWallet) {
-        Double sum = instanciaRepo.sumCapitalActivoByWallet(nombreWallet);
+    public BigDecimal getCapitalComprometido(Long walletAsociada) {
+        Double sum = instanciaRepo.sumCapitalActivoByWallet(walletAsociada);
         return sum != null ? BigDecimal.valueOf(sum) : BigDecimal.ZERO;
     }
 
     public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins) throws Exception {
+
+        fileService.verificarYLimpiarCarpetaEstrategia(nombreEstra);
+        ConsoleLoader.getInstance().startDots();
         Map<String, List<Vela>> velasPorSimbolo = new HashMap<>();
         for (String symbol : coins) {
             velasPorSimbolo.put(symbol, velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, tf));
+            if (velasPorSimbolo.get(symbol).isEmpty())
+                System.err.println("No hay velas para " + symbol + " en " + tf + ". Saltando.");
         }
-        backtestingService.ejecutarBacktest(nombreEstra, tf, velasPorSimbolo);
+
+        if (velasPorSimbolo.isEmpty()) {
+            System.err.println("No hay datos para procesar ningún símbolo. Abortando backtest.");
+            return;
+
+        }
+        String strategyPath = validarEstrategia(nombreEstra);
+
+        String jsonResultado = backtestingService.ejecutarBacktest(strategyPath, tf, velasPorSimbolo);
+        ConsoleLoader.getInstance().stop();
+        if (jsonResultado != null && !jsonResultado.isEmpty()) {
+            fileService.guardarResultadosCompletos(nombreEstra, tf, jsonResultado);
+            System.out.println("Backtest finalizado. Resultados guardados en: " + PathConfig.RESULTS_DIR
+                    + File.separator + nombreEstra);
+        } else {
+            System.err.println("El motor de backtest no devolvió resultados.");
+        }
     }
 
     public List<String> listarEstrategias() {
@@ -86,5 +111,14 @@ public class EstrategiaService {
         return Arrays.stream(files)
                 .map(f -> "- " + f.getName().replace(".py", ""))
                 .collect(Collectors.toList());
+    }
+
+    private String validarEstrategia(String nombreEntrada) {
+        try {
+            return PathConfig.getValidStrategyPath(nombreEntrada);
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "La estrategia '" + nombreEntrada + "' no existe en el directorio de estrategias.");
+        }
     }
 }

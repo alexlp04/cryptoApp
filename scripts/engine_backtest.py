@@ -4,6 +4,7 @@ import importlib.util
 import pandas as pd
 import os
 from datetime import datetime
+import traceback
 
 # --- CONFIGURACIÓN DE RUTAS ---
 current_dir = os.path.dirname(os.path.abspath(__file__))

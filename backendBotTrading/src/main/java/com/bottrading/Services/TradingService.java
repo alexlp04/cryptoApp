@@ -54,7 +54,7 @@ public class TradingService {
             }
             process.waitFor();
         } catch (Exception e) {
-            System.err.println("❌ Error en motor Python para " + symbol + ": " + e.getMessage());
+            System.err.println("Error en motor Python para " + symbol + ": " + e.getMessage());
         }
     }
 
