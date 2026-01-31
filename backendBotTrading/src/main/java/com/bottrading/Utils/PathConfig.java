@@ -13,14 +13,16 @@ public class PathConfig {
         String userDir = System.getProperty("user.dir");
         File currentDir = new File(userDir);
 
-        // Si el directorio actual es 'backendBotTrading', subimos un nivel a 'cryptoApp'
+        // Si el directorio actual es 'backendBotTrading', subimos un nivel a
+        // 'cryptoApp'
         if (currentDir.getName().equals("backendBotTrading")) {
             return currentDir.getParent();
         }
-        
+
         // Si ya estamos en 'cryptoApp' (o cualquier otro sitio), lo mantenemos
         return userDir;
     }
+
     // Rutas a carpetas hermanas
     public static final String PYTHON_SCRIPTS_DIR = PROJECT_ROOT + File.separator + "scripts";
     public static final String STRATEGIES_DIR = PROJECT_ROOT + File.separator + "strategies";
@@ -36,21 +38,26 @@ public class PathConfig {
      * Valida el nombre y devuelve la ruta absoluta de la estrategia.
      * Solo acepta nombres de archivo, no rutas.
      */
-    public static String getValidStrategyPath(String nombreEntrada) throws Exception {
-        File fileInput = new File(nombreEntrada);
+    public static String getValidStrategyPath(String nombreEntrada) {
+        try {
+            File fileInput = new File(nombreEntrada);
 
-        if (fileInput.isAbsolute() || nombreEntrada.contains("/") || nombreEntrada.contains("\\")
-                || nombreEntrada.contains("..")) {
-            throw new Exception("Error: Introduce el nombre del archivo.\n" +
-                    "Las estrategias deben estar en: " + STRATEGIES_DIR);
+            if (fileInput.isAbsolute() || nombreEntrada.contains("/") || nombreEntrada.contains("\\")
+                    || nombreEntrada.contains("..")) {
+                throw new Exception("Error: Introduce el nombre del archivo.\n" +
+                        "Las estrategias deben estar en: " + STRATEGIES_DIR);
+            }
+
+            String nombreLimpio = nombreEntrada.endsWith(".py") ? nombreEntrada : nombreEntrada + ".py";
+            Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
+            if (!Files.exists(rutaFinal)) {
+                throw new Exception("Error: No existe el archivo '" + nombreLimpio + "' en la carpeta /strategies/");
+            }
+
+            return rutaFinal.toString();
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "La estrategia '" + nombreEntrada + "' no existe en el directorio de estrategias.");
         }
-
-        String nombreLimpio = nombreEntrada.endsWith(".py") ? nombreEntrada : nombreEntrada + ".py";
-        Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
-        if (!Files.exists(rutaFinal)) {
-            throw new Exception("Error: No existe el archivo '" + nombreLimpio + "' en la carpeta /strategies/");
-        }
-
-        return rutaFinal.toString();
     }
 }
