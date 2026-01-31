@@ -31,7 +31,7 @@ public class AccountingService {
     // =========================
     // ACTIVAR ESTRATEGIA (Reserva de capital inicial)
     // =========================
-    public void activateStrategy(Long walletId, Long estrategiaId, BigDecimal capital) {
+    public InstanciaEstrategia activateStrategy(Long walletId, Long estrategiaId, BigDecimal capital) {
         try {
             // Usamos Lock para asegurar que nadie más modifique la wallet durante la
             // lectura/escritura
@@ -50,12 +50,13 @@ public class AccountingService {
             // Asignar al silo de la estrategia
             e.setWalletAsociada(walletId);
             e.setCapitalAsignado(capital);
-            e.setCapitalReservado(capital);
+            
             e.setEstado("ACTIVA");
 
             saveLedger(w, e, LedgerType.RESERVED, capital.negate());
 
             walletRepo.save(w);
+            return estrategiaRepo.save(e);
         } catch (org.springframework.dao.DataAccessException ex) {
             // Captura errores específicos de base de datos (SQL, Constraints, tablas
             // faltantes)

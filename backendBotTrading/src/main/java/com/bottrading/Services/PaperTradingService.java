@@ -87,7 +87,7 @@ public class PaperTradingService {
 
         // CORRECCIÓN: Uso de BigDecimal en la llamada al servicio contable
         // Ajusta los argumentos según la firma de tu AccountingService
-        accountingService.closeTrade(null, e.getId(), pos.getMargenInvertido(), pnlNeto, BigDecimal.ZERO);
+        accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto, BigDecimal.ZERO);
 
         pos.setAbierta(false);
         posicionRepo.save(pos);

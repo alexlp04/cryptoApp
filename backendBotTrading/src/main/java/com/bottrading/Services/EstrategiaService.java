@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.Console;
 import java.io.File;
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -41,27 +42,28 @@ public class EstrategiaService {
     @Transactional
     public void iniciarTradeRT(String nombreEstra, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
-        String strategyPath = validarEstrategia(nombreEstra);
 
         // 1. Persistir la instancia (Usamos el repo de Spring)
         InstanciaEstrategia instancia = new InstanciaEstrategia();
-        instancia.setNombreEstrategia(strategyPath);
+        instancia.setNombreEstrategia(nombreEstra);
         instancia.setTimeframe(tf);
         instancia.setCapitalAsignado(capital);
         instancia.setRiskPerTrade(risk);
-        instancia.setSimbolos(coins);
+        instancia.setSimbolos(new ArrayList<>(coins));
         instancia.setEsReal(isReal);
         instancia.setWalletAsociada(null);
-        instancia.setCapitalReservado(BigDecimal.ZERO);
+        instancia.setCapitalReservado(capital);
         instancia.setCapitalComprometido(BigDecimal.ZERO);
+        instancia.setRiesgoAbierto(BigDecimal.ZERO);
         instancia.setEliminado(false);
         instancia.setEstado("CREADA"); // Estado inicial
  
         instancia = instanciaRepo.save(instancia);
 
         // 2. Activar contablemente (Mueve el dinero a RESERVED)
-        accountingService.activateStrategy(walletId, instancia.getId(), capital);
+        instancia = accountingService.activateStrategy(walletId, instancia.getId(), capital);
 
+        
         // 3. Delegar la ejecución técnica al TradingService
         tradingService.ejecutarTradeEnTiempoReal(instancia, coins);
     }
@@ -87,7 +89,7 @@ public class EstrategiaService {
             return;
 
         }
-        String strategyPath = validarEstrategia(nombreEstra);
+        String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
 
         String jsonResultado = backtestingService.ejecutarBacktest(strategyPath, tf, velasPorSimbolo);
         ConsoleLoader.getInstance().stop();
@@ -113,12 +115,4 @@ public class EstrategiaService {
                 .collect(Collectors.toList());
     }
 
-    private String validarEstrategia(String nombreEntrada) {
-        try {
-            return PathConfig.getValidStrategyPath(nombreEntrada);
-        } catch (Exception e) {
-            throw new RuntimeException(
-                    "La estrategia '" + nombreEntrada + "' no existe en el directorio de estrategias.");
-        }
-    }
 }

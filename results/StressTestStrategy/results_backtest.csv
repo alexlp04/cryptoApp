@@ -1,0 +1,2 @@
+symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown,retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado
+BTCUSDT,1h,18902.0,18043.0,36959.0,28.516984706409175,37.32419571686091,0.8002768132142478,8.002768132142478,51.143158635244454,1.0048421440851616,2017-08-17T04:00:00,2026-01-27T09:00:00,GANANCIA
