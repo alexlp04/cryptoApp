@@ -8,8 +8,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Servicio encargado de la ejecución simulada de órdenes (Paper Trading).
+ * Recibe señales del motor de Python, gestiona el estado de las posiciones
+ * y coordina los movimientos contables con {@link AccountingService}.
+ */
 @Service
 public class PaperTradingService {
 
@@ -25,13 +32,21 @@ public class PaperTradingService {
     @Autowired
     private FileService fileService;
 
+    /**
+     * Procesa una señal de trading (BUY/SELL) recibida desde el motor de estrategia.
+     * Valida el estado de la estrategia y delega la lógica específica de compra o venta.
+     *
+     * @param instanciaId ID de la estrategia que generó la señal.
+     * @param signal      DTO con los detalles de la señal (acción, precio, símbolo, etc.).
+     */
     @Transactional
     public void onSignal(Long instanciaId, SignalDTO signal) {
         InstanciaEstrategia instancia = instanciaRepo.findByIdWithLock(instanciaId)
-                .orElseThrow(() -> new RuntimeException("Instancia no encontrada"));
+                .orElseThrow(() -> new RuntimeException("Instancia no encontrada: " + instanciaId));
 
-        if (!"ACTIVA".equals(instancia.getEstado()))
-            return;
+        if (!"ACTIVA".equals(instancia.getEstado())) {
+            return; // Ignorar señales de estrategias pausadas o detenidas
+        }
 
         if ("BUY".equals(signal.getAction())) {
             handleBuy(instancia, signal);
@@ -40,24 +55,29 @@ public class PaperTradingService {
         }
     }
 
+    /**
+     * Ejecuta la lógica de apertura de una posición Larga (BUY).
+     * Verifica fondos, registra la posición y actualiza la contabilidad.
+     */
     private void handleBuy(InstanciaEstrategia e, SignalDTO signal) {
-        if (posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol()))
+        // Evitar abrir múltiples posiciones sobre el mismo símbolo
+        if (posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol())) {
             return;
+        }
 
-        // CORRECCIÓN: Multiplicación con BigDecimal
         BigDecimal montoAInvertir = e.getCapitalReservado().multiply(e.getRiskPerTrade());
 
-        // CORRECCIÓN: Comparación con BigDecimal (monto > 0 && monto <= reservado)
+        // Validaciones básicas de gestión de riesgo
         if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
-                montoAInvertir.compareTo(e.getCapitalReservado()) > 0)
+            montoAInvertir.compareTo(e.getCapitalReservado()) > 0) {
+            System.err.println("Orden BUY rechazada: Capital insuficiente o riesgo inválido.");
             return;
-        // CORRECCIÓN: Asegúrate de que el Bean tenga el método o usa el atributo
-        // adecuado
-        // Si no tienes getWalletId(), usa la propiedad correcta (ej.
-        // e.getWalletAsociada())
-        // Aquí asumo que pasamos el ID o el objeto necesario
+        }
+
+        // Bloquear capital en la cuenta
         accountingService.commitCapital(e.getId(), montoAInvertir, e.getRiskPerTrade());
 
+        // Crear registro de posición
         Posicion pos = new Posicion();
         pos.setInstancia(e);
         pos.setSimbolo(signal.getSymbol());
@@ -66,37 +86,92 @@ public class PaperTradingService {
         pos.setAbierta(true);
         posicionRepo.save(pos);
 
+        // Registro en archivo CSV
         fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
                 signal.getPrice(), signal.getTimestamp(), null, e.getCapitalReservado(), false);
     }
 
+    /**
+     * Ejecuta la lógica de cierre de una posición (SELL).
+     * Calcula PnL, actualiza balances y genera estadísticas.
+     */
     private void handleSell(InstanciaEstrategia e, SignalDTO signal) {
         Posicion pos = posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol())
                 .orElse(null);
-        if (pos == null)
-            return;
+
+        if (pos == null) return; // No hay nada que vender
 
         BigDecimal precioSalida = signal.getPrice();
-
-        // CORRECCIÓN: División con BigDecimal (Salida / Entrada)
-        BigDecimal multiplicador = (precioSalida).divide(pos.getPrecioEntrada(), 8, RoundingMode.HALF_UP);
-
-        // CORRECCIÓN: MontoFinal = Margen * Multiplicador
+        BigDecimal multiplicador = precioSalida.divide(pos.getPrecioEntrada(), 8, RoundingMode.HALF_UP);
         BigDecimal montoFinal = pos.getMargenInvertido().multiply(multiplicador);
         BigDecimal pnlNeto = montoFinal.subtract(pos.getMargenInvertido());
 
-        // CORRECCIÓN: Uso de BigDecimal en la llamada al servicio contable
-        // Ajusta los argumentos según la firma de tu AccountingService
+        // Liquidar contablemente
         accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto, BigDecimal.ZERO);
 
+        // Cerrar posición lógica
         pos.setAbierta(false);
         posicionRepo.save(pos);
 
+        // Registro en archivo CSV
         fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
                 signal.getPrice(), signal.getTimestamp(), pnlNeto, e.getCapitalReservado(), false);
 
-        fileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(),
-                Map.of("symbol", signal.getSymbol(), "pnl", pnlNeto), false);
+        // Actualización de estadísticas agregadas
+        Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
+        fileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
     }
 
+    /**
+     * Recalcula las estadísticas acumuladas de la estrategia basándose en el historial CSV y el último trade.
+     */
+    private Map<String, Object> calcularNuevasStats(InstanciaEstrategia e, String symbol, BigDecimal pnlActual) {
+        Map<String, Object> currentStats = fileService.leerStatsActuales(e.getNombreEstrategia(), e.getTimeframe(), symbol);
+
+        // Parseo seguro de valores previos (pueden ser nulos o cadenas vacías)
+        int ganadas = parseSafeInt(currentStats.get("op_ganadas"));
+        int perdidas = parseSafeInt(currentStats.get("op_perdidas"));
+        BigDecimal retornoTotal = parseSafeBigDecimal(currentStats.get("retorno_total"));
+
+        if (pnlActual.compareTo(BigDecimal.ZERO) > 0) {
+            ganadas++;
+        } else {
+            perdidas++;
+        }
+
+        retornoTotal = retornoTotal.add(pnlActual);
+        int totales = ganadas + perdidas;
+        double winRate = (totales > 0) ? (double) ganadas / totales * 100 : 0;
+
+        Map<String, Object> newStats = new HashMap<>(currentStats);
+        newStats.put("symbol", symbol);
+        newStats.put("timeframe", e.getTimeframe());
+        newStats.put("op_ganadas", ganadas);
+        newStats.put("op_perdidas", perdidas);
+        newStats.put("op_totales", totales);
+        newStats.put("retorno_total", retornoTotal);
+        newStats.put("win_rate", String.format("%.2f%%", winRate));
+        newStats.put("resultado", retornoTotal.compareTo(BigDecimal.ZERO) >= 0 ? "PROFIT" : "LOSS");
+        newStats.put("fecha_fin", new Date().toString());
+
+        return newStats;
+    }
+
+    // --- Helpers para parsing seguro ---
+
+    private int parseSafeInt(Object value) {
+        try {
+            return value != null ? Integer.parseInt(value.toString()) : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private BigDecimal parseSafeBigDecimal(Object value) {
+        try {
+            return value != null ? new BigDecimal(value.toString()) : BigDecimal.ZERO;
+        } catch (Exception e) {
+            return BigDecimal.ZERO;
+        }
+    }
 }

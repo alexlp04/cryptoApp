@@ -1,3 +1,2 @@
 symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown,retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado
-BTCUSDT,,,,,,,,,,,,,
-BTCUSDT,,,,,,,,,,,,,
+no ,1m,0,1,1,,,,-0.0013444000000000,0,00%,,,Wed Feb 04 12:31:57 CET 2026,LOSS

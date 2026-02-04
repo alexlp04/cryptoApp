@@ -1,63 +1,52 @@
 package com.bottrading.utils;
 
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class PathConfig {
-    // BACKEND_ROOT = .../cryptoApp/backendBotTrading
-    public static final String PROJECT_ROOT = getValidatedProjectRoot();
 
-    private static String getValidatedProjectRoot() {
+    // Detectamos dinámicamente la raíz real del backend
+    public static final String PROJECT_ROOT = calculateProjectRoot();
+
+    private static String calculateProjectRoot() {
         String userDir = System.getProperty("user.dir");
-        File currentDir = new File(userDir);
+        Path path = Paths.get(userDir);
 
-        // Si el directorio actual es 'backendBotTrading', subimos un nivel a
-        // 'cryptoApp'
-        if (currentDir.getName().equals("backendBotTrading")) {
-            return currentDir.getParent();
+        // CASO 1: Ejecutando desde VS Code (carpeta raíz cryptoApp)
+        if (Files.exists(path.resolve("backendBotTrading")) && Files.isDirectory(path.resolve("backendBotTrading"))) {
+            return path.resolve("backendBotTrading").toAbsolutePath().toString();
         }
 
-        // Si ya estamos en 'cryptoApp' (o cualquier otro sitio), lo mantenemos
+        // CASO 2: Ejecutando desde Maven dentro de backendBotTrading
         return userDir;
     }
 
-    // Rutas a carpetas hermanas
-    public static final String PYTHON_SCRIPTS_DIR = PROJECT_ROOT + File.separator + "scripts";
-    public static final String STRATEGIES_DIR = PROJECT_ROOT + File.separator + "strategies";
-    public static final String RESULTS_DIR = PROJECT_ROOT + File.separator + "results";
+    // Definición de carpetas (Siempre relativas a la raíz calculada arriba)
+    public static final String PYTHON_SCRIPTS_DIR = resolvePath("scripts");
+    public static final String STRATEGIES_DIR = resolvePath("strategies");
+    public static final String RESULTS_DIR = resolvePath("results");
 
-    // Rutas a los motores de ejecución
-    public static final String ENGINE_RT_PATH = PYTHON_SCRIPTS_DIR + File.separator + "engine_rt.py";
-    public static final String ENGINE_BACKTEST_PATH = PYTHON_SCRIPTS_DIR + File.separator + "engine_backtest.py";
-    public static final String FETCHER_PATH = PYTHON_SCRIPTS_DIR + File.separator + "fetcher.py";
-    public static final String INDICATORS_PATH = PYTHON_SCRIPTS_DIR + File.separator + "indicators.py";
+    // Definición de motores
+    public static final String ENGINE_RT_PATH = resolvePath("scripts", "engine_rt.py");
+    public static final String ENGINE_BACKTEST_PATH = resolvePath("scripts", "engine_backtest.py");
+    public static final String FETCHER_PATH = resolvePath("scripts", "fetcher.py");
+    public static final String INDICATORS_PATH = resolvePath("scripts", "indicators.py");
 
-    /**
-     * Valida el nombre y devuelve la ruta absoluta de la estrategia.
-     * Solo acepta nombres de archivo, no rutas.
-     */
+    private static String resolvePath(String... parts) {
+        return Paths.get(PROJECT_ROOT, parts).toString();
+    }
+
     public static String getValidStrategyPath(String nombreEntrada) {
-        try {
-            File fileInput = new File(nombreEntrada);
-
-            if (fileInput.isAbsolute() || nombreEntrada.contains("/") || nombreEntrada.contains("\\")
-                    || nombreEntrada.contains("..")) {
-                throw new Exception("Error: Introduce el nombre del archivo.\n" +
-                        "Las estrategias deben estar en: " + STRATEGIES_DIR);
-            }
-
-            String nombreLimpio = nombreEntrada.endsWith(".py") ? nombreEntrada : nombreEntrada + ".py";
-            Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
-            if (!Files.exists(rutaFinal)) {
-                throw new Exception("Error: No existe el archivo '" + nombreLimpio + "' en la carpeta /strategies/");
-            }
-
-            return rutaFinal.toString();
-        } catch (Exception e) {
-            throw new RuntimeException(
-                    "La estrategia '" + nombreEntrada + "' no existe en el directorio de estrategias.");
+        if (nombreEntrada.contains("..") || nombreEntrada.contains("/") || nombreEntrada.contains("\\")) {
+            throw new RuntimeException("Nombre inválido.");
         }
+        String nombreLimpio = nombreEntrada.endsWith(".py") ? nombreEntrada : nombreEntrada + ".py";
+        Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
+
+        if (!Files.exists(rutaFinal)) {
+            throw new RuntimeException("No existe el archivo '" + nombreLimpio + "' en: " + STRATEGIES_DIR);
+        }
+        return rutaFinal.toAbsolutePath().toString();
     }
 }
