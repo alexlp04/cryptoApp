@@ -20,6 +20,8 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
             "WHERE i.walletAsociada = :walletAsociada AND i.estado = 'ACTIVA'")
     Double sumCapitalActivoByWallet(Long walletAsociada);
 
+    List<InstanciaEstrategia> findByEstado(String estado);
+
     // Sustituye findActivasByWallet
     List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, String estado);
 

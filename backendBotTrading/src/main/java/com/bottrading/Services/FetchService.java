@@ -16,6 +16,11 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Servicio encargado de la sincronización de datos de mercado (Velas/Candlesticks)
+ * entre un script externo de Python y la base de datos interna.
+ * Gestiona descargas incrementales para optimizar el ancho de banda y el almacenamiento.
+ */
 @Service
 public class FetchService {
 
@@ -25,12 +30,16 @@ public class FetchService {
     private final Gson gson = new Gson();
 
     /**
-     * Coordina la descarga incremental de velas para evitar duplicados.
+     * Coordina la descarga incremental de datos de mercado.
+     * Verifica en la base de datos la última marca de tiempo (timestamp) registrada
+     * y solicita al script de Python solo los datos faltantes para evitar duplicados.
+     *
+     * @param symbol   El par de trading (ej: "BTCUSDT").
+     * @param interval El intervalo de la vela (ej: "1m", "1h").
      */
     public void fetch(String symbol, String interval) {
         System.out.println("🔍 Comprobando datos para: " + symbol + " [" + interval + "]");
 
-        // 1. Buscamos el último timestamp registrado en la DB
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
 
         if (lastTimestamp == null) {
@@ -38,7 +47,6 @@ public class FetchService {
             callPythonAndSave(symbol, interval, null);
         } else {
             long now = System.currentTimeMillis();
-            // Comprobamos si ha pasado tiempo suficiente para necesitar una actualización
             if (now - lastTimestamp > getIntervalMillis(interval)) {
                 System.out.println("⏳ Datos desactualizados. Descargando desde: " + lastTimestamp);
                 callPythonAndSave(symbol, interval, lastTimestamp);
@@ -49,7 +57,15 @@ public class FetchService {
     }
 
     /**
-     * Ejecuta el script de Python y persiste el resultado en lote (Batch).
+     * Ejecuta el script extractor de Python y persiste los datos recibidos en una transacción por lotes.
+     * <p>
+     * Este método lee la salida JSON directamente del flujo del proceso (stream) para minimizar
+     * la sobrecarga de memoria al procesar grandes conjuntos de datos.
+     * </p>
+     *
+     * @param symbol        El par de trading.
+     * @param interval      El intervalo de tiempo.
+     * @param fromTimestamp El timestamp de inicio (opcional, null para descarga completa).
      */
     @Transactional
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
@@ -61,28 +77,24 @@ public class FetchService {
 
             Process process = pb.start();
 
-            // --- AÑADE ESTO PARA VER ERRORES REALES ---
+            // Hilo para capturar e imprimir errores de Python en tiempo real (debug)
             new Thread(() -> {
                 try (BufferedReader err = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                     String line;
                     while ((line = err.readLine()) != null) {
                         System.err.println("🐍 PYTHON ERROR: " + line);
                     }
-                } catch (Exception e) {}
+                } catch (Exception ignored) {}
             }).start();
-            // ------------------------------------------
 
-            // 2. Leer la salida JSON directamente del flujo (más eficiente en memoria)
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                List<VelaDTO> dtoList = gson.fromJson(reader, new TypeToken<List<VelaDTO>>() {
-                }.getType());
+                List<VelaDTO> dtoList = gson.fromJson(reader, new TypeToken<List<VelaDTO>>() {}.getType());
 
                 if (dtoList == null || dtoList.isEmpty()) {
                     System.out.println("No se han recibido velas nuevas.");
                     return;
                 }
 
-                // 3. Transformar DTOs a Entidades y guardar en lote
                 List<Vela> entidades = dtoList.stream()
                         .map(dto -> mapToEntity(dto, symbol, interval))
                         .collect(Collectors.toList());
@@ -91,7 +103,6 @@ public class FetchService {
                 System.out.println("Guardadas " + entidades.size() + " velas en la base de datos.");
             }
 
-            // Captura de errores del script de Python
             int exitCode = process.waitFor();
             if (exitCode != 0) {
                 System.err.println("El script de Python terminó con error (código " + exitCode + ")");
@@ -103,7 +114,13 @@ public class FetchService {
     }
 
     /**
-     * Mapeo detallado de DTO a Entidad JPA con conversión de tipos.
+     * Mapea un Objeto de Transferencia de Datos (DTO) a una Entidad JPA.
+     * Realiza una conversión segura de String a BigDecimal para garantizar la precisión financiera.
+     *
+     * @param dto      El objeto de datos crudos del JSON.
+     * @param symbol   El símbolo del mercado.
+     * @param interval El intervalo de tiempo.
+     * @return Una entidad Vela lista para persistir.
      */
     private Vela mapToEntity(VelaDTO dto, String symbol, String interval) {
         Vela v = new Vela();
@@ -112,7 +129,6 @@ public class FetchService {
         v.setOpenTime(dto.open_time);
         v.setCloseTime(dto.close_time);
 
-        // Conversión segura de String a BigDecimal para precisión financiera
         v.setOpen(new BigDecimal(dto.open));
         v.setHigh(new BigDecimal(dto.high));
         v.setLow(new BigDecimal(dto.low));

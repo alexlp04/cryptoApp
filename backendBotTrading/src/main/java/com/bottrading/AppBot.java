@@ -2,7 +2,7 @@ package com.bottrading;
 
 import com.bottrading.services.*;
 import com.bottrading.beans.*;
-import com.bottrading.utils.SessionManager;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
@@ -54,6 +54,14 @@ public class AppBot implements CommandLineRunner {
                 // --- GESTIÓN DE USUARIOS ---
                 case "signup" -> flujoSignup();
                 case "login" -> flujoLogin();
+                case "logout" -> {
+                    if (sessionManager.isLoggedIn()) {
+                        sessionManager.logout();
+
+                    } else {
+                        System.out.println("No hay ninguna sesión iniciada.");
+                    }
+                }
 
                 // --- GESTIÓN DE WALLETS ---
                 case "mkpwallet" -> {
@@ -74,10 +82,21 @@ public class AppBot implements CommandLineRunner {
                     System.out.println("--- Estrategias Disponibles (.py) ---");
                     estrategiaService.listarEstrategias().forEach(System.out::println);
                 }
+                case "lsa" -> { // Listar Strategies Activas (Runtime)
+                    validarLogin();
+                    System.out.println("--- Estrategias en Ejecución ---");
+                    estrategiaService.listarEstrategiasEnEjecucion().forEach(System.out::println);
+                }
+                case "lsd" -> {
+                    validarLogin();
+                    System.out.println("--- Estrategias Detenidas (Historial) ---");
+                    estrategiaService.listarEstrategiasDetenidas().forEach(System.out::println);
+                }
                 case "fetch" -> {
                     if (parts.length < 3)
                         throw new RuntimeException("Uso: fetch <timeframe> <coin1> <coin2>...");
-                    marketDataService.actualizarDatosMercado(Arrays.asList(Arrays.copyOfRange(parts, 2, parts.length)), parts[1]);
+                    marketDataService.actualizarDatosMercado(Arrays.asList(Arrays.copyOfRange(parts, 2, parts.length)),
+                            parts[1]);
                     System.out.println("Sincronización completa (Velas + Indicadores).");
                 }
 
@@ -90,6 +109,38 @@ public class AppBot implements CommandLineRunner {
                 }
                 case "trade" -> iniciarFlujoTrade(parts);
 
+                case "stop" -> {
+                    validarLogin();
+                    if (parts.length < 2) {
+                        System.out.println("Uso: stop <ID>  o  stop -all");
+                        return;
+                    }
+                    if (parts[1].equalsIgnoreCase("-all")) {
+                        estrategiaService.detenerTodas();
+                    } else {
+                        try {
+                            Long id = Long.parseLong(parts[1]);
+                            estrategiaService.detenerEstrategia(id);
+                        } catch (NumberFormatException e) {
+                            System.out.println("El ID debe ser un número.");
+                        }
+                    }
+                }
+                case "term" -> {
+                    validarLogin();
+                    if (parts.length < 2) {
+                        System.out.println("Uso: term <ID> (Detiene y DEVUELVE fondos a la wallet)");
+                        return;
+                    }
+                    try {
+                        Long id = Long.parseLong(parts[1]);
+                        estrategiaService.terminarEstrategia(id);
+                    } catch (NumberFormatException e) {
+                        System.out.println("El ID debe ser un número.");
+                    } catch (Exception e) {
+                        System.err.println("Error al terminar estrategia: " + e.getMessage());
+                    }
+                }
                 case "ayuda" -> mostrarAyuda();
                 default -> System.out.println("Comando desconocido. Escribe 'ayuda'.");
             }

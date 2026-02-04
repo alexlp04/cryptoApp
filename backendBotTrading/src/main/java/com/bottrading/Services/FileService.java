@@ -14,29 +14,42 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
 
+/**
+ * Servicio encargado de la persistencia de datos en el sistema de archivos (CSV).
+ * Gestiona el guardado de trades individuales, estadísticas agregadas y limpieza de directorios.
+ */
 @Service
 public class FileService {
 
     private final Gson gson = new Gson();
 
+    /**
+     * Procesa y guarda los resultados completos de un backtest (Trades + Estadísticas).
+     *
+     * @param nombreEstrategia Nombre de la estrategia ejecutada.
+     * @param timeframe        Marco temporal utilizado.
+     * @param jsonResultado    JSON crudo devuelto por el motor de Python.
+     * @throws Exception Si ocurre un error de parseo o escritura.
+     */
     public void guardarResultadosCompletos(String nombreEstrategia, String timeframe, String jsonResultado)
             throws Exception {
-        Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {
-        }.getType());
+        
+        Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {}.getType());
 
-        List<Map<String, Object>> trades = (List<Map<String, Object>>) resultado.get("trades");
-        List<Map<String, Object>> statsList = (List<Map<String, Object>>) resultado.get("stats");
+        // Serializamos y deserializamos de nuevo para obtener los tipos concretos sin warnings
+        String tradesJson = gson.toJson(resultado.get("trades"));
+        List<Map<String, Object>> trades = gson.fromJson(tradesJson, new TypeToken<List<Map<String, Object>>>() {}.getType());
 
-        // 1. Guardar trades: cada uno a su archivo MONEDA-TF-trades_backtest.csv
+        String statsJson = gson.toJson(resultado.get("stats"));
+        List<Map<String, Object>> statsList = gson.fromJson(statsJson, new TypeToken<List<Map<String, Object>>>() {}.getType());
+
         if (trades != null) {
             for (Map<String, Object> trade : trades) {
-                // Extraemos el símbolo real del trade (BTCUSDT, ETHUSDT...)
                 String symbol = trade.get("symbol").toString();
                 guardarTrade(nombreEstrategia, timeframe, symbol, trade, true);
             }
         }
 
-        // 2. Guardar estadísticas: al archivo consolidado results_backtest.csv
         if (statsList != null) {
             for (Map<String, Object> stats : statsList) {
                 guardarStats(nombreEstrategia, timeframe, stats, true);
@@ -44,13 +57,19 @@ public class FileService {
         }
     }
 
-    // Sobrecargamos o modificamos el método guardarTrade para que reciba el símbolo
-    // explícito
+    /**
+     * Guarda un trade individual en su archivo CSV correspondiente.
+     * Si el archivo no existe, crea la cabecera.
+     * * @param nombreEstrategia Nombre de la estrategia.
+     * @param timeframe        Timeframe.
+     * @param symbol           Símbolo del trade.
+     * @param trade            Datos del trade (precio, PnL, timestamp, etc.).
+     * @param isBacktest       True si es simulación, False si es tiempo real.
+     */
     public synchronized void guardarTrade(String nombreEstrategia, String timeframe, String symbol,
             Map<String, Object> trade, boolean isBacktest) {
         try {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
-            // Nombre dinámico basado en el símbolo real del trade
             String fileName = String.format("%s-%s-trades%s", symbol, timeframe, suffix);
             Path filePath = getCarpetaEstrategia(nombreEstrategia).resolve(fileName);
 
@@ -77,6 +96,31 @@ public class FileService {
         }
     }
 
+    /**
+     * Sobrecarga de `guardarTrade` para uso manual desde Java con tipos fuertes.
+     */
+    public synchronized void guardarTrade(String nombreEstrategia, String timeframe, String symbol,
+            String side, BigDecimal price, long timestamp,
+            BigDecimal pnl, BigDecimal capital, boolean isBacktest) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("side", side);
+        map.put("price", price);
+        map.put("timestamp", timestamp);
+        if (pnl != null) map.put("pnl", String.format("%.8f", pnl));
+        if (capital != null) map.put("capital", String.format("%.2f", capital));
+        
+        guardarTrade(nombreEstrategia, timeframe, symbol, map, isBacktest);
+    }
+
+    /**
+     * Actualiza el archivo de estadísticas acumuladas (results.csv).
+     * Si ya existe una entrada para ese símbolo y timeframe, la sobrescribe.
+     *
+     * @param nombreEstrategia Nombre de la estrategia.
+     * @param timeframe        Timeframe.
+     * @param stats            Mapa con las métricas (win_rate, drawdown, etc.).
+     * @param isBacktest       True si es simulación.
+     */
     public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
         try {
@@ -85,15 +129,15 @@ public class FileService {
 
             List<Map<String, Object>> rows = new ArrayList<>();
 
-            // 1. Leer existentes para NO PERDER los datos de otras monedas
+            // 1. Leer estadísticas previas para preservar datos de otros pares
             if (Files.exists(filePath)) {
                 try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
-                    String header = br.readLine(); // saltar header
+                    br.readLine();
+                    
                     String line;
                     while ((line = br.readLine()) != null) {
                         String[] p = line.split(",", -1);
-                        if (p.length < 14)
-                            continue;
+                        if (p.length < 14) continue;
 
                         Map<String, Object> row = new HashMap<>();
                         row.put("symbol", p[0]);
@@ -115,34 +159,23 @@ public class FileService {
                 }
             }
 
-            // 2. Eliminar la versión antigua de esta moneda (si existe) para poner la nueva
+            // 2. Reemplazar o añadir la nueva estadística
             String currentSymbol = stats.get("symbol").toString();
             rows.removeIf(r -> r.get("symbol").equals(currentSymbol) && r.get("timeframe").equals(timeframe));
-
-            // Añadimos los nuevos stats
             rows.add(stats);
 
-            // 3. Escribir todo de nuevo sin nulls
+            // 3. Reescribir el archivo completo
             try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath, StandardCharsets.UTF_8))) {
                 pw.println("symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown," +
                         "retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado");
 
                 for (Map<String, Object> r : rows) {
                     pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
-                            getSafe(r, "symbol"),
-                            getSafe(r, "timeframe"),
-                            getSafe(r, "op_ganadas"),
-                            getSafe(r, "op_perdidas"),
-                            getSafe(r, "op_totales"),
-                            getSafe(r, "max_drawdown"),
-                            getSafe(r, "abs_drawdown"),
-                            getSafe(r, "retorno_acumulado"),
-                            getSafe(r, "retorno_total"),
-                            getSafe(r, "win_rate"),
-                            getSafe(r, "profit_factor"),
-                            getSafe(r, "fecha_inicio"),
-                            getSafe(r, "fecha_fin"),
-                            getSafe(r, "resultado"));
+                            getSafe(r, "symbol"), getSafe(r, "timeframe"), getSafe(r, "op_ganadas"),
+                            getSafe(r, "op_perdidas"), getSafe(r, "op_totales"), getSafe(r, "max_drawdown"),
+                            getSafe(r, "abs_drawdown"), getSafe(r, "retorno_acumulado"), getSafe(r, "retorno_total"),
+                            getSafe(r, "win_rate"), getSafe(r, "profit_factor"), getSafe(r, "fecha_inicio"),
+                            getSafe(r, "fecha_fin"), getSafe(r, "resultado"));
                 }
             }
         } catch (IOException e) {
@@ -150,54 +183,9 @@ public class FileService {
         }
     }
 
-    // Función auxiliar para evitar los "null" visuales en el CSV
-    private String getSafe(Map<String, Object> map, String key) {
-        Object val = map.get(key);
-        return (val == null) ? "" : val.toString();
-    }
-
-    private Path getCarpetaEstrategia(String nombreEstrategia) throws IOException {
-        // La carpeta ahora se llama simplemente "NombreEstrategia" dentro de results
-        Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
-        if (!Files.exists(path)) {
-            Files.createDirectories(path);
-        }
-        return path;
-    }
-
-    public synchronized void guardarTrade(String nombreEstrategia, String timeframe, String symbol,
-            String side, BigDecimal price, long timestamp,
-            BigDecimal pnl, BigDecimal capital, boolean isBacktest) {
-        try {
-            Path carpeta = getCarpetaEstrategia(nombreEstrategia);
-
-            String suffix = isBacktest ? "_backtest.csv" : ".csv";
-            String fileName = String.format("%s-%s-trades%s", symbol, timeframe, suffix);
-            Path filePath = carpeta.resolve(fileName);
-
-            boolean esNuevo = !Files.exists(filePath);
-
-            try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath,
-                    StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND))) {
-
-                if (esNuevo) {
-                    pw.println("symbol,timeframe,side,price,timestamp,pnl,capital");
-                }
-
-                pw.printf("%s,%s,%s,%.8f,%d,%s,%s%n",
-                        symbol,
-                        timeframe,
-                        side,
-                        price,
-                        timestamp,
-                        (pnl != null ? String.format("%.8f", pnl) : ""),
-                        (capital != null ? String.format("%.2f", capital) : ""));
-            }
-        } catch (IOException e) {
-            System.err.println("Error al guardar trade individual: " + e.getMessage());
-        }
-    }
-
+    /**
+     * Limpia los archivos de backtest antiguos si el usuario lo confirma.
+     */
     public void verificarYLimpiarCarpetaEstrategia(String nombreEstrategia) {
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
@@ -205,27 +193,83 @@ public class FileService {
             System.out.println("\nLa carpeta de resultados '" + nombreEstrategia + "' ya existe.");
             System.out.print("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
 
-            Scanner sc = new Scanner(System.in);
-            String respuesta = sc.nextLine().trim().toLowerCase();
-
-            if (respuesta.equals("s")) {
-                try (var stream = Files.list(carpeta)) {
-                    stream.filter(path -> path.getFileName().toString().contains("backtest"))
-                            .forEach(path -> {
-                                try {
-                                    Files.delete(path);
-                                } catch (IOException e) {
-                                    System.err.println("No se pudo borrar: " + path.getFileName());
-                                }
-                            });
-                    System.out.println("Archivos de backtest antiguos eliminados.");
-                } catch (IOException e) {
-                    System.err.println("Error al acceder a la carpeta: " + e.getMessage());
+            try (Scanner sc = new Scanner(System.in)) {
+                String respuesta = sc.nextLine().trim().toLowerCase();
+                if (respuesta.equals("s")) {
+                    limpiarArchivosBacktest(carpeta);
+                } else {
+                    System.out.println("Manteniendo archivos anteriores.");
                 }
-            } else {
-                System.out.println("Manteniendo archivos anteriores. Los nuevos datos se añadirán al final.");
-            }
+            } 
+
+        }
+    }
+    
+    // Método auxiliar para limpieza
+    private void limpiarArchivosBacktest(Path carpeta) {
+        try (var stream = Files.list(carpeta)) {
+            stream.filter(path -> path.getFileName().toString().contains("backtest"))
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            System.err.println("No se pudo borrar: " + path.getFileName());
+                        }
+                    });
+            System.out.println("Archivos de backtest antiguos eliminados.");
+        } catch (IOException e) {
+            System.err.println("Error al acceder a la carpeta: " + e.getMessage());
         }
     }
 
+    /**
+     * Lee las estadísticas actuales desde el CSV para permitir actualizaciones incrementales en tiempo real.
+     */
+    public Map<String, Object> leerStatsActuales(String nombreEstrategia, String timeframe, String symbol) {
+        Map<String, Object> stats = new HashMap<>();
+        Path filePath = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia, "results.csv");
+
+        if (Files.exists(filePath)) {
+            try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+                br.readLine(); // Ignorar header
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String[] p = line.split(",", -1);
+                    if (p.length >= 14 && p[0].equals(symbol) && p[1].equals(timeframe)) {
+                        stats.put("symbol", p[0]);
+                        stats.put("timeframe", p[1]);
+                        stats.put("op_ganadas", p[2]);
+                        stats.put("op_perdidas", p[3]);
+                        stats.put("op_totales", p[4]);
+                        stats.put("max_drawdown", p[5]);
+                        stats.put("abs_drawdown", p[6]);
+                        stats.put("retorno_acumulado", p[7]);
+                        stats.put("retorno_total", p[8]);
+                        stats.put("win_rate", p[9]);
+                        stats.put("profit_factor", p[10]);
+                        stats.put("fecha_inicio", p[11]);
+                        stats.put("fecha_fin", p[12]);
+                        stats.put("resultado", p[13]);
+                        break;
+                    }
+                }
+            } catch (IOException e) {
+                System.err.println("Error al leer stats: " + e.getMessage());
+            }
+        }
+        return stats;
+    }
+
+    private String getSafe(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        return (val == null) ? "" : val.toString();
+    }
+
+    private Path getCarpetaEstrategia(String nombreEstrategia) throws IOException {
+        Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
+        if (!Files.exists(path)) {
+            Files.createDirectories(path);
+        }
+        return path;
+    }
 }
