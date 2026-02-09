@@ -2,6 +2,9 @@ package com.bottrading.services;
 
 import com.bottrading.beans.*;
 import com.bottrading.repositories.*;
+
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,20 +20,25 @@ import java.util.Map;
  * Recibe señales del motor de Python, gestiona el estado de las posiciones
  * y coordina los movimientos contables con {@link AccountingService}.
  */
+@Slf4j
 @Service
 public class PaperTradingService {
 
-    @Autowired
-    private AccountingService accountingService;
+    private final AccountingService accountingService;
+    private final InstanciaEstrategiaRepository instanciaRepo;
+    private final PosicionRepository posicionRepo;
+    private final FileService fileService;
 
     @Autowired
-    private InstanciaEstrategiaRepository instanciaRepo;
-
-    @Autowired
-    private PosicionRepository posicionRepo;
-
-    @Autowired
-    private FileService fileService;
+    public PaperTradingService(AccountingService accountingService,
+                               InstanciaEstrategiaRepository instanciaRepo,
+                               PosicionRepository posicionRepo,
+                               FileService fileService) {
+        this.accountingService = accountingService;
+        this.instanciaRepo = instanciaRepo;
+        this.posicionRepo = posicionRepo;
+        this.fileService = fileService;
+    }
 
     /**
      * Procesa una señal de trading (BUY/SELL) recibida desde el motor de estrategia.
@@ -70,7 +78,7 @@ public class PaperTradingService {
         // Validaciones básicas de gestión de riesgo
         if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
             montoAInvertir.compareTo(e.getCapitalReservado()) > 0) {
-            System.err.println("Orden BUY rechazada: Capital insuficiente o riesgo inválido.");
+            log.error("Orden BUY rechazada: Capital insuficiente o riesgo inválido.");
             return;
         }
 

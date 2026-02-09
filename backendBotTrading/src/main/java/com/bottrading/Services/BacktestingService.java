@@ -17,7 +17,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * Servicio encargado de la ejecución de simulaciones (Backtesting).
- * Actúa como puente entre los datos históricos de Java y el motor de cálculo en Python.
+ * Actúa como puente entre los datos históricos de Java y el motor de cálculo en
+ * Python.
  */
 @Service
 public class BacktestingService {
@@ -25,55 +26,73 @@ public class BacktestingService {
     private final Gson gson = new Gson();
 
     /**
-     * Ejecuta una simulación de estrategia enviando datos históricos formateados al motor de Python.
-     *
-     * @param rutaEstrategia Ruta absoluta del archivo .py de la estrategia a probar.
-     * @param timeframe      Marco temporal de los datos (ej: "1m", "1h").
-     * @param velasPorSimbolo Mapa que contiene la lista de velas históricas por cada par (Símbolo).
-     * @return String conteniendo el JSON de resultados generado por Python.
-     * @throws Exception Si ocurre un error de I/O o el proceso de Python termina con error.
+     * Método principal: Orquestador.
+     * Su complejidad cognitiva ahora es mínima porque solo llama a otros métodos.
      */
     public String ejecutarBacktest(String rutaEstrategia, String timeframe, Map<String, List<Vela>> velasPorSimbolo)
             throws Exception {
+        // 1. Preparar datos
+        Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
 
-        // Transformación de objetos Vela a Mapas simples para serialización JSON
-        Map<String, List<Map<String, Object>>> velasMapeadas = new HashMap<>();
+        // 2. Construir Payload
+        String jsonPayload = construirPayload(rutaEstrategia, timeframe, velasMapeadas);
 
-        velasPorSimbolo.forEach((symbol, velas) -> {
-            List<Map<String, Object>> listaVelas = velas.stream().map(v -> {
-                Map<String, Object> m = new HashMap<>();
-                m.put("timestamp", v.getOpenTime());
-                m.put("open", v.getOpen() != null ? v.getOpen().doubleValue() : null);
-                m.put("high", v.getHigh() != null ? v.getHigh().doubleValue() : null);
-                m.put("low", v.getLow() != null ? v.getLow().doubleValue() : null);
-                m.put("close", v.getClose() != null ? v.getClose().doubleValue() : null);
-                m.put("volume", v.getVolume() != null ? v.getVolume().doubleValue() : null);
-                return m;
-            }).collect(Collectors.toList());
-            velasMapeadas.put(symbol, listaVelas);
+        // 3. Ejecutar proceso externo
+        return invocarMotorPython(jsonPayload);
+    }
+
+    // =========================================================================
+    // MÉTODOS AUXILIARES (Refactorización para reducir complejidad)
+    // =========================================================================
+
+    private Map<String, List<Map<String, Object>>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
+        Map<String, List<Map<String, Object>>> resultado = new HashMap<>();
+
+        velasPorSimbolo.forEach((symbol, listaVelas) -> {
+            List<Map<String, Object>> listaTransformada = listaVelas.stream()
+                    .map(this::convertirVelaAMapa) // Delegamos la conversión de 1 vela
+                    .collect(Collectors.toList());
+            resultado.put(symbol, listaTransformada);
         });
 
+        return resultado;
+    }
+
+    private Map<String, Object> convertirVelaAMapa(Vela v) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("timestamp", v.getOpenTime());
+        // El uso de Optional o ternarios simples reduce la anidación visual
+        m.put("open", v.getOpen() != null ? v.getOpen().doubleValue() : null);
+        m.put("high", v.getHigh() != null ? v.getHigh().doubleValue() : null);
+        m.put("low", v.getLow() != null ? v.getLow().doubleValue() : null);
+        m.put("close", v.getClose() != null ? v.getClose().doubleValue() : null);
+        m.put("volume", v.getVolume() != null ? v.getVolume().doubleValue() : null);
+        return m;
+    }
+
+    private String construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas) {
         Map<String, Object> payload = Map.of(
-                "strategy_path", rutaEstrategia,
-                "timeframe", timeframe,
-                "velas", velasMapeadas,
-                "capital", 1000.0, // Capital base para la simulación
-                "risk_per_trade", 0.02
-        );
+                "strategy_path", ruta,
+                "timeframe", tf,
+                "velas", velas,
+                "capital", 1000.0,
+                "risk_per_trade", 0.02);
+        return gson.toJson(payload);
+    }
 
-        String jsonPayload = gson.toJson(payload);
-
+    private String invocarMotorPython(String jsonPayload) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_BACKTEST_PATH);
-        pb.redirectErrorStream(false); // Mantenemos streams separados para diferenciar errores
+        pb.redirectErrorStream(false);
         Process process = pb.start();
 
-        // 1. Inyección de datos al motor (Stdin)
+        // Escritura (Input)
         try (OutputStream os = process.getOutputStream()) {
             os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
             os.flush();
         }
 
-        // 2. Lectura de resultados (Stdout) y posibles errores (Stderr)
+        // Lectura (Output)
+        // helper
         String stdout = leerStream(process.getInputStream());
         String stderr = leerStream(process.getErrorStream());
 

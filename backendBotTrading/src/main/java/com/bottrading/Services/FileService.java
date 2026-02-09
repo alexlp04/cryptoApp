@@ -1,8 +1,12 @@
 package com.bottrading.services;
 
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -18,6 +22,7 @@ import java.util.*;
  * Servicio encargado de la persistencia de datos en el sistema de archivos (CSV).
  * Gestiona el guardado de trades individuales, estadísticas agregadas y limpieza de directorios.
  */
+@Slf4j
 @Service
 public class FileService {
 
@@ -45,7 +50,7 @@ public class FileService {
 
         if (trades != null) {
             for (Map<String, Object> trade : trades) {
-                String symbol = trade.get("symbol").toString();
+                String symbol = trade.get(AppConstants.KEY_SYMBOL).toString();
                 guardarTrade(nombreEstrategia, timeframe, symbol, trade, true);
             }
         }
@@ -79,20 +84,20 @@ public class FileService {
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND))) {
 
                 if (nuevo) {
-                    pw.println("symbol,timeframe,side,price,timestamp,pnl,capital");
+                    pw.println(AppConstants.CSV_HEADER_TRADES);
                 }
 
                 pw.printf("%s,%s,%s,%s,%s,%s,%s%n",
                         symbol,
                         timeframe,
-                        trade.get("side"),
-                        trade.get("price"),
-                        trade.get("timestamp"),
-                        trade.getOrDefault("pnl", ""),
-                        trade.getOrDefault("capital", ""));
+                        trade.get(AppConstants.KEY_SIDE),
+                        trade.get(AppConstants.KEY_PRICE),
+                        trade.get(AppConstants.KEY_TIMESTAMP),
+                        trade.getOrDefault(AppConstants.KEY_PNL, ""),
+                        trade.getOrDefault(AppConstants.KEY_CAPITAL, ""));
             }
         } catch (IOException e) {
-            System.err.println("Error al guardar trade: " + e.getMessage());
+            log.error("Error al guardar trade: {}", e.getMessage());
         }
     }
 
@@ -103,11 +108,11 @@ public class FileService {
             String side, BigDecimal price, long timestamp,
             BigDecimal pnl, BigDecimal capital, boolean isBacktest) {
         Map<String, Object> map = new HashMap<>();
-        map.put("side", side);
-        map.put("price", price);
-        map.put("timestamp", timestamp);
-        if (pnl != null) map.put("pnl", String.format("%.8f", pnl));
-        if (capital != null) map.put("capital", String.format("%.2f", capital));
+        map.put(AppConstants.KEY_SIDE, side);
+        map.put(AppConstants.KEY_PRICE, price);
+        map.put(AppConstants.KEY_TIMESTAMP, timestamp);
+        if (pnl != null) map.put(AppConstants.KEY_PNL, String.format("%.8f", pnl));
+        if (capital != null) map.put(AppConstants.KEY_CAPITAL, String.format("%.2f", capital));
         
         guardarTrade(nombreEstrategia, timeframe, symbol, map, isBacktest);
     }
@@ -121,7 +126,7 @@ public class FileService {
      * @param stats            Mapa con las métricas (win_rate, drawdown, etc.).
      * @param isBacktest       True si es simulación.
      */
-    public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
+public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
         try {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
@@ -129,57 +134,64 @@ public class FileService {
 
             List<Map<String, Object>> rows = new ArrayList<>();
 
-            // 1. Leer estadísticas previas para preservar datos de otros pares
             if (Files.exists(filePath)) {
                 try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
-                    br.readLine();
-                    
+                    br.readLine(); // Skip header
                     String line;
                     while ((line = br.readLine()) != null) {
-                        String[] p = line.split(",", -1);
+                        // SOLUCIÓN: Usamos parseCsvLine en lugar de split sencillo
+                        String[] p = parseCsvLine(line);
+                        
                         if (p.length < 14) continue;
 
                         Map<String, Object> row = new HashMap<>();
-                        row.put("symbol", p[0]);
-                        row.put("timeframe", p[1]);
-                        row.put("op_ganadas", p[2]);
-                        row.put("op_perdidas", p[3]);
-                        row.put("op_totales", p[4]);
-                        row.put("max_drawdown", p[5]);
-                        row.put("abs_drawdown", p[6]);
-                        row.put("retorno_acumulado", p[7]);
-                        row.put("retorno_total", p[8]);
-                        row.put("win_rate", p[9]);
-                        row.put("profit_factor", p[10]);
-                        row.put("fecha_inicio", p[11]);
-                        row.put("fecha_fin", p[12]);
-                        row.put("resultado", p[13]);
+                        row.put(AppConstants.KEY_SYMBOL, p[0]);
+                        row.put(AppConstants.KEY_TIMEFRAME, p[1]);
+                        row.put(AppConstants.KEY_OP_GANADAS, p[2]);
+                        row.put(AppConstants.KEY_OP_PERDIDAS, p[3]);
+                        row.put(AppConstants.KEY_OP_TOTALES, p[4]);
+                        row.put(AppConstants.KEY_MAX_DRAWDOWN, p[5]);
+                        row.put(AppConstants.KEY_ABS_DRAWDOWN, p[6]);
+                        row.put(AppConstants.KEY_RET_ACUMULADO, p[7]);
+                        row.put(AppConstants.KEY_RET_TOTAL, p[8]);
+                        row.put(AppConstants.KEY_WIN_RATE, p[9]);
+                        row.put(AppConstants.KEY_PROFIT_FACTOR, p[10]);
+                        row.put(AppConstants.KEY_FECHA_INICIO, p[11]);
+                        row.put(AppConstants.KEY_FECHA_FIN, p[12]);
+                        row.put(AppConstants.KEY_RESULTADO, p[13]);
                         rows.add(row);
                     }
                 }
             }
 
-            // 2. Reemplazar o añadir la nueva estadística
-            String currentSymbol = stats.get("symbol").toString();
-            rows.removeIf(r -> r.get("symbol").equals(currentSymbol) && r.get("timeframe").equals(timeframe));
+            // Reemplazar o añadir
+            String currentSymbol = stats.get(AppConstants.KEY_SYMBOL).toString();
+            rows.removeIf(r -> r.get(AppConstants.KEY_SYMBOL).equals(currentSymbol) && r.get(AppConstants.KEY_TIMEFRAME).equals(timeframe));
             rows.add(stats);
 
-            // 3. Reescribir el archivo completo
             try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath, StandardCharsets.UTF_8))) {
-                pw.println("symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown," +
-                        "retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado");
+                pw.println(AppConstants.CSV_HEADER_STATS);
 
                 for (Map<String, Object> r : rows) {
                     pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
-                            getSafe(r, "symbol"), getSafe(r, "timeframe"), getSafe(r, "op_ganadas"),
-                            getSafe(r, "op_perdidas"), getSafe(r, "op_totales"), getSafe(r, "max_drawdown"),
-                            getSafe(r, "abs_drawdown"), getSafe(r, "retorno_acumulado"), getSafe(r, "retorno_total"),
-                            getSafe(r, "win_rate"), getSafe(r, "profit_factor"), getSafe(r, "fecha_inicio"),
-                            getSafe(r, "fecha_fin"), getSafe(r, "resultado"));
+                            getSafe(r, AppConstants.KEY_SYMBOL), 
+                            getSafe(r, AppConstants.KEY_TIMEFRAME), 
+                            getSafe(r, AppConstants.KEY_OP_GANADAS),
+                            getSafe(r, AppConstants.KEY_OP_PERDIDAS), 
+                            getSafe(r, AppConstants.KEY_OP_TOTALES), 
+                            getSafe(r, AppConstants.KEY_MAX_DRAWDOWN),
+                            getSafe(r, AppConstants.KEY_ABS_DRAWDOWN), 
+                            getSafe(r, AppConstants.KEY_RET_ACUMULADO), 
+                            getSafe(r, AppConstants.KEY_RET_TOTAL),
+                            getSafe(r, AppConstants.KEY_WIN_RATE), 
+                            getSafe(r, AppConstants.KEY_PROFIT_FACTOR), 
+                            getSafe(r, AppConstants.KEY_FECHA_INICIO),
+                            getSafe(r, AppConstants.KEY_FECHA_FIN), 
+                            getSafe(r, AppConstants.KEY_RESULTADO));
                 }
             }
         } catch (IOException e) {
-            System.err.println("Error al guardar stats: " + e.getMessage());
+            log.error("Error al guardar stats: {}", e.getMessage());
         }
     }
 
@@ -190,17 +202,19 @@ public class FileService {
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
         if (Files.exists(carpeta)) {
-            System.out.println("\nLa carpeta de resultados '" + nombreEstrategia + "' ya existe.");
-            System.out.print("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
+            log.info("\nLa carpeta de resultados '{}' ya existe.", nombreEstrategia);
+            log.info("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
 
             try (Scanner sc = new Scanner(System.in)) {
                 String respuesta = sc.nextLine().trim().toLowerCase();
                 if (respuesta.equals("s")) {
                     limpiarArchivosBacktest(carpeta);
                 } else {
-                    System.out.println("Manteniendo archivos anteriores.");
+                    log.info("Manteniendo archivos anteriores.");
                 }
-            } 
+            } catch (Exception e) {
+                log.error("Error al leer respuesta: {}", e.getMessage());
+            }
 
         }
     }
@@ -213,12 +227,12 @@ public class FileService {
                         try {
                             Files.delete(path);
                         } catch (IOException e) {
-                            System.err.println("No se pudo borrar: " + path.getFileName());
+                            log.error("No se pudo borrar: {}", path.getFileName());
                         }
                     });
-            System.out.println("Archivos de backtest antiguos eliminados.");
+            log.info("Archivos de backtest antiguos eliminados.");
         } catch (IOException e) {
-            System.err.println("Error al acceder a la carpeta: " + e.getMessage());
+            log.error("Error al acceder a la carpeta: {}", e.getMessage());
         }
     }
 
@@ -236,25 +250,25 @@ public class FileService {
                 while ((line = br.readLine()) != null) {
                     String[] p = line.split(",", -1);
                     if (p.length >= 14 && p[0].equals(symbol) && p[1].equals(timeframe)) {
-                        stats.put("symbol", p[0]);
-                        stats.put("timeframe", p[1]);
-                        stats.put("op_ganadas", p[2]);
-                        stats.put("op_perdidas", p[3]);
-                        stats.put("op_totales", p[4]);
-                        stats.put("max_drawdown", p[5]);
-                        stats.put("abs_drawdown", p[6]);
-                        stats.put("retorno_acumulado", p[7]);
-                        stats.put("retorno_total", p[8]);
-                        stats.put("win_rate", p[9]);
-                        stats.put("profit_factor", p[10]);
-                        stats.put("fecha_inicio", p[11]);
-                        stats.put("fecha_fin", p[12]);
-                        stats.put("resultado", p[13]);
+                        stats.put(AppConstants.KEY_SYMBOL, p[0]);
+                        stats.put(AppConstants.KEY_TIMEFRAME, p[1]);
+                        stats.put(AppConstants.KEY_OP_GANADAS, p[2]);
+                        stats.put(AppConstants.KEY_OP_PERDIDAS, p[3]);
+                        stats.put(AppConstants.KEY_OP_TOTALES, p[4]);
+                        stats.put(AppConstants.KEY_MAX_DRAWDOWN, p[5]);
+                        stats.put(AppConstants.KEY_ABS_DRAWDOWN, p[6]);
+                        stats.put(AppConstants.KEY_RET_ACUMULADO, p[7]);
+                        stats.put(AppConstants.KEY_RET_TOTAL, p[8]);
+                        stats.put(AppConstants.KEY_WIN_RATE, p[9]);
+                        stats.put(AppConstants.KEY_PROFIT_FACTOR, p[10]);
+                        stats.put(AppConstants.KEY_FECHA_INICIO, p[11]);
+                        stats.put(AppConstants.KEY_FECHA_FIN, p[12]);
+                        stats.put(AppConstants.KEY_RESULTADO, p[13]);
                         break;
                     }
                 }
             } catch (IOException e) {
-                System.err.println("Error al leer stats: " + e.getMessage());
+                log.error("Error al leer stats: {}", e.getMessage());
             }
         }
         return stats;
@@ -271,5 +285,26 @@ public class FileService {
             Files.createDirectories(path);
         }
         return path;
+    }
+
+    /**
+     * Parsea una línea CSV respetando las comillas.
+     * Ejemplo: 'BTC, "100,00%", OK' -> ["BTC", "100,00%", "OK"]
+     */
+    private String[] parseCsvLine(String line) {
+        // Regex mágica: Separa por coma SOLO si está seguida de un número par de comillas
+        // (es decir, fuera de un bloque entrecomillado)
+        String[] tokens = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
+        
+        // Limpiamos las comillas envolventes de los resultados
+        for (int i = 0; i < tokens.length; i++) {
+            String t = tokens[i];
+            if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
+                t = t.substring(1, t.length() - 1); // Quitar comillas extremas
+                t = t.replace("\"\"", "\""); // Restaurar comillas internas
+            }
+            tokens[i] = t;
+        }
+        return tokens;
     }
 }

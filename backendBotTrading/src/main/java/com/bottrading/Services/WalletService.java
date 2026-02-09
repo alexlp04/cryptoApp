@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Servicio encargado de la gestión de billeteras (Wallets).
@@ -21,11 +20,14 @@ import java.util.stream.Collectors;
 @Service
 public class WalletService {
 
-    @Autowired
-    private WalletRepository walletRepo;
+    private final WalletRepository walletRepo;
+    private final SessionManager sessionManager;
 
     @Autowired
-    private SessionManager sessionManager;
+    public WalletService(WalletRepository walletRepo, SessionManager sessionManager) {
+        this.walletRepo = walletRepo;
+        this.sessionManager = sessionManager;
+    }
 
     /**
      * Crea una nueva wallet asociada al usuario actualmente logueado.
@@ -52,7 +54,7 @@ public class WalletService {
         wallet.setNombre(nombre);
         wallet.setUsuario(usuario);
         wallet.setBalanceReal(balanceInicial);
-        wallet.setBalanceDisponible(balanceInicial); // Inicialmente, todo el capital está libre
+        wallet.setBalanceDisponible(balanceInicial);
         wallet.setType(isReal ? WalletType.REAL : WalletType.PAPER);
         wallet.setActive(false);
 
@@ -123,7 +125,7 @@ public class WalletService {
                         w.getBalanceDisponible().toPlainString(),
                         w.getType(),
                         w.isActive() ? "[EN USO]" : ""))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
