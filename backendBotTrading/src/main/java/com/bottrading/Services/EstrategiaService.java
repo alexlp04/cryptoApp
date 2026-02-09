@@ -4,8 +4,12 @@ import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.Vela;
 import com.bottrading.repositories.InstanciaEstrategiaRepository;
 import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
+
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,27 +17,34 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Servicio encargado de la orquestación del ciclo de vida de las estrategias.
- * Gestiona el inicio, parada (pausa), terminación (liquidación) y consultas de estado.
+ * Gestiona el inicio, parada (pausa), terminación (liquidación) y consultas de
+ * estado.
  */
+@Slf4j
 @Service
 public class EstrategiaService {
 
+    private final InstanciaEstrategiaRepository instanciaRepo;
+    private final VelaRepository velaRepo;
+    private final AccountingService accountingService;
+    private final TradingService tradingService;
+    private final BacktestingService backtestingService;
+    private final FileService fileService;
+
     @Autowired
-    private InstanciaEstrategiaRepository instanciaRepo;
-    @Autowired
-    private VelaRepository velaRepo;
-    @Autowired
-    private AccountingService accountingService;
-    @Autowired
-    private TradingService tradingService;
-    @Autowired
-    private BacktestingService backtestingService;
-    @Autowired
-    private FileService fileService;
+    public EstrategiaService(InstanciaEstrategiaRepository instanciaRepo, VelaRepository velaRepo,
+            AccountingService accountingService, TradingService tradingService,
+            BacktestingService backtestingService, FileService fileService) {
+        this.instanciaRepo = instanciaRepo;
+        this.velaRepo = velaRepo;
+        this.accountingService = accountingService;
+        this.tradingService = tradingService;
+        this.backtestingService = backtestingService;
+        this.fileService = fileService;
+    }
 
     // ========================================================================
     // SECCIÓN 1: GESTIÓN DE CICLO DE VIDA (START / STOP / TERMINATE)
@@ -46,16 +57,16 @@ public class EstrategiaService {
      * 3. Lanza el proceso de Python (TradingService).
      *
      * @param nombreEstra Nombre del archivo .py
-     * @param tf Timeframe (ej: 1m, 1h)
-     * @param coins Lista de símbolos
-     * @param isReal True para usar dinero real (mock), False para paper
-     * @param walletId ID de la billetera origen
-     * @param risk Riesgo por operación (0.01 = 1%)
-     * @param capital Capital inicial a reservar
+     * @param tf          Timeframe (ej: 1m, 1h)
+     * @param coins       Lista de símbolos
+     * @param isReal      True para usar dinero real (mock), False para paper
+     * @param walletId    ID de la billetera origen
+     * @param risk        Riesgo por operación (0.01 = 1%)
+     * @param capital     Capital inicial a reservar
      */
     @Transactional
     public void iniciarTradeRT(String nombreEstra, String tf, List<String> coins,
-                               boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
 
         InstanciaEstrategia instancia = new InstanciaEstrategia();
         instancia.setNombreEstrategia(nombreEstra);
@@ -82,27 +93,39 @@ public class EstrategiaService {
     }
 
     /**
-     * COMANDO STOP: Pausa la ejecución de la estrategia.
-     * - Detiene el hilo de Python.
-     * - Cambia estado a DETENIDA.
-     * - MANTIENE el capital reservado (no devuelve fondos).
-     *
-     * @param instanciaId ID de la estrategia
+     * COMANDO START: Reanuda una estrategia detenida.
+     * Solo funciona si el estado es DETENIDA.
      */
-    public void detenerEstrategia(long instanciaId) {
-        // 1. Detener proceso físico inmediatamente
-        tradingService.detenerEstrategia(instanciaId);
-
-        // 2. Actualizar estado administrativo
-        InstanciaEstrategia instancia = instanciaRepo.findById(instanciaId).orElse(null);
-        if (instancia != null) {
-            // Solo actualizamos si estaba activa para mantener consistencia
-            if ("ACTIVA".equals(instancia.getEstado()) || "CREADA".equals(instancia.getEstado())) {
-                instancia.setEstado("DETENIDA");
-                instanciaRepo.save(instancia);
-                System.out.println("Estrategia " + instanciaId + " -> DETENIDA (Fondos mantenidos en reserva).");
-            }
+    public void iniciarEstrategiaDetenida(Long instanciaId) {
+        Optional<InstanciaEstrategia> instancia = instanciaRepo.findById(instanciaId);
+        if (!instancia.isPresent()) {
+            log.error("No se encontró la estrategia con ID: " + instanciaId);
+            return;
         }
+        InstanciaEstrategia instanciaObj = instancia.get();
+        if (!AppConstants.KEY_DETENIDA.equals(instanciaObj.getEstado())) {
+            log.error("Solo se pueden iniciar estrategias en estado DETENIDA. Estado actual: "
+                    + instanciaObj.getEstado());
+            return;
+        }
+
+        // Reactivamos
+        instanciaObj.setEstado(AppConstants.KEY_ACTIVA);
+        instanciaRepo.save(instanciaObj);
+
+        // Volvemos a lanzar el hilo de Python
+        tradingService.ejecutarTradeEnTiempoReal(instanciaObj, instanciaObj.getSimbolos());
+        log.info("Estrategia {} reanudada correctamente.", instanciaId);
+    }
+
+    public void iniciarTodasDetenidas() {
+        List<InstanciaEstrategia> detenidas = instanciaRepo.findByEstado(AppConstants.KEY_DETENIDA);
+        if (detenidas.isEmpty()) {
+            log.info("No hay estrategias detenidas para iniciar.");
+            return;
+        }
+        log.info("Iniciando {} estrategias detenidas...", detenidas.size());
+        detenidas.forEach(inst -> iniciarEstrategiaDetenida(inst.getId()));
     }
 
     /**
@@ -119,14 +142,49 @@ public class EstrategiaService {
 
         // 2. Liquidación financiera
         InstanciaEstrategia instancia = instanciaRepo.findById(instanciaId).orElse(null);
-        if (instancia != null && !"FINALIZADA".equals(instancia.getEstado())) {
+        if (instancia != null && !AppConstants.KEY_TERMINADA.equals(instancia.getEstado())) {
             if (instancia.getWalletAsociada() != null) {
                 // AccountingService mueve el dinero y cierra el registro
                 accountingService.closeStrategy(instancia.getWalletAsociada(), instancia.getId());
-                System.out.println("Estrategia " + instanciaId + " -> FINALIZADA (Fondos retornados a Wallet).");
+                log.info("Estrategia {} -> TERMINADA (Fondos retornados a Wallet).", instanciaId);
             }
         } else {
-            System.out.println("La estrategia no existe o ya estaba finalizada.");
+            log.info("La estrategia no existe o ya estaba finalizada.");
+            return;
+        }
+    }
+
+    public void terminarTodas() {
+        Set<Long> ids = tradingService.getIdsEstrategiasActivas();
+        if (ids.isEmpty()) {
+            log.info("No hay estrategias activas para terminar.");
+            return;
+        }
+        log.info("Terminando {} estrategias...", ids.size());
+        ids.stream().forEach(this::terminarEstrategia);
+        log.info("Todas las estrategias han sido finalizadas.");
+    }
+
+    /**
+     * COMANDO STOP: Pausa la ejecución de la estrategia.
+     * - Detiene el hilo de Python.
+     * - Cambia estado a DETENIDA.
+     * - MANTIENE el capital reservado (no devuelve fondos).
+     *
+     * @param instanciaId ID de la estrategia
+     */
+    public void detenerEstrategia(long instanciaId) {
+        // 1. Detener proceso físico inmediatamente
+        tradingService.detenerEstrategia(instanciaId);
+
+        // 2. Actualizar estado administrativo
+        InstanciaEstrategia instanciaObj = instanciaRepo.findById(instanciaId).orElse(null);
+        if (instanciaObj != null && (AppConstants.KEY_ACTIVA.equals(instanciaObj.getEstado()))) {
+
+            instanciaObj.setEstado(AppConstants.KEY_DETENIDA);
+            instanciaRepo.save(instanciaObj);
+            log.info("Estrategia {} -> DETENIDA (Fondos mantenidos en reserva).", instanciaId);
+
         }
     }
 
@@ -137,79 +195,62 @@ public class EstrategiaService {
     public void detenerTodas() {
         Set<Long> ids = tradingService.getIdsEstrategiasActivas();
         if (ids.isEmpty()) {
-            System.out.println("No hay estrategias activas para detener.");
+            log.info("No hay estrategias activas para detener.");
             return;
         }
-
-        System.out.println("Pausando " + ids.size() + " estrategias...");
-        for (Long id : ids) {
-            detenerEstrategia(id);
-        }
-        System.out.println("Todas las estrategias han sido pausadas.");
+        log.info("Pausando {} estrategias...", ids.size());
+        ids.stream().forEach(this::detenerEstrategia);
+        log.info("Todas las estrategias han sido pausadas.");
     }
 
     // ========================================================================
     // SECCIÓN 2: CONSULTAS E INFORMACIÓN (LISTADOS)
     // ========================================================================
 
-    /**
-     * Lista las estrategias que tienen un hilo de ejecución activo en TradingService.
-     */
-    public List<String> listarEstrategiasEnEjecucion() {
-        Set<Long> idsActivos = tradingService.getIdsEstrategiasActivas();
-        if (idsActivos.isEmpty()) {
-            return List.of("No hay estrategias en ejecución.");
-        }
-
-        List<String> reporte = new ArrayList<>();
-        for (long id : idsActivos) {
-            instanciaRepo.findById(id).ifPresent(inst -> {
-                String linea = String.format("ID: %d | Estrategia: %s | Symbol: %s | Capital Actual: %s | Estado: %s",
-                        inst.getId(),
-                        inst.getNombreEstrategia(),
-                        inst.getSimbolos(),
-                        inst.getCapitalReservado(), // Capital remanente en el silo
-                        inst.getEstado());
-                reporte.add(linea);
-            });
-        }
-        return reporte;
+    public List<String> listarEstrategias() {
+        List<InstanciaEstrategia> lista = instanciaRepo.findAll();
+        return lista.stream()
+                .map(InstanciaEstrategia::toString)
+                .toList();
     }
 
-    /**
-     * Lista las estrategias que están en base de datos con estado "DETENIDA".
-     * Muestra el capital que tienen retenido.
-     */
+    public List<String> listarEstrategiasActivas() {
+        return listarPorEstado("ACTIVA", "No hay estrategias activas.");
+    }
+
+    public List<String> listarEstrategiasTerminadas() {
+        return listarPorEstado("TERMINADA", "No hay estrategias finalizadas.");
+    }
+
     public List<String> listarEstrategiasDetenidas() {
-        List<InstanciaEstrategia> lista = instanciaRepo.findByEstado("DETENIDA");
+        return listarPorEstado("DETENIDA", "No hay estrategias detenidas.");
+    }
 
+    private List<String> listarPorEstado(String estado, String mensajeVacio) {
+        List<InstanciaEstrategia> lista = instanciaRepo.findByEstado(estado);
         if (lista.isEmpty()) {
-            return List.of("No hay estrategias en pausa (DETENIDA).");
+            return List.of(mensajeVacio);
         }
-
-        return lista.stream().map(inst ->
-                String.format("ID: %d | %s | Capital Retenido: %s | (Usa 'term %d' para liberar fondos)",
-                        inst.getId(),
-                        inst.getNombreEstrategia(),
-                        inst.getCapitalReservado(),
-                        inst.getId())
-        ).collect(Collectors.toList());
+        return lista.stream()
+                .map(InstanciaEstrategia::toString)
+                .toList();
     }
 
     /**
      * Lista los archivos .py físicos disponibles en la carpeta de estrategias.
      */
-    public List<String> listarEstrategias() {
+    public List<String> listarFicherosDeEstrategias() {
         File folder = new File(PathConfig.STRATEGIES_DIR);
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".py"));
 
         if (files == null || files.length == 0) {
+            log.info("No se encontraron archivos en: {}", PathConfig.STRATEGIES_DIR);
             return List.of("No se encontraron archivos en: " + PathConfig.STRATEGIES_DIR);
         }
 
         return Arrays.stream(files)
                 .map(f -> "- " + f.getName().replace(".py", ""))
-                .collect(Collectors.toList());
+                .toList();
     }
 
     public BigDecimal getCapitalComprometido(Long walletAsociada) {
@@ -231,13 +272,13 @@ public class EstrategiaService {
             List<Vela> velas = velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, tf);
             velasPorSimbolo.put(symbol, velas);
             if (velas.isEmpty()) {
-                System.err.println("Advertencia: No hay velas para " + symbol + " en " + tf);
+                log.warn("Advertencia: No hay velas para {} en {}", symbol, tf);
             }
         }
 
         if (velasPorSimbolo.isEmpty()) {
             ConsoleLoader.getInstance().stop();
-            System.err.println("Abortando: Sin datos para procesar.");
+            log.error("Abortando: Sin datos para procesar.");
             return;
         }
 
@@ -249,9 +290,9 @@ public class EstrategiaService {
         // 3. Guardar resultados
         if (jsonResultado != null && !jsonResultado.isEmpty()) {
             fileService.guardarResultadosCompletos(nombreEstra, tf, jsonResultado);
-            System.out.println("Resultados guardados en: " + PathConfig.RESULTS_DIR + File.separator + nombreEstra);
+            log.info("Resultados guardados en: {}{}{}", PathConfig.RESULTS_DIR, File.separator, nombreEstra);
         } else {
-            System.err.println("El motor de backtest no devolvió resultados.");
+            log.error("El motor de backtest no devolvió resultados.");
         }
     }
 }

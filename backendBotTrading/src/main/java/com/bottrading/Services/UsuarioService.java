@@ -16,9 +16,13 @@ import jakarta.transaction.Transactional;
 @Service
 public class UsuarioService {
 
-    @Autowired
-    private UsuarioRepository usuarioRepo;
+    private final UsuarioRepository usuarioRepo;
 
+    @Autowired
+    public UsuarioService(UsuarioRepository usuarioRepo) {
+        this.usuarioRepo = usuarioRepo;
+    }
+    
     /**
      * Registra un nuevo usuario en el sistema.
      * Verifica duplicados y cifra la contraseña antes de persistir.

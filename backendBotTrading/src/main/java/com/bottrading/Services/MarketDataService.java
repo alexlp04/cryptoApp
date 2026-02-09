@@ -18,14 +18,16 @@ import jakarta.transaction.Transactional;
 @Service
 public class MarketDataService {
 
-    @Autowired
-    private VelaRepository velaRepo;
+    private final VelaRepository velaRepo;
+    private final FetchService fetchService;
+    private final IndicatorsService indicatorsService;
 
     @Autowired
-    private FetchService fetchService;
-
-    @Autowired
-    private IndicatorsService indicatorsService;
+    public MarketDataService(VelaRepository velaRepo, FetchService fetchService, IndicatorsService indicatorsService) {
+        this.velaRepo = velaRepo;
+        this.fetchService = fetchService;
+        this.indicatorsService = indicatorsService;
+    }
 
     /**
      * Descarga y actualiza las velas (candlesticks) para una lista de símbolos.

@@ -11,8 +11,9 @@ import com.bottrading.repositories.InstanciaEstrategiaRepository;
 import com.bottrading.repositories.LedgerRepository;
 import com.bottrading.repositories.WalletRepository;
 
-import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -20,17 +21,23 @@ import org.springframework.transaction.annotation.Transactional;
  * Gestiona el Ledger (libro mayor), balances de Wallets y estados financieros de las estrategias.
  */
 @Service
+@Slf4j
 @Transactional
 public class AccountingService {
 
-    @Autowired
-    private WalletRepository walletRepo;
+    private final WalletRepository walletRepo;
+
+    private final InstanciaEstrategiaRepository estrategiaRepo;
+
+    private final LedgerRepository ledgerRepo;
 
     @Autowired
-    private InstanciaEstrategiaRepository estrategiaRepo;
-
-    @Autowired
-    private LedgerRepository ledgerRepo;
+    public AccountingService(WalletRepository walletRepo, InstanciaEstrategiaRepository estrategiaRepo,
+            LedgerRepository ledgerRepo) {
+        this.walletRepo = walletRepo;
+        this.estrategiaRepo = estrategiaRepo;
+        this.ledgerRepo = ledgerRepo;
+    }
 
     /**
      * Activa una estrategia reservando el capital especificado de la Wallet.
@@ -67,7 +74,7 @@ public class AccountingService {
 
         } catch (Exception ex) {
             // Log de emergencia y re-throw para forzar Rollback de la transacción
-            System.err.println("Error contable al activar estrategia: " + ex.getMessage());
+            log.error("Error contable al activar estrategia: {}", ex.getMessage(), ex);
             throw ex;
         }
     }

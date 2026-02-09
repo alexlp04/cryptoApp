@@ -3,14 +3,18 @@ package com.bottrading.utils;
 public class ConsoleLoader {
 
     private Thread loaderThread;
-    private volatile boolean running = false;
+    private volatile boolean running;
 
-    private static ConsoleLoader instance = new ConsoleLoader();
+    private static ConsoleLoader instance;
 
     private ConsoleLoader() {
+        running = false;
     }
 
     public static ConsoleLoader getInstance() {
+        if (instance == null) {
+            instance = new ConsoleLoader();
+        }
         return instance;
     }
 

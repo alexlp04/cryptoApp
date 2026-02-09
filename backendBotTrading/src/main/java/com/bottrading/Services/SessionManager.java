@@ -3,6 +3,7 @@ package com.bottrading.services;
 import com.bottrading.beans.Usuario;
 
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -11,13 +12,18 @@ import org.springframework.stereotype.Component;
  * Gestiona el estado de la sesión del usuario y la carga de configuración de
  * entorno.
  */
+@Slf4j
 @Component
 public class SessionManager {
 
     private Usuario currentUser;
 
+    private final EstrategiaService estrategiaService;
+
     @Autowired
-    private TradingService tradingService;
+    public SessionManager(EstrategiaService estrategiaService) {
+        this.estrategiaService = estrategiaService;
+    }
 
     // --- Lógica de Sesión ---
 
@@ -26,11 +32,9 @@ public class SessionManager {
     }
 
     public void logout() {
-        System.out.println("Cerrando sesión de " + currentUser.getNombre() + "...");
-
+        log.info("Cerrando sesión de " + currentUser.getNombre() + "...");
         this.currentUser = null;
-        tradingService.detenerTodo();
-                                System.out.println("Sesión cerrada.");
+        log.info("Sesión cerrada.");
 
     }
 
@@ -44,8 +48,9 @@ public class SessionManager {
 
     @PreDestroy
     public void cleanup() {
-        System.out.println("Cerrando todas las estrategias antes de apagar el sistema...");
+        log.info("Cerrando todas las estrategias antes de apagar el sistema...");
         // Delegamos la limpieza al servicio que tiene el mapa
-        tradingService.detenerTodo();
+        estrategiaService.terminarTodas();
+
     }
 }

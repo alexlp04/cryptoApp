@@ -5,6 +5,8 @@ import com.bottrading.beans.SignalDTO;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -22,22 +24,31 @@ import java.util.concurrent.Future;
 
 /**
  * Servicio técnico de bajo nivel encargado de la gestión de procesos y hilos.
- * Administra el ciclo de vida de los scripts de Python (ejecución, comunicación I/O y terminación).
+ * Administra el ciclo de vida de los scripts de Python (ejecución, comunicación
+ * I/O y terminación).
  */
+@Slf4j
 @Service
 public class TradingService {
 
-    @Autowired
-    private PaperTradingService paperTradingService;
-    
+    private final PaperTradingService paperTradingService;
+    private final AccountingService accountingService;
+
     private final Gson gson = new Gson();
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    
+
     // Mapa thread-safe para mantener referencias a los procesos en ejecución
     private final Map<Long, StrategyContext> procesosActivos = new ConcurrentHashMap<>();
 
+    @Autowired
+    public TradingService(PaperTradingService paperTradingService, AccountingService accountingService) {
+        this.paperTradingService = paperTradingService;
+        this.accountingService = accountingService;
+    }
+
     /**
-     * Clase interna para agrupar el proceso del sistema operativo y el hilo de Java que lo monitoriza.
+     * Clase interna para agrupar el proceso del sistema operativo y el hilo de Java
+     * que lo monitoriza.
      */
     private static class StrategyContext {
         Process pythonProcess;
@@ -51,7 +62,8 @@ public class TradingService {
 
     /**
      * Lanza un nuevo hilo dedicado para una estrategia.
-     * Gestiona la concurrencia para registrar el proceso correctamente en el mapa de control.
+     * Gestiona la concurrencia para registrar el proceso correctamente en el mapa
+     * de control.
      *
      * @param instancia La entidad de la estrategia.
      * @param symbols   Lista de símbolos a operar.
@@ -75,60 +87,100 @@ public class TradingService {
      * Lógica principal del hilo de ejecución.
      * Arranca el proceso Python, envía la configuración y escucha señales en bucle.
      */
-    private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
+private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
+        boolean errorCritico = false;
+        Process process = null;
+
         try {
-            ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_RT_PATH);
-            pb.redirectErrorStream(true); // Redirigir stderr a stdout para debug unificado
-            Process process = pb.start();
+            // 1. Iniciar proceso y registrarlo
+            process = iniciarProcesoPython(instancia);
 
-            // Actualizar el contexto con el proceso físico creado
-            procesosActivos.compute(instancia.getId(), (k, ctx) -> {
-                if (ctx == null) return new StrategyContext(process, null);
-                ctx.pythonProcess = process;
-                return ctx;
-            });
-
+            // 2. Enviar configuración
             enviarPayload(process, instancia, symbols);
 
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    // Verificación vital para interrupción limpia
-                    if (Thread.currentThread().isInterrupted()) break; 
+            // 3. Bucle de escucha (Bloqueante)
+            escucharSalidaPython(process, instancia);
 
-                    if (line.trim().startsWith("{")) {
-                        try {
-                            SignalDTO signal = gson.fromJson(line, SignalDTO.class);
-                            paperTradingService.onSignal(instancia.getId(), signal);
-                        } catch (Exception e) {
-                            System.err.println("JSON corrupto de Python: " + line);
-                        }
-                    } else {
-                        System.out.println("LOG [" + instancia.getNombreEstrategia() + "]: " + line);
-                    }
-                }
+            // 4. Esperar cierre ordenado
+            int exitCode = process.waitFor();
+            if (exitCode != 0 && !Thread.currentThread().isInterrupted()) {
+                throw new RuntimeException("Proceso Python terminó con código: " + exitCode);
             }
-            
-            process.waitFor();
 
         } catch (InterruptedException e) {
-            // Silenciar excepción en parada controlada
-            Thread.currentThread().interrupt(); 
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
-            // Evitar logs de error si el hilo fue interrumpido intencionalmente
             if (!Thread.currentThread().isInterrupted()) {
-                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                System.err.println("Error en motor Python (" + instancia.getNombreEstrategia() + "): " + msg);
+                errorCritico = true;
+                log.error("Error en motor Python ({}): {}", instancia.getNombreEstrategia(), e.getMessage());
             }
         } finally {
+            gestionarCierre(instancia, errorCritico);
+        }
+    }
+
+    // =========================================================================
+    // MÉTODOS AUXILIARES (Divide y Vencerás)
+    // =========================================================================
+
+    private Process iniciarProcesoPython(InstanciaEstrategia instancia) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_RT_PATH);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        procesosActivos.compute(instancia.getId(), (k, ctx) -> {
+            if (ctx == null) return new StrategyContext(process, null);
+            ctx.pythonProcess = process;
+            return ctx;
+        });
+        
+        return process;
+    }
+
+    private void escucharSalidaPython(Process process, InstanciaEstrategia instancia) throws IOException {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (Thread.currentThread().isInterrupted()) {
+                    break;
+                }
+                procesarLineaLog(line, instancia);
+            }
+        }
+    }
+
+    private void procesarLineaLog(String line, InstanciaEstrategia instancia) {
+        if (line.trim().startsWith("{")) {
+            try {
+                SignalDTO signal = gson.fromJson(line, SignalDTO.class);
+                paperTradingService.onSignal(instancia.getId(), signal);
+            } catch (Exception e) {
+                log.error("JSON corrupto de Python: {}", line);
+            }
+        } else {
+            log.info("LOG [{}]: {}", instancia.getNombreEstrategia(), line);
+        }
+    }
+
+    private void gestionarCierre(InstanciaEstrategia instancia, boolean errorCritico) {
+        if (errorCritico) {
+            try {
+                accountingService.closeStrategy(instancia.getWalletAsociada(), instancia.getId());
+            } catch (Exception ex) {
+                log.error("Fallo al liquidar estrategia: {}", ex.getMessage());
+                detenerEstrategia(instancia.getId());
+            }
+        } else {
             detenerEstrategia(instancia.getId());
         }
     }
 
+
     /**
-     * Serializa y envía la configuración inicial al script de Python a través de STDIN.
+     * Serializa y envía la configuración inicial al script de Python a través de
+     * STDIN.
      */
     private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws IOException {
         Map<String, Object> payload = Map.of(
@@ -136,7 +188,7 @@ public class TradingService {
                 "symbols", new ArrayList<>(symbols),
                 "timeframe", inst.getTimeframe(),
                 "capital", inst.getCapitalReservado());
-        
+
         try (OutputStream os = p.getOutputStream()) {
             os.write(gson.toJson(payload).getBytes(StandardCharsets.UTF_8));
             os.flush();
@@ -151,19 +203,19 @@ public class TradingService {
      */
     public void detenerEstrategia(Long instanciaId) {
         StrategyContext ctx = procesosActivos.remove(instanciaId);
-        
+
         if (ctx != null) {
             // 1. Interrumpir lectura del stream
             if (ctx.javaThread != null) {
-                ctx.javaThread.cancel(true); 
+                ctx.javaThread.cancel(true);
             }
-            
+
             // 2. Matar proceso del sistema operativo
             if (ctx.pythonProcess != null && ctx.pythonProcess.isAlive()) {
-                ctx.pythonProcess.destroyForcibly(); 
+                ctx.pythonProcess.destroyForcibly();
             }
-            
-            System.out.println("TradingService: Recursos liberados para ID " + instanciaId);
+
+            log.info("TradingService: Recursos liberados para ID " + instanciaId);
         }
     }
 
@@ -172,15 +224,18 @@ public class TradingService {
      * Útil para comandos masivos o logout.
      */
     public void detenerTodo() {
-        if (procesosActivos.isEmpty()) return;
-        
-        System.out.println("Deteniendo " + procesosActivos.size() + " procesos activos...");
+        if (procesosActivos.isEmpty())
+            return;
+
+        log.info("Deteniendo " + procesosActivos.size() + " procesos activos...");
         Set<Long> ids = new HashSet<>(procesosActivos.keySet());
         ids.forEach(this::detenerEstrategia);
     }
 
     /**
-     * Obtiene el conjunto de IDs de las estrategias que están corriendo actualmente.
+     * Obtiene el conjunto de IDs de las estrategias que están corriendo
+     * actualmente.
+     * 
      * @return Set de IDs.
      */
     public Set<Long> getIdsEstrategiasActivas() {
@@ -188,11 +243,12 @@ public class TradingService {
     }
 
     /**
-     * Hook de ciclo de vida para limpieza final al apagar la aplicación Spring Boot.
+     * Hook de ciclo de vida para limpieza final al apagar la aplicación Spring
+     * Boot.
      */
     @PreDestroy
     public void apagarSistema() {
-        System.out.println("Apagando sistema de trading...");
+        log.info("Apagando sistema de trading...");
         detenerTodo();
         executor.shutdownNow();
     }

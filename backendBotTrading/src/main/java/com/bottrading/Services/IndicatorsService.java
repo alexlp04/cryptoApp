@@ -22,13 +22,17 @@ import java.util.stream.Collectors;
 @Service
 public class IndicatorsService {
 
-    @Autowired
-    private IndicadorRepository indicadorRepo;
+    private final IndicadorRepository indicadorRepo;
 
-    @Autowired
-    private VelaRepository velaRepo;
+    private final VelaRepository velaRepo;
 
     private final Gson gson = new Gson();
+
+    @Autowired
+    public IndicatorsService(IndicadorRepository indicadorRepo, VelaRepository velaRepo) {
+        this.indicadorRepo = indicadorRepo;
+        this.velaRepo = velaRepo;
+    }
 
     /**
      * Calcula indicadores técnicos básicos (RSI, SMA, EMA, etc.) para un conjunto de velas.
@@ -88,7 +92,7 @@ public class IndicatorsService {
             }
 
         } catch (Exception e) {
-            throw new RuntimeException("❌ Error calculando indicadores: " + e.getMessage(), e);
+            throw new RuntimeException("Error calculando indicadores: " + e.getMessage(), e);
         }
     }
 }

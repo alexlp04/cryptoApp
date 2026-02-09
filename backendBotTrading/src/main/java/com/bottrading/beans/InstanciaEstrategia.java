@@ -144,4 +144,14 @@ public class InstanciaEstrategia extends BaseEntity {
         this.estado = estado;
     }
 
+    @Override
+    public String toString() {
+        return String.format("ID: %d | Estrategia: %s | Symbols: %s | Capital: %s | Estado: %s",
+                this.getId(),
+                this.getNombreEstrategia(),
+                this.getSimbolos(), // Asumiendo que devuelve una lista o string legible
+                this.getCapitalReservado() != null ? this.getCapitalReservado().toPlainString() : "0.00",
+                this.getEstado());
+    }
+
 }
