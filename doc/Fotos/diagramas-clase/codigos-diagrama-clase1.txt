@@ -1,0 +1,253 @@
+
+@startuml
+
+' --- ESTILO VISUAL ---
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam handwritten false
+hide circle
+
+' Colores por capa
+skinparam package {
+    BackgroundColor<<Main>> HoneyDew
+    BackgroundColor<<Services>> Azure
+    BackgroundColor<<Repositories>> LavenderBlush
+    BackgroundColor<<Beans>> Wheat
+    BackgroundColor<<Utils>> WhiteSmoke
+}
+
+' ==========================================
+' CAPA DE PRESENTACIÓN (MAIN)
+' ==========================================
+package "com.bottrading.main" <<Main>> {
+    class BotApplication {
+        + {static} main(args: String[])
+    }
+
+    class AppBot {
+        - scanner : Scanner
+        + run(args: String[])
+        - procesarComando(cmd: String)
+        - iniciarFlujoTrade(parts)
+        - ejecutarBacktest(parts)
+    }
+}
+
+' ==========================================
+' CAPA DE SERVICIO (LÓGICA)
+' ==========================================
+package "com.bottrading.services" <<Services>> {
+
+    class EstrategiaService {
+        + iniciarTradeRT(...)
+        + iniciarEstrategiaDetenida(id)
+        + detenerEstrategia(id)
+        + terminarEstrategia(id)
+        + ejecutarBacktest(...)
+    }
+
+    class TradingService {
+        - procesosActivos : Map
+        + ejecutarTradeEnTiempoReal(...)
+        + detenerEstrategia(id)
+        - runEngineRT(...)
+    }
+
+    class MarketDataService {
+        + actualizarDatosMercado(...)
+        + calcularIndicadoresParaSimbolo(...)
+    }
+
+    class FetchService {
+        + fetch(symbol, interval)
+        - callPythonAndSave(...)
+    }
+
+    class IndicatorsService {
+        + calculateBasicIndicators(...)
+    }
+
+    class AccountingService {
+        + activateStrategy(walletId, estraId, capital)
+        + closeStrategy(walletId, estraId)
+        + processOrder(signal, precio, cantidad)
+        + applyFee(walletId, fee)
+    }
+
+    class PaperTradingService {
+        + onSignal(...)
+        - ejecutarOrdenSimulada(...)
+    }
+
+    class BacktestingService {
+        + ejecutarBacktest(...)
+        - invocarMotorPython(...)
+    }
+
+    class FileService {
+        + guardarResultadosCompletos(...)
+        + guardarTrade(...)
+        + leerStatsActuales(...)
+    }
+    
+    class UsuarioService {
+        + registrar(...)
+        + validarCredenciales(...)
+    }
+    
+    class WalletService {
+        + crearWallet(...)
+        + getBalance(nombre)
+    }
+    
+    class SessionManager {
+        + login(usuario)
+        + logout()
+        + getCurrentUser()
+    }
+}
+
+' ==========================================
+' CAPA DE DATOS (REPOSITORIOS)
+' ==========================================
+package "com.bottrading.repositories" <<Repositories>> {
+    interface InstanciaEstrategiaRepository
+    interface VelaRepository
+    interface WalletRepository
+    interface LedgerRepository
+    interface PosicionRepository
+    interface UsuarioRepository
+    interface IndicadorRepository
+}
+
+' ==========================================
+' CAPA DE MODELO (ENTIDADES + ENUMS)
+' ==========================================
+package "com.bottrading.beans" <<Beans>> {
+    
+    abstract class BaseEntity {
+        - id : Long
+        - fechaCreacion : Instant
+        - eliminado : boolean
+    }
+
+    class Usuario {
+        - nombre : String
+        - passwordHash : String
+    }
+
+    class Wallet {
+        - nombre : String
+        - balanceReal : BigDecimal
+        - balanceDisponible : BigDecimal
+        - type : WalletType
+    }
+
+    enum WalletType {
+        PAPER
+        REAL
+    }
+
+    class InstanciaEstrategia {
+        - nombreEstrategia : String
+        - capitalReservado : BigDecimal
+        - estado : String
+        - capitalComprometido : BigDecimal
+    }
+
+    class Vela {
+        - symbol : String
+        - interval : String
+        - openTime : Long
+        - close : BigDecimal
+        - volume : BigDecimal
+    }
+
+    class LedgerEntry {
+        - amount : BigDecimal
+        - type : LedgerType
+        - timestamp : Instant
+    }
+
+    enum LedgerType {
+        AVAILABLE
+        RESERVED
+        COMMITTED
+        REALIZED_PNL
+        FEE
+    }
+
+    class Posicion {
+        - simbolo : String
+        - precioEntrada : BigDecimal
+        - margenInvertido : BigDecimal
+        - abierta : boolean
+    }
+
+    class IndicadorTecnico {
+        - tipo : String
+        - valor : BigDecimal
+    }
+    
+    class CapitalReservado {
+        - reservado : BigDecimal
+        - comprometido : BigDecimal
+    }
+
+    ' Relaciones de Herencia
+    BaseEntity <|-- Usuario
+    BaseEntity <|-- Wallet
+    BaseEntity <|-- InstanciaEstrategia
+    BaseEntity <|-- Vela
+    BaseEntity <|-- LedgerEntry
+    BaseEntity <|-- Posicion
+    BaseEntity <|-- IndicadorTecnico
+    BaseEntity <|-- CapitalReservado
+
+    ' Relaciones con Enums
+    Wallet ..> WalletType
+    LedgerEntry ..> LedgerType
+
+    ' Relaciones de Asociación (Entidades)
+    Wallet "0..*" --> "1" Usuario : pertenece a
+    Posicion "0..*" --> "1" InstanciaEstrategia : pertenece a
+    IndicadorTecnico "0..*" --> "1" Vela : asociado a
+    LedgerEntry --> Wallet : registra en
+}
+
+' ==========================================
+' RELACIONES DE ARQUITECTURA
+' ==========================================
+
+' Main -> Services
+BotApplication ..> AppBot
+AppBot --> EstrategiaService
+AppBot --> MarketDataService
+AppBot --> UsuarioService
+AppBot --> WalletService
+AppBot --> SessionManager
+
+' Service dependencies
+EstrategiaService --> TradingService
+EstrategiaService --> BacktestingService
+EstrategiaService --> AccountingService
+EstrategiaService --> FileService
+
+TradingService --> PaperTradingService
+TradingService --> AccountingService
+
+MarketDataService --> FetchService
+MarketDataService --> IndicatorsService
+
+AccountingService --> WalletRepository
+AccountingService --> InstanciaEstrategiaRepository
+AccountingService --> LedgerRepository
+
+' Conexiones Servicios -> Repositorios (Simplificado)
+FetchService --> VelaRepository
+UsuarioService --> UsuarioRepository
+WalletService --> WalletRepository
+PaperTradingService --> PosicionRepository
+
+@enduml

@@ -44,12 +44,12 @@ public class AppBot implements CommandLineRunner {
     // "java:S106" es la regla que prohíbe System.out. La silenciamos AQUÍ
     // porque esta clase ES una interfaz de línea de comandos (CLI).
     @SuppressWarnings("java:S106")
-    private void uiPrint(String mensaje) {
+    public void uiPrint(String mensaje) {
         System.out.print(mensaje);
     }
 
     @SuppressWarnings("java:S106")
-    private void uiPrintln(String mensaje) {
+    public void uiPrintln(String mensaje) {
         System.out.println(mensaje);
     }
 

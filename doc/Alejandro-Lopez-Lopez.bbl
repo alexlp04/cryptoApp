@@ -1,0 +1,231 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 3.3 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{apa/apasortcite//global/global/global}
+    \entry{freqtrade2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=4dd9b335f874eb98efa874cf8f119575}{%
+           family={{Freqtrade Team}},
+           familyi={F\bibinitperiod}}}%
+      }
+      \strng{namehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{fullhash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{fullhashraw}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{bibnamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorbibnamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authornamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorfullhash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorfullhashraw}{4dd9b335f874eb98efa874cf8f119575}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Freqtrade Documentation: Strategy Customization}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://www.freqtrade.io/en/stable/
+      \endverb
+      \verb{url}
+      \verb https://www.freqtrade.io/en/stable/
+      \endverb
+    \endentry
+    \entry{mermaid2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=864a75e155636d748b8ee389c976480c}{%
+           family={{Mermaid Project}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{864a75e155636d748b8ee389c976480c}
+      \strng{fullhash}{864a75e155636d748b8ee389c976480c}
+      \strng{fullhashraw}{864a75e155636d748b8ee389c976480c}
+      \strng{bibnamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorbibnamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authornamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorfullhash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorfullhashraw}{864a75e155636d748b8ee389c976480c}
+      \field{sortinit}{M}
+      \field{sortinithash}{4625c616857f13d17ce56f7d4f97d451}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Mermaid Live Editor: Diagramming and charting tool}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://mermaid.live/
+      \endverb
+      \verb{url}
+      \verb https://mermaid.live/
+      \endverb
+    \endentry
+    \entry{plantuml2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=6b1dd5c89d0f8869dc789f2562595e46}{%
+           family={{PlantUML Team}},
+           familyi={P\bibinitperiod}}}%
+      }
+      \strng{namehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{fullhash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{fullhashraw}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{bibnamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorbibnamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authornamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorfullhash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorfullhashraw}{6b1dd5c89d0f8869dc789f2562595e46}
+      \field{sortinit}{P}
+      \field{sortinithash}{ff3bcf24f47321b42cb156c2cc8a8422}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{PlantUML: Open-source tool to create diagrams from plain text}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://www.plantuml.com/
+      \endverb
+      \verb{url}
+      \verb https://www.plantuml.com/
+      \endverb
+    \endentry
+  \enddatalist
+  \datalist[entry]{apa/global//global/global/global}
+    \entry{freqtrade2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=4dd9b335f874eb98efa874cf8f119575}{%
+           family={{Freqtrade Team}},
+           familyi={F\bibinitperiod}}}%
+      }
+      \strng{namehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{fullhash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{fullhashraw}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{bibnamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorbibnamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authornamehash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorfullhash}{4dd9b335f874eb98efa874cf8f119575}
+      \strng{authorfullhashraw}{4dd9b335f874eb98efa874cf8f119575}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Freqtrade Documentation: Strategy Customization}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://www.freqtrade.io/en/stable/
+      \endverb
+      \verb{url}
+      \verb https://www.freqtrade.io/en/stable/
+      \endverb
+    \endentry
+    \entry{mermaid2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=864a75e155636d748b8ee389c976480c}{%
+           family={{Mermaid Project}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{864a75e155636d748b8ee389c976480c}
+      \strng{fullhash}{864a75e155636d748b8ee389c976480c}
+      \strng{fullhashraw}{864a75e155636d748b8ee389c976480c}
+      \strng{bibnamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorbibnamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authornamehash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorfullhash}{864a75e155636d748b8ee389c976480c}
+      \strng{authorfullhashraw}{864a75e155636d748b8ee389c976480c}
+      \field{sortinit}{M}
+      \field{sortinithash}{4625c616857f13d17ce56f7d4f97d451}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Mermaid Live Editor: Diagramming and charting tool}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://mermaid.live/
+      \endverb
+      \verb{url}
+      \verb https://mermaid.live/
+      \endverb
+    \endentry
+    \entry{plantuml2026}{online}{}{}
+      \name{author}{1}{}{%
+        {{un=0,uniquepart=base,hash=6b1dd5c89d0f8869dc789f2562595e46}{%
+           family={{PlantUML Team}},
+           familyi={P\bibinitperiod}}}%
+      }
+      \strng{namehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{fullhash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{fullhashraw}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{bibnamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorbibnamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authornamehash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorfullhash}{6b1dd5c89d0f8869dc789f2562595e46}
+      \strng{authorfullhashraw}{6b1dd5c89d0f8869dc789f2562595e46}
+      \field{sortinit}{P}
+      \field{sortinithash}{ff3bcf24f47321b42cb156c2cc8a8422}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{PlantUML: Open-source tool to create diagrams from plain text}
+      \field{urlday}{18}
+      \field{urlmonth}{2}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://www.plantuml.com/
+      \endverb
+      \verb{url}
+      \verb https://www.plantuml.com/
+      \endverb
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

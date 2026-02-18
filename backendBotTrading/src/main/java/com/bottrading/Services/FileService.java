@@ -19,8 +19,10 @@ import java.nio.file.StandardOpenOption;
 import java.util.*;
 
 /**
- * Servicio encargado de la persistencia de datos en el sistema de archivos (CSV).
- * Gestiona el guardado de trades individuales, estadísticas agregadas y limpieza de directorios.
+ * Servicio encargado de la persistencia de datos en el sistema de archivos
+ * (CSV).
+ * Gestiona el guardado de trades individuales, estadísticas agregadas y
+ * limpieza de directorios.
  */
 @Slf4j
 @Service
@@ -29,7 +31,8 @@ public class FileService {
     private final Gson gson = new Gson();
 
     /**
-     * Procesa y guarda los resultados completos de un backtest (Trades + Estadísticas).
+     * Procesa y guarda los resultados completos de un backtest (Trades +
+     * Estadísticas).
      *
      * @param nombreEstrategia Nombre de la estrategia ejecutada.
      * @param timeframe        Marco temporal utilizado.
@@ -38,15 +41,19 @@ public class FileService {
      */
     public void guardarResultadosCompletos(String nombreEstrategia, String timeframe, String jsonResultado)
             throws Exception {
-        
-        Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {}.getType());
 
-        // Serializamos y deserializamos de nuevo para obtener los tipos concretos sin warnings
+        Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {
+        }.getType());
+
+        // Serializamos y deserializamos de nuevo para obtener los tipos concretos sin
+        // warnings
         String tradesJson = gson.toJson(resultado.get("trades"));
-        List<Map<String, Object>> trades = gson.fromJson(tradesJson, new TypeToken<List<Map<String, Object>>>() {}.getType());
+        List<Map<String, Object>> trades = gson.fromJson(tradesJson, new TypeToken<List<Map<String, Object>>>() {
+        }.getType());
 
         String statsJson = gson.toJson(resultado.get("stats"));
-        List<Map<String, Object>> statsList = gson.fromJson(statsJson, new TypeToken<List<Map<String, Object>>>() {}.getType());
+        List<Map<String, Object>> statsList = gson.fromJson(statsJson, new TypeToken<List<Map<String, Object>>>() {
+        }.getType());
 
         if (trades != null) {
             for (Map<String, Object> trade : trades) {
@@ -66,10 +73,11 @@ public class FileService {
      * Guarda un trade individual en su archivo CSV correspondiente.
      * Si el archivo no existe, crea la cabecera.
      * * @param nombreEstrategia Nombre de la estrategia.
-     * @param timeframe        Timeframe.
-     * @param symbol           Símbolo del trade.
-     * @param trade            Datos del trade (precio, PnL, timestamp, etc.).
-     * @param isBacktest       True si es simulación, False si es tiempo real.
+     * 
+     * @param timeframe  Timeframe.
+     * @param symbol     Símbolo del trade.
+     * @param trade      Datos del trade (precio, PnL, timestamp, etc.).
+     * @param isBacktest True si es simulación, False si es tiempo real.
      */
     public synchronized void guardarTrade(String nombreEstrategia, String timeframe, String symbol,
             Map<String, Object> trade, boolean isBacktest) {
@@ -111,9 +119,11 @@ public class FileService {
         map.put(AppConstants.KEY_SIDE, side);
         map.put(AppConstants.KEY_PRICE, price);
         map.put(AppConstants.KEY_TIMESTAMP, timestamp);
-        if (pnl != null) map.put(AppConstants.KEY_PNL, String.format("%.8f", pnl));
-        if (capital != null) map.put(AppConstants.KEY_CAPITAL, String.format("%.2f", capital));
-        
+        if (pnl != null)
+            map.put(AppConstants.KEY_PNL, String.format("%.8f", pnl));
+        if (capital != null)
+            map.put(AppConstants.KEY_CAPITAL, String.format("%.2f", capital));
+
         guardarTrade(nombreEstrategia, timeframe, symbol, map, isBacktest);
     }
 
@@ -126,7 +136,7 @@ public class FileService {
      * @param stats            Mapa con las métricas (win_rate, drawdown, etc.).
      * @param isBacktest       True si es simulación.
      */
-public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
+    public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
         try {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
@@ -141,8 +151,9 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
                     while ((line = br.readLine()) != null) {
                         // SOLUCIÓN: Usamos parseCsvLine en lugar de split sencillo
                         String[] p = parseCsvLine(line);
-                        
-                        if (p.length < 14) continue;
+
+                        if (p.length < 14)
+                            continue;
 
                         Map<String, Object> row = new HashMap<>();
                         row.put(AppConstants.KEY_SYMBOL, p[0]);
@@ -166,7 +177,8 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
 
             // Reemplazar o añadir
             String currentSymbol = stats.get(AppConstants.KEY_SYMBOL).toString();
-            rows.removeIf(r -> r.get(AppConstants.KEY_SYMBOL).equals(currentSymbol) && r.get(AppConstants.KEY_TIMEFRAME).equals(timeframe));
+            rows.removeIf(r -> r.get(AppConstants.KEY_SYMBOL).equals(currentSymbol)
+                    && r.get(AppConstants.KEY_TIMEFRAME).equals(timeframe));
             rows.add(stats);
 
             try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath, StandardCharsets.UTF_8))) {
@@ -174,19 +186,19 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
 
                 for (Map<String, Object> r : rows) {
                     pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
-                            getSafe(r, AppConstants.KEY_SYMBOL), 
-                            getSafe(r, AppConstants.KEY_TIMEFRAME), 
+                            getSafe(r, AppConstants.KEY_SYMBOL),
+                            getSafe(r, AppConstants.KEY_TIMEFRAME),
                             getSafe(r, AppConstants.KEY_OP_GANADAS),
-                            getSafe(r, AppConstants.KEY_OP_PERDIDAS), 
-                            getSafe(r, AppConstants.KEY_OP_TOTALES), 
+                            getSafe(r, AppConstants.KEY_OP_PERDIDAS),
+                            getSafe(r, AppConstants.KEY_OP_TOTALES),
                             getSafe(r, AppConstants.KEY_MAX_DRAWDOWN),
-                            getSafe(r, AppConstants.KEY_ABS_DRAWDOWN), 
-                            getSafe(r, AppConstants.KEY_RET_ACUMULADO), 
+                            getSafe(r, AppConstants.KEY_ABS_DRAWDOWN),
+                            getSafe(r, AppConstants.KEY_RET_ACUMULADO),
                             getSafe(r, AppConstants.KEY_RET_TOTAL),
-                            getSafe(r, AppConstants.KEY_WIN_RATE), 
-                            getSafe(r, AppConstants.KEY_PROFIT_FACTOR), 
+                            getSafe(r, AppConstants.KEY_WIN_RATE),
+                            getSafe(r, AppConstants.KEY_PROFIT_FACTOR),
                             getSafe(r, AppConstants.KEY_FECHA_INICIO),
-                            getSafe(r, AppConstants.KEY_FECHA_FIN), 
+                            getSafe(r, AppConstants.KEY_FECHA_FIN),
                             getSafe(r, AppConstants.KEY_RESULTADO));
                 }
             }
@@ -202,23 +214,23 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
         if (Files.exists(carpeta)) {
-            log.info("\nLa carpeta de resultados '{}' ya existe.", nombreEstrategia);
-            log.info("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
+            System.out.println("\nLa carpeta de resultados '" + nombreEstrategia + "' ya existe.");
+            System.out.println("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
 
-            try (Scanner sc = new Scanner(System.in)) {
+            Scanner sc = new Scanner(System.in);
+
+            if (sc.hasNextLine()) {
                 String respuesta = sc.nextLine().trim().toLowerCase();
                 if (respuesta.equals("s")) {
                     limpiarArchivosBacktest(carpeta);
                 } else {
                     log.info("Manteniendo archivos anteriores.");
                 }
-            } catch (Exception e) {
-                log.error("Error al leer respuesta: {}", e.getMessage());
             }
 
         }
     }
-    
+
     // Método auxiliar para limpieza
     private void limpiarArchivosBacktest(Path carpeta) {
         try (var stream = Files.list(carpeta)) {
@@ -237,7 +249,8 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
     }
 
     /**
-     * Lee las estadísticas actuales desde el CSV para permitir actualizaciones incrementales en tiempo real.
+     * Lee las estadísticas actuales desde el CSV para permitir actualizaciones
+     * incrementales en tiempo real.
      */
     public Map<String, Object> leerStatsActuales(String nombreEstrategia, String timeframe, String symbol) {
         Map<String, Object> stats = new HashMap<>();
@@ -292,10 +305,11 @@ public synchronized void guardarStats(String nombreEstrategia, String timeframe,
      * Ejemplo: 'BTC, "100,00%", OK' -> ["BTC", "100,00%", "OK"]
      */
     private String[] parseCsvLine(String line) {
-        // Regex mágica: Separa por coma SOLO si está seguida de un número par de comillas
+        // Regex mágica: Separa por coma SOLO si está seguida de un número par de
+        // comillas
         // (es decir, fuera de un bloque entrecomillado)
         String[] tokens = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
-        
+
         // Limpiamos las comillas envolventes de los resultados
         for (int i = 0; i < tokens.length; i++) {
             String t = tokens[i];
