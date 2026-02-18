@@ -1,0 +1,170 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.3.6 Chrome/140.0.7339.249 Electron/38.8.0 Safari/537.36" version="29.3.6">
+  <diagram name="Página-1" id="u4Wdfnjgc19gR71eM3AW">
+    <mxGraphModel dx="1426" dy="889" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="rvwhomd9CU-45y_HVLTX-1" parent="1" style="rounded=1;whiteSpace=wrap;arcSize=50;strokeWidth=2;fillColor=#60a917;fontColor=#ffffff;strokeColor=#2D7600;" value="Inicio" vertex="1">
+          <mxGeometry height="39" width="64" x="823" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-2" parent="1" style="rhombus;strokeWidth=2;whiteSpace=wrap;fillColor=#1ba1e2;fontColor=#ffffff;strokeColor=#006EAF;" value="¿Sesión activa?" vertex="1">
+          <mxGeometry height="159" width="159" x="775" y="109" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-3" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;fixedSize=1;strokeWidth=2;whiteSpace=wrap;fillColor=#a20025;fontColor=#ffffff;strokeColor=#6F0000;" value="Error: &#39;Requiere Login&#39;" vertex="1">
+          <mxGeometry height="39" width="212" x="1011" y="786" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-4" parent="1" style="rhombus;strokeWidth=2;whiteSpace=wrap;fillColor=#1ba1e2;fontColor=#ffffff;strokeColor=#006EAF;" value="¿Comando?" vertex="1">
+          <mxGeometry height="132" width="132" x="450" y="342" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-5" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#FF8000;" value="Leer carpeta &#39;/strategies&#39;" vertex="1">
+          <mxGeometry height="85" width="195" x="48" y="548" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-6" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" value="Filtrar archivos .py" vertex="1">
+          <mxGeometry height="54" width="196" x="47" y="682" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-7" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;fixedSize=1;strokeWidth=2;whiteSpace=wrap;fillColor=#6a00ff;fontColor=#ffffff;strokeColor=#3700CC;" value="Listar archivos encontrados" vertex="1">
+          <mxGeometry height="39" width="250" x="20" y="786" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-8" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#FF8000;" value="Consultar todas" vertex="1">
+          <mxGeometry height="77" width="126" x="293" y="552" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-9" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#FF8000;" value="Consultar &#39;ACTIVAS&#39;" vertex="1">
+          <mxGeometry height="80" width="150" x="469" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-10" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#FF8000;" value="Consultar &#39;DETENIDAS&#39;" vertex="1">
+          <mxGeometry height="82" width="171" x="669" y="549" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-11" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#FF8000;" value="Consultar &#39;TERMINADAS&#39;" vertex="1">
+          <mxGeometry height="83" width="182" x="890" y="548" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-12" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;" value="Formatear tabla" vertex="1">
+          <mxGeometry height="54" width="176" x="561" y="682" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-13" parent="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;fixedSize=1;strokeWidth=2;whiteSpace=wrap;fillColor=#6a00ff;fontColor=#ffffff;strokeColor=#3700CC;" value="Imprimir listado" vertex="1">
+          <mxGeometry height="39" width="168" x="565" y="786" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-14" parent="1" style="rounded=1;whiteSpace=wrap;arcSize=50;strokeWidth=2;fillColor=#FF0000;" value="Fin" vertex="1">
+          <mxGeometry height="39" width="46" x="626" y="875" as="geometry" />
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-15" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-1" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-2" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-16" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-2" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.72;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="rvwhomd9CU-45y_HVLTX-3" value="No">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1117" y="305" />
+              <mxPoint x="1120" y="760" />
+            </Array>
+            <mxPoint x="1117" y="780" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-17" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-2" style="curved=1;startArrow=none;endArrow=block;exitX=0;exitY=0.67;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-4" value="Sí">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="516" y="305" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-18" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-4" style="curved=1;startArrow=none;endArrow=block;exitX=0;exitY=0.64;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-5" value="le">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="145" y="511" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-19" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-5" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=0.5;entryY=0.01;rounded=0;" target="rvwhomd9CU-45y_HVLTX-6" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-20" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-6" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.5;entryY=0;rounded=0;entryDx=0;entryDy=0;" target="rvwhomd9CU-45y_HVLTX-7" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-21" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-4" style="curved=1;startArrow=none;endArrow=block;exitX=0;exitY=0.82;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-8" value="ls (Todas)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="356" y="511" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-22" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-4" style="curved=1;startArrow=none;endArrow=block;exitX=0.64;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-9" value="lsa (Activas)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="544" y="511" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-23" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-4" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.71;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-10" value="lsd (Detenidas)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="755" y="511" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-24" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-4" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.61;entryX=0.5;entryY=0;rounded=0;" target="rvwhomd9CU-45y_HVLTX-11" value="lst (Terminadas)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="981" y="511" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-25" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-8" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=0;entryY=0.22;rounded=0;" target="rvwhomd9CU-45y_HVLTX-12" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="356" y="657" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-26" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-9" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.19;entryY=0.01;rounded=0;" target="rvwhomd9CU-45y_HVLTX-12" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="544" y="657" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-27" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-10" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.81;entryY=0.01;rounded=0;" target="rvwhomd9CU-45y_HVLTX-12" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="755" y="657" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-28" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-11" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=1;entryY=0.25;rounded=0;" target="rvwhomd9CU-45y_HVLTX-12" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="981" y="657" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-29" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-12" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.5;entryY=0;rounded=0;entryDx=0;entryDy=0;" target="rvwhomd9CU-45y_HVLTX-13" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-30" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-7" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.01;entryY=0.46;rounded=0;" target="rvwhomd9CU-45y_HVLTX-14" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="145" y="850" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-31" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-13" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.51;entryY=0.01;rounded=0;" target="rvwhomd9CU-45y_HVLTX-14" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rvwhomd9CU-45y_HVLTX-32" edge="1" parent="1" source="rvwhomd9CU-45y_HVLTX-3" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=1.01;entryY=0.45;rounded=0;" target="rvwhomd9CU-45y_HVLTX-14" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1117" y="850" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

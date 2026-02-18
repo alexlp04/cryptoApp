@@ -59,7 +59,7 @@ public class FetchService {
             long now = System.currentTimeMillis();
             if (now - lastTimestamp > getIntervalMillis(interval)) {
                 log.info("⏳ Datos desactualizados. Descargando desde: {}", lastTimestamp);
-                callPythonAndSave(symbol, interval, lastTimestamp);
+                callPythonAndSave(symbol, interval, lastTimestamp + 1); // +1 para evitar solapamiento
             } else {
                 log.info("Los datos ya están al día.");
             }

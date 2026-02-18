@@ -1,2 +1,3 @@
 symbol,timeframe,op_ganadas,op_perdidas,op_totales,max_drawdown,abs_drawdown,retorno_acumulado,retorno_total,win_rate,profit_factor,fecha_inicio,fecha_fin,resultado
-BTCUSDT,1m,4,4,8,,,,-0.0000160686,50,00%,14%,67%,Mon Feb 09 16:52:56 CET 2026,LOSS
+BTCUSDT,1m,22,15,37,,,,0.0110413666,59,46%,11%,00%,Fri Feb 13 10:20:59 CET 2026
+ETHUSDT,1m,15,14,29,,,,0.0073630360,51,72%,00%,85%,Fri Feb 13 10:20:59 CET 2026,PROFIT

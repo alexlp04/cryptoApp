@@ -272,7 +272,9 @@ public class EstrategiaService {
             List<Vela> velas = velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, tf);
             velasPorSimbolo.put(symbol, velas);
             if (velas.isEmpty()) {
+                ConsoleLoader.getInstance().stop();
                 log.warn("Advertencia: No hay velas para {} en {}", symbol, tf);
+                ConsoleLoader.getInstance().startDots();
             }
         }
 

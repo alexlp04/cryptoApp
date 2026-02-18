@@ -1,0 +1,299 @@
+@startuml
+
+' --- CONFIGURACIÓN VISUAL ---
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam handwritten false
+hide circle
+
+' Colores por capa (Clean Architecture)
+skinparam package {
+    BackgroundColor<<Main>> HoneyDew
+    BackgroundColor<<Services>> Azure
+    BackgroundColor<<Repositories>> LavenderBlush
+    BackgroundColor<<Beans>> Wheat
+    BackgroundColor<<Utils>> WhiteSmoke
+}
+
+' ==========================================
+' CAPA DE PRESENTACIÓN (MAIN)
+' ==========================================
+package "com.bottrading.main" <<Main>> {
+    class BotApplication {
+        + {static} main(args: String[])
+        - configurarPropiedadesSistema(dotenv)
+    }
+
+    class AppBot {
+        - scanner : Scanner
+        + run(args: String[])
+        - procesarComando(cmd: String)
+        - iniciarFlujoTrade(parts)
+        - ejecutarBacktest(parts)
+        - ejecutarStop(parts)
+        - ejecutarTerm(parts)
+    }
+}
+
+' ==========================================
+' CAPA DE SERVICIO (LÓGICA DE NEGOCIO)
+' ==========================================
+package "com.bottrading.services" <<Services>> {
+    class EstrategiaService {
+        + iniciarTradeRT(...)
+        + iniciarEstrategiaDetenida(id)
+        + detenerEstrategia(id)
+        + terminarEstrategia(id)
+        + ejecutarBacktest(...)
+    }
+
+    class TradingService {
+        + ejecutarTradeEnTiempoReal(...)
+        + detenerEstrategia(id)
+    }
+
+    class MarketDataService {
+        + actualizarDatosMercado(...)
+        + calcularIndicadoresParaSimbolo(...)
+    }
+
+    class FetchService {
+        + fetch(symbol, interval)
+        - callPythonAndSave(...)
+    }
+
+    class IndicatorsService {
+        + calculateBasicIndicators(...)
+    }
+
+    class AccountingService {
+        + activateStrategy(...)
+        + closeStrategy(...)
+        + processOrder(...)
+        + applyFee(...)
+    }
+
+    class PaperTradingService {
+        + onSignal(...)
+        - ejecutarOrdenSimulada(...)
+    }
+
+    class BacktestingService {
+        + ejecutarBacktest(...)
+        - invocarMotorPython(...)
+    }
+
+    class FileService {
+        + guardarResultadosCompletos(...)
+        + guardarTrade(...)
+        + verificarYLimpiarCarpetaEstrategia(...)
+    }
+    
+    class UsuarioService {
+        + registrar(...)
+        + validarCredenciales(...)
+    }
+    
+    class WalletService {
+        + crearWallet(...)
+        + getBalance(nombre)
+        + listarWallets()
+    }
+    
+    class SessionManager {
+        + login(usuario)
+        + logout()
+    }
+}
+
+' ==========================================
+' CAPA DE DATOS (REPOSITORIOS CON MÉTODOS)
+' ==========================================
+package "com.bottrading.repositories" <<Repositories>> {
+    
+    interface InstanciaEstrategiaRepository {
+        + sumCapitalActivoByWallet(walletId): Double
+        + findByEstado(estado): List<Instancia>
+        + findByWalletAsociadaAndEstado(...): List<Instancia>
+        + findByIdWithLock(id): Optional<Instancia>
+    }
+
+    interface VelaRepository {
+        + findBySymbolAndIntervalOrderByOpenTimeAsc(...): List<Vela>
+        + findFirstBySymbolAndIntervalOrderByOpenTimeDesc(...): Optional<Vela>
+        + findMaxOpenTimeBySymbolAndInterval(...): Long
+        + existsBySymbolAndIntervalAndOpenTime(...): boolean
+    }
+
+    interface WalletRepository {
+        + findByIdWithLock(id): Optional<Wallet>
+        + findByUsuarioAndNombre(usr, nombre): Optional<Wallet>
+        + findByUsuarioOrderByNombre(usr): List<Wallet>
+        + findByUsuarioAndTypeAndIsActiveFalse...(usr, type): List<Wallet>
+        + existsByUsuarioAndNombre(...): boolean
+    }
+
+    interface LedgerRepository {
+        + findByWalletIdOrderByTimestampDesc(id): List<Ledger>
+        + findByEstrategiaIdOrderByTimestampDesc(id): List<Ledger>
+    }
+
+    interface PosicionRepository {
+        + findByInstanciaAndSimboloAndAbiertaTrue(...): Optional<Posicion>
+        + existsByInstanciaAndSimboloAndAbiertaTrue(...): boolean
+    }
+
+    interface UsuarioRepository {
+        + existsByNombre(nombre): boolean
+        + findByNombreAndEliminadoFalse(nombre): Optional<Usuario>
+        + findByIdAndEliminadoFalse(id): Optional<Usuario>
+    }
+
+    interface IndicadorRepository {
+        + findByVela(vela): List<Indicador>
+        + findByVelaAndTipo(vela, tipo): List<Indicador>
+        + findByVelaAndTipoAndParametros(...): Optional<Indicador>
+        + deleteByVela(vela): void
+    }
+}
+
+' ==========================================
+' CAPA DE MODELO (ENTIDADES + ENUMS)
+' ==========================================
+package "com.bottrading.beans" <<Beans>> {
+    
+    abstract class BaseEntity {
+        - id : Long
+        - fechaCreacion : Instant
+        - eliminado : boolean
+    }
+
+    class Usuario {
+        - nombre : String
+        - passwordHash : String
+    }
+
+    class Wallet {
+        - nombre : String
+        - balanceReal : BigDecimal
+        - balanceDisponible : BigDecimal
+        - type : WalletType
+        - isActive : boolean
+    }
+
+    enum WalletType {
+        PAPER
+        REAL
+    }
+
+    class InstanciaEstrategia {
+        - nombreEstrategia : String
+        - capitalReservado : BigDecimal
+        - estado : String
+        - capitalComprometido : BigDecimal
+        - riskPerTrade : BigDecimal
+    }
+
+    class Vela {
+        - symbol : String
+        - interval : String
+        - openTime : Long
+        - close : BigDecimal
+        - volume : BigDecimal
+    }
+
+    class LedgerEntry {
+        - amount : BigDecimal
+        - type : LedgerType
+        - timestamp : Instant
+        - reference : String
+    }
+
+    enum LedgerType {
+        AVAILABLE
+        RESERVED
+        COMMITTED
+        REALIZED_PNL
+        FEE
+    }
+
+    class Posicion {
+        - simbolo : String
+        - precioEntrada : BigDecimal
+        - margenInvertido : BigDecimal
+        - abierta : boolean
+    }
+
+    class IndicadorTecnico {
+        - tipo : String
+        - parametros : String
+        - valor : BigDecimal
+    }
+
+    ' Herencia
+    BaseEntity <|-- Usuario
+    BaseEntity <|-- Wallet
+    BaseEntity <|-- InstanciaEstrategia
+    BaseEntity <|-- Vela
+    BaseEntity <|-- LedgerEntry
+    BaseEntity <|-- Posicion
+    BaseEntity <|-- IndicadorTecnico
+
+    ' Enums
+    Wallet ..> WalletType
+    LedgerEntry ..> LedgerType
+
+    ' Asociaciones Entidades
+    Wallet "0..*" --> "1" Usuario : De
+    Posicion "0..*" --> "1" InstanciaEstrategia : De
+    IndicadorTecnico "0..*" --> "1" Vela : Sobre
+    LedgerEntry --> Wallet : En
+}
+
+' ==========================================
+' RELACIONES DE ARQUITECTURA (Binding)
+' ==========================================
+
+' Main -> Services
+BotApplication ..> AppBot
+AppBot --> EstrategiaService
+AppBot --> MarketDataService
+AppBot --> UsuarioService
+AppBot --> WalletService
+AppBot --> SessionManager
+
+' Service Dependencies
+EstrategiaService --> TradingService
+EstrategiaService --> BacktestingService
+EstrategiaService --> AccountingService
+EstrategiaService --> FileService
+MarketDataService --> FetchService
+MarketDataService --> IndicatorsService
+TradingService --> PaperTradingService
+TradingService --> AccountingService
+
+' Servicios -> Repositorios
+AccountingService --> WalletRepository
+AccountingService --> InstanciaEstrategiaRepository
+AccountingService --> LedgerRepository
+FetchService --> VelaRepository
+IndicatorsService --> IndicadorRepository
+UsuarioService --> UsuarioRepository
+WalletService --> WalletRepository
+PaperTradingService --> PosicionRepository
+EstrategiaService --> InstanciaEstrategiaRepository
+EstrategiaService --> VelaRepository
+
+' Repositorios -> Beans (Gestión)
+WalletRepository ..> Wallet
+InstanciaEstrategiaRepository ..> InstanciaEstrategia
+LedgerRepository ..> LedgerEntry
+VelaRepository ..> Vela
+PosicionRepository ..> Posicion
+UsuarioRepository ..> Usuario
+IndicadorRepository ..> IndicadorTecnico
+
+@enduml
+
+

@@ -35,9 +35,10 @@ public class BotApplication {
         // 2. CONFIGURACIÓN DEL SILENCIO (Nuclear)
         // Forzamos que el nivel de log sea ERROR antes de que Spring arranque
         System.setProperty("logging.level.root", AppConstants.KEY_ERROR);
-        System.setProperty("logging.level.org.springframework", AppConstants.KEY_ERROR);
-        System.setProperty("logging.level.com.bottrading", AppConstants.KEY_ERROR);
         // Desactivamos el banner por propiedad también
+        System.setProperty("logging.level.com.bottrading", "INFO");
+        System.setProperty("logging.level.com.bottrading", "ERROR");
+        
         System.setProperty("spring.main.banner-mode", "off"); 
 
         // 3. ARRANQUE PERSONALIZADO
