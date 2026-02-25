@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -29,28 +30,43 @@ public class BotApplication {
         } else {
             dotenv = Dotenv.configure().directory("./").ignoreIfMissing().load();
         }
-
+limpiarDirectorioLogs();
         configurarPropiedadesSistema(dotenv);
         
-        // 2. CONFIGURACIÓN DEL SILENCIO (Nuclear)
-        // Forzamos que el nivel de log sea ERROR antes de que Spring arranque
-        System.setProperty("logging.level.root", AppConstants.KEY_ERROR);
-        // Desactivamos el banner por propiedad también
-        System.setProperty("logging.level.com.bottrading", "INFO");
-        System.setProperty("logging.level.com.bottrading", "ERROR");
-        
+        // 2. CONFIGURACIÓN DE INTERFAZ (Apagamos el Banner visual de Spring)
         System.setProperty("spring.main.banner-mode", "off"); 
 
         // 3. ARRANQUE PERSONALIZADO
         SpringApplication app = new SpringApplication(BotApplication.class);
         
-        // Apagamos el Banner visual
+        // Apagamos el Banner visual (reforzado)
         app.setBannerMode(Banner.Mode.OFF);
         // Apagamos el log de "Starting BotApplication..."
         app.setLogStartupInfo(false);
         
         // Arrancamos
         app.run(args);
+    }
+
+    /**
+     * Elimina todos los archivos .log de la carpeta logs/ al arrancar.
+     */
+    private static void limpiarDirectorioLogs() {
+        try {
+            File carpetaLogs = new File("logs");
+            if (carpetaLogs.exists() && carpetaLogs.isDirectory()) {
+                File[] archivos = carpetaLogs.listFiles();
+                if (archivos != null) {
+                    for (File archivo : archivos) {
+                        if (archivo.isFile() && archivo.getName().endsWith(".log")) {
+                            archivo.delete();
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error al limpiar directorio de logs: " + e.getMessage());
+        }
     }
 
     private static void configurarPropiedadesSistema(Dotenv dotenv) {
@@ -65,7 +81,7 @@ public class BotApplication {
             System.setProperty("spring.datasource.driver-class-name", "com.mysql.cj.jdbc.Driver");
         }
         
-        // Configuraciones extra de Hibernate para que no hable
+        // Configuraciones extra de Hibernate para que no ensucie la consola
         System.setProperty("spring.jpa.hibernate.ddl-auto", "update");
         System.setProperty("spring.jpa.show-sql", "false"); // Importante: APAGAR SQL
         System.setProperty("spring.jpa.properties.hibernate.format_sql", "false");

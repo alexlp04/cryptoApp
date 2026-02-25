@@ -29,6 +29,9 @@ public interface IndicadorRepository extends JpaRepository<IndicadorTecnico, Lon
     // Verificar existencia (exists)
     boolean existsByVelaAndTipoAndParametros(Vela vela, String tipo, String parametros);
 
+
+    boolean existsByVela_Id(Long velaId);
+
     // Eliminar indicadores de una vela (deleteByVela)
     @Modifying
     @Transactional
