@@ -26,6 +26,8 @@ public final class PathConfig {
     public static final String ENGINE_BACKTEST_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_BACKTEST);
     public static final String FETCHER_PATH = resolvePath(DIR_SCRIPTS, FILE_FETCHER);
     public static final String INDICATORS_PATH = resolvePath(DIR_SCRIPTS, FILE_INDICATORS);
+    public static final String ENGINE_TRAIN_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_TRAIN);
+    public static final String MODELS_DIR = resolvePath(DIR_MODELS);
 
     private static String calculateProjectRoot() {
         String userDir = System.getProperty("user.dir");
@@ -44,11 +46,11 @@ public final class PathConfig {
         if (nombreEntrada.contains("..") || nombreEntrada.contains("/") || nombreEntrada.contains("\\")) {
             throw new IllegalArgumentException("Nombre de archivo inválido por seguridad.");
         }
-        
-        String nombreLimpio = nombreEntrada.endsWith(EXTENSION_PYTHON) 
-                ? nombreEntrada 
+
+        String nombreLimpio = nombreEntrada.endsWith(EXTENSION_PYTHON)
+                ? nombreEntrada
                 : nombreEntrada + EXTENSION_PYTHON;
-                
+
         Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
 
         if (!Files.exists(rutaFinal)) {

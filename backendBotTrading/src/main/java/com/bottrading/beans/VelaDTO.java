@@ -1,6 +1,7 @@
 package com.bottrading.beans;
 
 public class VelaDTO {
+    public Long id;
     public String symbol;
     public String time_interval;
     public Long open_time;
@@ -15,6 +16,8 @@ public class VelaDTO {
     public String taker_base_volume;
     public String taker_quote_volume;
 
+
+    
     public String getSymbol() {
         return symbol;
     }
@@ -116,6 +119,62 @@ public class VelaDTO {
     }
 
     public void setTakerQuoteVolume(String taker_quote_volume) {
+        this.taker_quote_volume = taker_quote_volume;
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getTime_interval() {
+        return time_interval;
+    }
+
+    public void setTime_interval(String time_interval) {
+        this.time_interval = time_interval;
+    }
+
+    public Long getOpen_time() {
+        return open_time;
+    }
+
+    public void setOpen_time(Long open_time) {
+        this.open_time = open_time;
+    }
+
+    public Long getClose_time() {
+        return close_time;
+    }
+
+    public void setClose_time(Long close_time) {
+        this.close_time = close_time;
+    }
+
+    public String getQuote_volume() {
+        return quote_volume;
+    }
+
+    public void setQuote_volume(String quote_volume) {
+        this.quote_volume = quote_volume;
+    }
+
+    public String getTaker_base_volume() {
+        return taker_base_volume;
+    }
+
+    public void setTaker_base_volume(String taker_base_volume) {
+        this.taker_base_volume = taker_base_volume;
+    }
+
+    public String getTaker_quote_volume() {
+        return taker_quote_volume;
+    }
+
+    public void setTaker_quote_volume(String taker_quote_volume) {
         this.taker_quote_volume = taker_quote_volume;
     }
 

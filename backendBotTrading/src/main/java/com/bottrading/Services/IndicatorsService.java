@@ -2,97 +2,211 @@ package com.bottrading.services;
 
 import com.bottrading.beans.*;
 import com.bottrading.repositories.*;
+import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Servicio encargado del cálculo de indicadores técnicos sobre los datos de mercado.
- * Delega el procesamiento matemático a un script de Python y persiste los resultados.
+ * Servicio encargado del cálculo de indicadores técnicos sobre los datos de
+ * mercado.
+ * Delega el procesamiento matemático a un script de Python y persiste los
+ * resultados
+ * utilizando inserción masiva (Batch Insert) para máximo rendimiento.
  */
+@Slf4j
 @Service
 public class IndicatorsService {
 
-    private final IndicadorRepository indicadorRepo;
-
-    private final VelaRepository velaRepo;
-
+    private final JdbcTemplate jdbcTemplate;
     private final Gson gson = new Gson();
 
+    private static final int BATCH_SIZE = 100000;
+    private static final int OVERLAP = 50;
+
     @Autowired
-    public IndicatorsService(IndicadorRepository indicadorRepo, VelaRepository velaRepo) {
-        this.indicadorRepo = indicadorRepo;
-        this.velaRepo = velaRepo;
+    public IndicatorsService(JdbcTemplate jdbcTemplate) {
+        // Ya no necesitamos IndicadorRepository aquí, usaremos JdbcTemplate directo
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
-     * Calcula indicadores técnicos básicos (RSI, SMA, EMA, etc.) para un conjunto de velas.
-     * Envía los datos históricos al motor de Python y mapea la respuesta a entidades JPA.
-     *
-     * @param symbol   El par de trading (ej: BTCUSDT).
-     * @param interval El intervalo de tiempo (ej: 1h).
-     * @param velas    Lista de velas sobre las que calcular los indicadores.
-     * @return Lista de indicadores persistidos en base de datos.
+     * Calcula indicadores técnicos básicos procesando las velas por lotes.
      */
-    @Transactional
-    public List<IndicadorTecnico> calculateBasicIndicators(String symbol, String interval, List<Vela> velas) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
-            Process process = pb.start();
-
-            // 1. Enviar datos al script (Stdin)
-            try (OutputStream os = process.getOutputStream()) {
-                os.write(gson.toJson(velas).getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            }
-
-            // 2. Leer resultados (Stdout)
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                List<IndicadorTecnicoDTO> dtos = gson.fromJson(reader,
-                        new TypeToken<List<IndicadorTecnicoDTO>>() {}.getType());
-
-                if (dtos == null || dtos.isEmpty()) {
-                    return Collections.emptyList();
-                }
-
-                // Transformación DTO -> Entidad
-                List<IndicadorTecnico> resultados = dtos.stream()
-                        .filter(dto -> dto.getId() != null) 
-                        .map(dto -> {
-                            IndicadorTecnico ind = new IndicadorTecnico();
-                            
-                            // Aseguramos que el ID no es nulo antes de llamar al repositorio
-                            Long velaId = dto.getId();
-                            if (velaId == null) throw new RuntimeException("ID de vela nulo en respuesta de Python");
-
-                            Vela v = velaRepo.findById(velaId)
-                                    .orElseThrow(() -> new RuntimeException("Vela no encontrada para ID: " + velaId));
-                            
-                            ind.setVela(v);
-                            ind.setTipo(dto.getTipo());
-                            ind.setValor(dto.getValor());
-                            ind.setParametros(dto.getParametros());
-                            return ind;
-                        }).collect(Collectors.toList());
-
-                if (resultados == null || resultados.isEmpty()) {
-                    return Collections.emptyList();
-                }
-
-                return indicadorRepo.saveAll(resultados);
-            }
-
-        } catch (Exception e) {
-            throw new RuntimeException("Error calculando indicadores: " + e.getMessage(), e);
+    public void calculateBasicIndicators(String symbol, List<Vela> todasLasVelas) {
+        if (todasLasVelas == null || todasLasVelas.isEmpty()) {
+            log.warn("La lista de velas está vacía. Abortando cálculo para {}", symbol);
+            return;
         }
+        ConsoleLoader.getInstance().startDots();
+        log.info("Iniciando cálculo de indicadores por lotes. Total de velas: {}", todasLasVelas.size());
+        int totalProcesadas = 0;
+
+        for (int i = 0; i < todasLasVelas.size(); i += BATCH_SIZE) {
+            int start = Math.max(0, i - OVERLAP);
+            int end = Math.min(todasLasVelas.size(), i + BATCH_SIZE);
+            List<Vela> loteVelas = todasLasVelas.subList(start, end);
+
+            int numLote = (i / BATCH_SIZE) + 1;
+
+            try {
+                int procesadasEnLote = procesarLote(loteVelas, i == 0);
+                totalProcesadas += procesadasEnLote;
+
+                if (procesadasEnLote > 0) {
+                    log.info("Lote {} completado. Indicadores guardados: {}", numLote, totalProcesadas);
+                }
+
+            } catch (Exception e) {
+                log.error("Error procesando lote {}: {}", numLote, e.getMessage(), e);
+            }
+        }
+        ConsoleLoader.getInstance().stop();
+
+        log.info("Cálculo de indicadores finalizado para {}", symbol);
+    }
+
+    /**
+     * Orquesta el envío y recepción de un único lote de datos hacia Python.
+     * 
+     * @return El número de indicadores guardados en este lote.
+     */
+    private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
+        Process process = pb.start();
+
+        List<VelaDTO> velasDTO = loteVelas.stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+
+        enviarDatosAPython(process, velasDTO);
+        int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
+
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            log.warn("Python terminó con código de error {}", exitCode);
+        }
+
+        velasDTO.clear();
+        return guardados;
+    }
+
+    private void enviarDatosAPython(Process process, List<VelaDTO> velasDTO) throws IOException {
+        try (OutputStream os = process.getOutputStream()) {
+            os.write(gson.toJson(velasDTO).getBytes(StandardCharsets.UTF_8));
+            os.flush();
+        }
+    }
+
+    private int leerResultadosDePythonYGuardar(Process process, List<Vela> loteVelas, boolean esPrimerLote)
+            throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            List<IndicadorTecnicoDTO> dtos = gson.fromJson(reader,
+                    new TypeToken<List<IndicadorTecnicoDTO>>() {
+                    }.getType());
+
+            if (dtos == null || dtos.isEmpty()) {
+                return 0;
+            }
+
+            List<Long> idsValidos = obtenerIdsValidosDelLote(loteVelas, esPrimerLote);
+
+            List<IndicadorTecnico> resultados = dtos.stream()
+                    .filter(dto -> dto.getId() != null)
+                    .filter(dto -> idsValidos.contains(dto.getId()))
+                    .map(this::mapToEntity)
+                    .toList();
+
+            if (!resultados.isEmpty()) {
+                // 🔥 Inserción ultrarrápida (Batch Insert SQL nativo)
+                guardarIndicadoresMasivo(resultados);
+            }
+            return resultados.size();
+        }
+    }
+
+    /**
+     * Inserción en base de datos de alta velocidad saltándose la caché de
+     * Hibernate.
+     */
+    private void guardarIndicadoresMasivo(List<IndicadorTecnico> indicadores) {
+        // ATENCIÓN: Asegúrate de que los nombres de tabla y columnas coinciden con tu
+        // DB real.
+        String sql = "INSERT INTO indicador_tecnico (vela_id, tipo, parametros, valor) VALUES (?, ?, ?, ?)";
+
+        jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
+            @Override
+            public void setValues(PreparedStatement ps, int i) throws SQLException {
+                IndicadorTecnico ind = indicadores.get(i);
+
+                ps.setLong(1, ind.getVela().getId());
+                ps.setString(2, ind.getTipo());
+                ps.setString(3, ind.getParametros());
+                ps.setBigDecimal(4, ind.getValor());
+            }
+
+            @Override
+            public int getBatchSize() {
+                return indicadores.size();
+            }
+        });
+    }
+
+    /**
+     * Excluye los IDs de las velas de solapamiento para no guardar indicadores
+     * duplicados.
+     */
+    private List<Long> obtenerIdsValidosDelLote(List<Vela> loteVelas, boolean esPrimerLote) {
+        int inicioReal = esPrimerLote ? 0 : OVERLAP;
+        return loteVelas.subList(inicioReal, loteVelas.size()).stream()
+                .map(Vela::getId)
+                .toList();
+    }
+
+    private IndicadorTecnico mapToEntity(IndicadorTecnicoDTO dto) {
+        IndicadorTecnico ind = new IndicadorTecnico();
+
+        // Truco de memoria: Evita que Hibernate haga un SELECT previo
+        Vela v = new Vela();
+        v.setId(dto.getId());
+
+        ind.setVela(v);
+        ind.setTipo(dto.getTipo());
+        ind.setValor(dto.getValor());
+        ind.setParametros(dto.getParametros());
+        return ind;
+    }
+
+    private VelaDTO mapToDTO(Vela v) {
+        VelaDTO dto = new VelaDTO();
+        dto.setId(v.getId());
+        dto.setSymbol(v.getSymbol());
+        dto.setTimeInterval(v.getInterval());
+        dto.setOpenTime(v.getOpenTime());
+        dto.setCloseTime(v.getCloseTime());
+
+        dto.setOpen(v.getOpen() != null ? v.getOpen().toString() : null);
+        dto.setHigh(v.getHigh() != null ? v.getHigh().toString() : null);
+        dto.setLow(v.getLow() != null ? v.getLow().toString() : null);
+        dto.setClose(v.getClose() != null ? v.getClose().toString() : null);
+        dto.setVolume(v.getVolume() != null ? v.getVolume().toString() : null);
+        dto.setQuoteVolume(v.getQuoteVolume() != null ? v.getQuoteVolume().toString() : null);
+        dto.setTakerBaseVolume(v.getTakerBaseVolume() != null ? v.getTakerBaseVolume().toString() : null);
+        dto.setTakerQuoteVolume(v.getTakerQuoteVolume() != null ? v.getTakerQuoteVolume().toString() : null);
+        dto.setTrades(v.getTrades());
+
+        return dto;
     }
 }

@@ -21,6 +21,7 @@ public class AppBot implements CommandLineRunner {
     private final UsuarioService usuarioService;
     private final WalletService walletService;
     private final SessionManager sessionManager;
+    private final AITrainingService aiTrainingService;
 
     private final Scanner scanner = new Scanner(System.in);
 
@@ -104,11 +105,13 @@ public class AppBot implements CommandLineRunner {
                 case "fetch" -> ejecutarFetch(parts);
                 case "backtest" -> ejecutarBacktest(parts);
                 case "trade" -> iniciarFlujoTrade(parts);
+                case "train" -> ejecutarTrain(parts);
                 case "start" -> ejecutarStart(parts);
                 case "stop" -> ejecutarStop(parts);
                 case "term" -> ejecutarTerm(parts);
 
                 // Sistema
+                case "cbi" -> conseguirDatos(parts);
                 case "ayuda" -> mostrarAyuda();
                 default -> uiPrintln("Comando desconocido. Escribe 'ayuda'.");
             }
@@ -281,6 +284,39 @@ public class AppBot implements CommandLineRunner {
         // 3. Launch
         estrategiaService.iniciarTradeRT(estraNombre, tf, coins, isReal, walletID, risk, capitalAsignado);
         uiPrintln("Estrategia lanzada en segundo plano.");
+    }
+
+private void ejecutarTrain(String[] parts) {
+        if (!validarLogin()) {
+            return;
+        }
+        if (parts.length < 4) {
+            uiPrintln("Uso: train <modelo> <timeframe> <coin>");
+            uiPrintln("Ejemplo: train random_forest 1h BTCUSDT");
+            return;
+        }
+
+        String modelo = parts[1];
+        String tf = parts[2];
+        String coin = parts[3];
+
+        uiPrintln("Iniciando pipeline de Inteligencia Artificial...");
+
+        String resultado = aiTrainingService.entrenarModelo(modelo, tf, coin);
+
+        uiPrintln("\n--- RESULTADOS DEL MODELO ---");
+        uiPrintln(resultado);
+        uiPrintln("-----------------------------");
+    }
+
+    public void conseguirDatos(String[] parts) {
+        if (parts.length < 2) {
+            uiPrintln("Uso: cbi <symbol> (Ej: cbi BTCUSDT)");
+            return;
+        }
+        String symbol = parts[1];
+        marketDataService.calcularIndicadoresParaSimbolo(symbol, "1h");
+        uiPrintln("Datos de mercado e indicadores calculados para " + symbol);
     }
 
     private void ejecutarStart(String[] parts) {

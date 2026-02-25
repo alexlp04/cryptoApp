@@ -3,6 +3,7 @@ package com.bottrading.services;
 import com.bottrading.beans.Vela;
 import com.bottrading.beans.VelaDTO;
 import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -48,18 +49,24 @@ public class FetchService {
      * @param interval El intervalo de la vela (ej: "1m", "1h").
      */
     public void fetch(String symbol, String interval) {
-        log.info("🔍 Comprobando datos para: {} [{}]", symbol, interval);
+        log.info("Comprobando datos para: {} [{}]", symbol, interval);
 
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
 
         if (lastTimestamp == null) {
             log.info("No hay datos previos. Iniciando descarga completa...");
+            ConsoleLoader.getInstance().startDots();
+
             callPythonAndSave(symbol, interval, null);
+
         } else {
             long now = System.currentTimeMillis();
             if (now - lastTimestamp > getIntervalMillis(interval)) {
-                log.info("⏳ Datos desactualizados. Descargando desde: {}", lastTimestamp);
-                callPythonAndSave(symbol, interval, lastTimestamp + 1); // +1 para evitar solapamiento
+                log.info("Datos desactualizados. Descargando desde: {}", lastTimestamp);
+                ConsoleLoader.getInstance().startDots();
+                callPythonAndSave(symbol, interval, lastTimestamp + 1);
+                ConsoleLoader.getInstance().stop();
+
             } else {
                 log.info("Los datos ya están al día.");
             }
@@ -69,74 +76,83 @@ public class FetchService {
     /**
      * Ejecuta el script extractor de Python y persiste los datos recibidos en una
      * transacción por lotes.
-     * <p>
      * Este método lee la salida JSON directamente del flujo del proceso (stream)
      * para minimizar
      * la sobrecarga de memoria al procesar grandes conjuntos de datos.
-     * </p>
      *
      * @param symbol        El par de trading.
      * @param interval      El intervalo de tiempo.
      * @param fromTimestamp El timestamp de inicio (opcional, null para descarga
      *                      completa).
      */
-    private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
-        Process process = null; // Necesario para el scope del finally/catch
+private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
+        Process process = null; 
         try {
-            ProcessBuilder pb = new ProcessBuilder("python", PathConfig.FETCHER_PATH, symbol, interval);
+            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval); // Asegúrate que es python o python3
             if (fromTimestamp != null) {
                 pb.command().add(String.valueOf(fromTimestamp));
             }
 
             process = pb.start();
 
-            // Hilo para capturar errores (igual que antes)
-            final Process pRef = process; // Variable final efectiva para lambda
+            // Hilo para capturar errores 
+            final Process pRef = process; 
             new Thread(() -> {
                 try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
                     String line;
                     while ((line = err.readLine()) != null) {
-                        log.error("🐍 PYTHON ERROR: {}", line);
+                        log.error("PYTHON ERROR: {}", line);
                     }
                 } catch (Exception e) {
                     log.error("Error leyendo STDERR: {}", e.getMessage());
                 }
             }).start();
 
+            // --- LECTURA POR LOTES ---
+            int totalGuardadas = 0;
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                List<VelaDTO> dtoList = gson.fromJson(reader, new TypeToken<List<VelaDTO>>() {
-                }.getType());
+                String lineaJson;
+                
+                // Leemos línea por línea. Cada línea es un lote de 10.000 velas de Python.
+                while ((lineaJson = reader.readLine()) != null) {
+                    
+                    // Convertimos esta línea específica en una lista de DTOs
+                    List<VelaDTO> loteDTOs = gson.fromJson(lineaJson, new TypeToken<List<VelaDTO>>() {}.getType());
 
-                if (dtoList != null && !dtoList.isEmpty()) {
-                    List<Vela> entidades = dtoList.stream()
-                            .map(dto -> mapToEntity(dto, symbol, interval))
-                            .collect(Collectors.toList());
-                    velaRepo.saveAll(entidades);
-                    log.info("Guardadas {} velas.", entidades.size());
+                    if (loteDTOs != null && !loteDTOs.isEmpty()) {
+                        List<Vela> entidades = loteDTOs.stream()
+                                .map(dto -> mapToEntity(dto, symbol, interval))
+                                .collect(Collectors.toList());
+                                
+                        // Guardamos el lote en la base de datos
+                        velaRepo.saveAll(entidades);
+                        
+                        totalGuardadas += entidades.size();
+                        log.info("Lote guardado. Total acumulado: {} velas de {}.", totalGuardadas, symbol);
+                        
+                        // Ayudamos al Garbage Collector a limpiar la RAM tras cada lote
+                        entidades.clear();
+                        loteDTOs.clear();
+                    }
                 }
             }
 
-            // Aquí es donde puede saltar la InterruptedException
             int exitCode = process.waitFor();
 
             if (exitCode != 0) {
                 log.error("Script Python terminó con error (código {})", exitCode);
                 throw new RuntimeException("Script Python falló con código " + exitCode);
             }
+            
+            log.info("Sincronización completa para {}. Velas totales guardadas: {}", symbol, totalGuardadas);
+            ConsoleLoader.getInstance().stop();
 
         } catch (InterruptedException e) {
-            // 1. RESTAURAR EL ESTADO DE INTERRUPCIÓN (Cumple SonarQube)
             Thread.currentThread().interrupt();
-
-            // 2. LIMPIEZA: Matar el proceso huérfano si nos interrumpen
-            if (process != null)
-                process.destroy();
-
+            if (process != null) process.destroy();
             log.warn("La sincronización fue interrumpida para {}", symbol);
             throw new RuntimeException("Hilo interrumpido durante la sincronización", e);
-
         } catch (Exception e) {
-            // Captura genérica para IOException, RuntimeException, etc.
             log.error("Error crítico en FetchService: {}", e.getMessage(), e);
             throw new RuntimeException("Fallo en sincronización de datos", e);
         }
