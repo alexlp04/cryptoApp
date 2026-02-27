@@ -1,7 +1,9 @@
 package com.bottrading;
 
 import com.bottrading.services.*;
+import com.bottrading.utils.CommandParser;
 import com.bottrading.utils.ConsoleLoader;
+import com.bottrading.utils.PathConfig;
 import com.bottrading.beans.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,13 +39,6 @@ public class AppBot implements CommandLineRunner {
         }
     }
 
-    // =========================================================================
-    // MÉTODOS DE INTERFAZ DE USUARIO (UI)
-    // Separamos la "Consola Visual" del "Log del Sistema"
-    // =========================================================================
-
-    // "java:S106" es la regla que prohíbe System.out. La silenciamos AQUÍ
-    // porque esta clase ES una interfaz de línea de comandos (CLI).
     @SuppressWarnings("java:S106")
     public void uiPrint(String mensaje) {
         System.out.print(mensaje);
@@ -104,7 +99,7 @@ public class AppBot implements CommandLineRunner {
                 // Operativa
                 case "fetch" -> ejecutarFetch(parts);
                 case "backtest" -> ejecutarBacktest(parts);
-                case "trade" -> iniciarFlujoTrade(parts);
+                case "trade" -> ejecutarTrade(parts);
                 case "train" -> ejecutarTrain(parts);
                 case "start" -> ejecutarStart(parts);
                 case "stop" -> ejecutarStop(parts);
@@ -116,9 +111,7 @@ public class AppBot implements CommandLineRunner {
                 default -> uiPrintln("Comando desconocido. Escribe 'ayuda'.");
             }
         } catch (Exception e) {
-            // Logueamos el error completo para nosotros (Developers)
             log.error("Error ejecutando comando '{}': {}", cmd, e.getMessage());
-            // Mostramos un mensaje limpio al usuario
             uiPrintln("Error: " + e.getMessage());
         }
     }
@@ -221,40 +214,86 @@ public class AppBot implements CommandLineRunner {
     }
 
     private void ejecutarFetch(String[] parts) {
-        if (parts.length < 3)
-            throw new IllegalArgumentException("Uso: fetch <timeframe> <coin1> <coin2>...");
-        List<String> coins = Arrays.asList(Arrays.copyOfRange(parts, 2, parts.length));
+        CommandParser args = new CommandParser(parts);
+
+        if (args.hasErrorSintaxis()) {
+            uiPrintln(args.getMensajeError());
+            return;
+        }
+
+        if (args.getTimeframe() == null || args.getCoins().isEmpty()) {
+            uiPrintln("Uso: fetch -tf <timeframe> -coins <coin1> [coin2...]");
+            return;
+        }
 
         uiPrintln("Descargando datos... (Esto puede tardar)");
-        marketDataService.actualizarDatosMercado(coins, parts[1]);
+        marketDataService.actualizarDatosMercado(args.getCoins(), args.getTimeframe());
         uiPrintln("Sincronizacion completa.");
     }
 
     private void ejecutarBacktest(String[] parts) throws Exception {
-        if (parts.length < 4)
-            throw new IllegalArgumentException("Uso: backtest <estrategia> <tf> <coin1>...");
-        List<String> coins = Arrays.asList(Arrays.copyOfRange(parts, 3, parts.length));
+        CommandParser args = new CommandParser(parts);
+
+        if (args.hasErrorSintaxis()) {
+            uiPrintln(args.getMensajeError());
+            return;
+        }
+
+        // Requiere estrategia, timeframe y monedas
+        if (args.getEstrategia() == null || args.getTimeframe() == null || args.getCoins().isEmpty()) {
+            uiPrintln("Uso: backtest -strategy <nombre> -tf <timeframe> -coins <coin1> [coin2...]");
+            return;
+        }
 
         uiPrintln("Iniciando Backtest...");
-        estrategiaService.ejecutarBacktest(parts[1], parts[2], coins);
+        estrategiaService.ejecutarBacktest(args.getEstrategia(), args.getTimeframe(), args.getCoins());
         uiPrintln("Backtest finalizado. Resultados guardados en CSV.");
     }
 
-    private void iniciarFlujoTrade(String[] parts) throws Exception {
+    private void ejecutarTrade(String[] parts) throws Exception {
         if (!validarLogin()) {
             return;
         }
-        if (parts.length < 5) {
-            uiPrintln("Uso: trade -v|-r <estrategia> <timeframe> coin1 coin2...");
+
+        CommandParser args = new CommandParser(parts);
+
+        if (args.hasErrorSintaxis()) {
+            uiPrintln(args.getMensajeError());
             return;
         }
 
-        boolean isReal = parts[1].equalsIgnoreCase("-r");
-        String estraNombre = parts[2];
-        String tf = parts[3];
-        List<String> coins = Arrays.asList(Arrays.copyOfRange(parts, 4, parts.length));
+        // Validaciones específicas de trade
+        if ((!args.isReal() && !args.isVirtual()) || (args.isReal() && args.isVirtual()) ||
+                args.getTimeframe() == null || args.getCoins().isEmpty() ||
+                (args.getEstrategia() == null && args.getModelo() == null)) {
 
-        // 1. Selección de Wallet
+            uiPrintln(
+                    "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]");
+            return;
+        }
+
+        if (args.isReal()) {
+            uiPrintln("ADVERTENCIA: Has seleccionado MODO REAL. Asegurate de tener fondos y entender los riesgos.");
+        }
+
+        // Validación de ficheros
+        if (args.getEstrategia() != null && !PathConfig.existeEstrategia(args.getEstrategia())) {
+            uiPrintln("Error: No se encuentra el script de estrategia '" + args.getEstrategia() + ".py'.");
+            return;
+        }
+
+        if (args.getModelo() != null) {
+            for (String coin : args.getCoins()) {
+                if (!PathConfig.existeModelo(args.getModelo())) {
+                    uiPrintln("Error: No se encuentra el modelo '" + args.getModelo() + ".");
+                    uiPrintln("Pista: Ejecuta primero -> train -model " + args.getModelo() + " -tf "
+                            + args.getTimeframe() + " -coins " + coin);
+                    return;
+                }
+            }
+        }
+
+        // (Resto de la lógica de wallet y riesgo igual que antes...)
         uiPrintln("\nSelecciona una wallet:");
         walletService.listarWallets().forEach(this::uiPrintln);
 
@@ -263,15 +302,13 @@ public class AppBot implements CommandLineRunner {
 
         BigDecimal balanceTotal = walletService.getBalance(wName);
         Long walletID = walletService.obtenerIdPorNombre(wName);
-
         BigDecimal comprometido = estrategiaService.getCapitalComprometido(walletID);
         BigDecimal disponible = balanceTotal.subtract(comprometido);
 
-        uiPrintln(String.format("Saldo Total: %s | En Silos: %s | DISPONIBLE: %s",
-                balanceTotal, comprometido, disponible));
+        uiPrintln(String.format("Saldo Total: %s | En Silos: %s | DISPONIBLE: %s", balanceTotal, comprometido,
+                disponible));
 
-        // 2. Inputs
-        uiPrint("Capital a asignar a esta estrategia: ");
+        uiPrint("Capital a asignar a este bot: ");
         BigDecimal capitalAsignado = new BigDecimal(scanner.nextLine().trim());
 
         if (capitalAsignado.compareTo(disponible) > 0) {
@@ -281,28 +318,37 @@ public class AppBot implements CommandLineRunner {
         uiPrint("Riesgo por trade (0.01 - 1.0): ");
         BigDecimal risk = new BigDecimal(scanner.nextLine().trim());
 
-        // 3. Launch
-        estrategiaService.iniciarTradeRT(estraNombre, tf, coins, isReal, walletID, risk, capitalAsignado);
-        uiPrintln("Estrategia lanzada en segundo plano.");
+        String identificador = (args.getEstrategia() != null) ? args.getEstrategia() : args.getModelo();
+
+        estrategiaService.iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
+                args.getCoins(), args.isReal(), walletID, risk, capitalAsignado);
+        uiPrintln("Bot lanzado en segundo plano con éxito.");
     }
 
-private void ejecutarTrain(String[] parts) {
+    private void ejecutarTrain(String[] parts) {
         if (!validarLogin()) {
             return;
         }
-        if (parts.length < 4) {
-            uiPrintln("Uso: train <modelo> <timeframe> <coin>");
-            uiPrintln("Ejemplo: train random_forest 1h BTCUSDT");
+
+        CommandParser args = new CommandParser(parts);
+
+        if (args.hasErrorSintaxis()) {
+            uiPrintln(args.getMensajeError());
             return;
         }
 
-        String modelo = parts[1];
-        String tf = parts[2];
-        String coin = parts[3];
+        if (args.getModelo() == null || args.getTimeframe() == null || args.getCoins().isEmpty()) {
+            uiPrintln("Uso: train -model <modelo> -tf <timeframe> -coins <coin>");
+            uiPrintln("Ejemplo: train -model random_forest -tf 1h -coins BTCUSDT");
+            return;
+        }
+
+        // NOTA: Tu método de entrenamiento actual solo acepta una moneda, así que
+        // cogemos la primera.
+        String coin = args.getCoins().get(0);
 
         uiPrintln("Iniciando pipeline de Inteligencia Artificial...");
-
-        String resultado = aiTrainingService.entrenarModelo(modelo, tf, coin);
+        String resultado = aiTrainingService.entrenarModelo(args.getModelo(), args.getTimeframe(), coin);
 
         uiPrintln("\n--- RESULTADOS DEL MODELO ---");
         uiPrintln(resultado);
@@ -310,12 +356,15 @@ private void ejecutarTrain(String[] parts) {
     }
 
     public void conseguirDatos(String[] parts) {
-        if (parts.length < 2) {
-            uiPrintln("Uso: cbi <symbol> (Ej: cbi BTCUSDT)");
+        CommandParser args = new CommandParser(parts);
+
+        if (args.hasErrorSintaxis() || args.getTimeframe() == null || args.getCoins().isEmpty()) {
+            uiPrintln("Uso: cbi -tf <timeframe> -coins <symbol> (Ej: cbi -tf 1h -coins BTCUSDT)");
             return;
         }
-        String symbol = parts[1];
-        marketDataService.calcularIndicadoresParaSimbolo(symbol, "1h");
+
+        String symbol = args.getCoins().get(0);
+        marketDataService.calcularIndicadoresParaSimbolo(symbol, args.getTimeframe());
         uiPrintln("Datos de mercado e indicadores calculados para " + symbol);
     }
 
@@ -327,7 +376,6 @@ private void ejecutarTrain(String[] parts) {
             uiPrintln("Uso: start <ID>  o  start -all");
             return;
         }
-
         if (parts[1].equalsIgnoreCase("-all")) {
             estrategiaService.iniciarTodasDetenidas();
             uiPrintln("Solicitud de inicio masivo enviada.");
@@ -352,7 +400,6 @@ private void ejecutarTrain(String[] parts) {
             uiPrintln("Uso: stop <ID>  o  stop -all");
             return;
         }
-
         if (parts[1].equalsIgnoreCase("-all")) {
             estrategiaService.detenerTodas();
             uiPrintln("Todas las estrategias activas han sido pausadas.");
@@ -375,7 +422,6 @@ private void ejecutarTrain(String[] parts) {
             uiPrintln("Uso: term <ID>  o  term -all (Cuidado: Liquida todo)");
             return;
         }
-
         if (parts[1].equalsIgnoreCase("-all")) {
             uiPrint("¿Seguro que quieres LIQUIDAR TODAS las estrategias? (s/n): ");
             String confirm = scanner.nextLine().trim();

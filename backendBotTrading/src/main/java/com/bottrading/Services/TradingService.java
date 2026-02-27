@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -69,10 +70,7 @@ public class TradingService {
      * @param symbols   Lista de símbolos a operar.
      */
     public void ejecutarTradeEnTiempoReal(InstanciaEstrategia instancia, List<String> symbols) {
-        // Enviar tarea al pool de hilos
         Future<?> future = executor.submit(() -> runEngineRT(instancia, symbols));
-
-        // Registro atómico en el mapa
         procesosActivos.compute(instancia.getId(), (k, ctx) -> {
             if (ctx == null) {
                 return new StrategyContext(null, future);
@@ -87,12 +85,12 @@ public class TradingService {
      * Lógica principal del hilo de ejecución.
      * Arranca el proceso Python, envía la configuración y escucha señales en bucle.
      */
-private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
+    private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
         boolean errorCritico = false;
         Process process = null;
 
         try {
-            // 1. Iniciar proceso y registrarlo
+            // 1. Iniciar proceso y registrarlo (ELIGE EL SCRIPT CORRECTO AQUÍ)
             process = iniciarProcesoPython(instancia);
 
             // 2. Enviar configuración
@@ -124,16 +122,26 @@ private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
     // =========================================================================
 
     private Process iniciarProcesoPython(InstanciaEstrategia instancia) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_RT_PATH);
+        String scriptPath;
+        if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {
+            log.info("Arrancando Motor de IA para estrategia: {}", instancia.getNombreModelo());
+            scriptPath = PathConfig.ENGINE_AI_RT_PATH; // Script para Modelos de ML
+        } else {
+            log.info("Arrancando Motor Estándar para estrategia: {}", instancia.getNombreEstrategia());
+            scriptPath = PathConfig.ENGINE_RT_PATH; // Script normal
+        }
+
+        ProcessBuilder pb = new ProcessBuilder("python", scriptPath);
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
         procesosActivos.compute(instancia.getId(), (k, ctx) -> {
-            if (ctx == null) return new StrategyContext(process, null);
+            if (ctx == null)
+                return new StrategyContext(process, null);
             ctx.pythonProcess = process;
             return ctx;
         });
-        
+
         return process;
     }
 
@@ -177,17 +185,23 @@ private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
         }
     }
 
-
     /**
      * Serializa y envía la configuración inicial al script de Python a través de
      * STDIN.
      */
     private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws IOException {
-        Map<String, Object> payload = Map.of(
-                "strategy_path", PathConfig.getValidStrategyPath(inst.getNombreEstrategia()),
-                "symbols", new ArrayList<>(symbols),
-                "timeframe", inst.getTimeframe(),
-                "capital", inst.getCapitalReservado());
+        // Usamos un HashMap normal en lugar de Map.of para poder añadir claves condicionalmente
+        Map<String, Object> payload = new HashMap<>();
+        
+        payload.put("strategy_path", PathConfig.getValidStrategyPath(inst.getNombreEstrategia()));
+        payload.put("symbols", new ArrayList<>(symbols));
+        payload.put("timeframe", inst.getTimeframe());
+        payload.put("capital", inst.getCapitalReservado());
+
+        // 🔥 AÑADIMOS EL MODELO AL PAYLOAD SI EXISTE
+        if (inst.getNombreModelo() != null && !inst.getNombreModelo().isEmpty()) {
+            payload.put("model_name", inst.getNombreModelo());
+        }
 
         try (OutputStream os = p.getOutputStream()) {
             os.write(gson.toJson(payload).getBytes(StandardCharsets.UTF_8));
@@ -235,8 +249,7 @@ private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
     /**
      * Obtiene el conjunto de IDs de las estrategias que están corriendo
      * actualmente.
-     * 
-     * @return Set de IDs.
+     * * @return Set de IDs.
      */
     public Set<Long> getIdsEstrategiasActivas() {
         return new HashSet<>(procesosActivos.keySet());

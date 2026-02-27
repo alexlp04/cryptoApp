@@ -1,6 +1,7 @@
 package com.bottrading.beans;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 
 import jakarta.persistence.CollectionTable;
@@ -18,6 +19,9 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "nombre_estrategia")
     private String nombreEstrategia;
 
+    @Column(name = "nombre_modelo", length = 100)
+    private String nombreModelo;
+
     @Column(name = "wallet_asociada")
     private Long walletAsociada;
 
@@ -30,31 +34,59 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "risk_per_trade")
     private BigDecimal riskPerTrade;
 
-    // Estados dinámicos
-
     @Column(name = "capital_reservado")
     private BigDecimal capitalReservado; // RESERVED
-    
-    @Column(name = "capital_comprometido")
-    private BigDecimal capitalComprometido; // COMMITTED
 
-    @Column(name = "riesgo_abierto")
-    private BigDecimal riesgoAbierto; // riesgo vivo
+    // Estados dinámicos con VALORES POR DEFECTO
+
+    @Column(name = "capital_comprometido", precision = 18, scale = 8)
+    private BigDecimal capitalComprometido = BigDecimal.ZERO;
+
+    @Column(name = "riesgo_abierto", precision = 18, scale = 8)
+    private BigDecimal riesgoAbierto = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    private Boolean eliminado = false;
+
+    @Column(length = 20, nullable = false)
+    private String estado = "CREADA";
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "instancia_simbolos", joinColumns = @JoinColumn(name = "instancia_id"))
-    @Column(name = "simbolo")                           
+    @Column(name = "simbolo")
     private List<String> simbolos;
 
     @Column(name = "es_real")
     private boolean esReal;
 
-    @Column(name = "estado")
-    private String estado; // ACTIVA, FINALIZADA, SIN_FONDOS
 
     public InstanciaEstrategia() {
         super();
     }
+
+    /**
+     * Crea una nueva instancia lista para ser ejecutada, aplicando la lógica de negocio básica.
+     */
+    public static InstanciaEstrategia inicializar(String nombreEstra, String nombreModelo, String tf,
+            List<String> coins, boolean isReal, Long walletId,
+            BigDecimal risk, BigDecimal capital) {
+
+        InstanciaEstrategia instancia = new InstanciaEstrategia();
+
+        instancia.setNombreEstrategia(nombreEstra);
+        instancia.setNombreModelo(nombreModelo);
+        instancia.setTimeframe(tf);
+        instancia.setCapitalAsignado(capital);
+        instancia.setCapitalReservado(capital);
+        instancia.setRiskPerTrade(risk);
+        instancia.setSimbolos(new ArrayList<>(coins));
+        instancia.setEsReal(isReal);
+        instancia.setWalletAsociada(walletId);
+
+        return instancia;
+    }
+
+    // --- Getters y Setters ---
 
     public String getNombreEstrategia() {
         return nombreEstrategia;
@@ -62,6 +94,14 @@ public class InstanciaEstrategia extends BaseEntity {
 
     public void setNombreEstrategia(String nombreEstrategia) {
         this.nombreEstrategia = nombreEstrategia;
+    }
+
+    public String getNombreModelo() {
+        return nombreModelo;
+    }
+
+    public void setNombreModelo(String nombreModelo) {
+        this.nombreModelo = nombreModelo;
     }
 
     public Long getWalletAsociada() {
@@ -120,6 +160,22 @@ public class InstanciaEstrategia extends BaseEntity {
         this.riesgoAbierto = riesgoAbierto;
     }
 
+    public Boolean getEliminado() {
+        return eliminado;
+    }
+
+    public void setEliminado(Boolean eliminado) {
+        this.eliminado = eliminado;
+    }
+
+    public String getEstado() {
+        return estado;
+    }
+
+    public void setEstado(String estado) {
+        this.estado = estado;
+    }
+
     public List<String> getSimbolos() {
         return simbolos;
     }
@@ -136,22 +192,14 @@ public class InstanciaEstrategia extends BaseEntity {
         this.esReal = esReal;
     }
 
-    public String getEstado() {
-        return estado;
-    }
-
-    public void setEstado(String estado) {
-        this.estado = estado;
-    }
-
     @Override
     public String toString() {
-        return String.format("ID: %d | Estrategia: %s | Symbols: %s | Capital: %s | Estado: %s",
+        return String.format("ID: %d | Estrategia: %s | Modelo: %s | Symbols: %s | Capital: %s | Estado: %s",
                 this.getId(),
                 this.getNombreEstrategia(),
-                this.getSimbolos(), // Asumiendo que devuelve una lista o string legible
+                this.getNombreModelo() != null ? this.getNombreModelo() : "N/A",
+                this.getSimbolos(),
                 this.getCapitalReservado() != null ? this.getCapitalReservado().toPlainString() : "0.00",
                 this.getEstado());
     }
-
 }

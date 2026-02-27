@@ -62,6 +62,7 @@ public final class AppConstants {
 
     public static final String FILE_ENGINE_TRAIN = "engine_train.py";
 public static final String DIR_MODELS = "models";
+    public static final String FILE_ENGINE_AI_RT = "engine_ai_rt.py";
     
     public static final String EXTENSION_PYTHON = ".py";
     public static final String EXTENSION_ENV = ".env";
