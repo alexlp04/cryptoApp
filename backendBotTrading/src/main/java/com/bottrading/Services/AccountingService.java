@@ -60,10 +60,7 @@ public class AccountingService {
                 throw new RuntimeException("Fondos insuficientes en balance disponible");
             }
 
-            // Movimiento de fondos: Wallet -> Estrategia
             w.setBalanceDisponible(w.getBalanceDisponible().subtract(capital));
-
-            e.setWalletAsociada(walletId);
             e.setCapitalAsignado(capital);
             e.setEstado("ACTIVA");
 
@@ -73,7 +70,6 @@ public class AccountingService {
             return estrategiaRepo.save(e);
 
         } catch (Exception ex) {
-            // Log de emergencia y re-throw para forzar Rollback de la transacción
             log.error("Error contable al activar estrategia: {}", ex.getMessage(), ex);
             throw ex;
         }

@@ -18,7 +18,6 @@ import java.nio.file.Paths;
 @EntityScan(basePackages = "com.bottrading.beans")
 @EnableJpaRepositories(basePackages = "com.bottrading.repositories")
 public class BotApplication {
-
     public static void main(String[] args) {
         // 1. CARGA DEL ENTORNO (.env)
         ConsoleLoader.getInstance().startDots();
@@ -30,20 +29,20 @@ public class BotApplication {
         } else {
             dotenv = Dotenv.configure().directory("./").ignoreIfMissing().load();
         }
-limpiarDirectorioLogs();
+        limpiarDirectorioLogs();
         configurarPropiedadesSistema(dotenv);
-        
+
         // 2. CONFIGURACIÓN DE INTERFAZ (Apagamos el Banner visual de Spring)
-        System.setProperty("spring.main.banner-mode", "off"); 
+        System.setProperty("spring.main.banner-mode", "off");
 
         // 3. ARRANQUE PERSONALIZADO
         SpringApplication app = new SpringApplication(BotApplication.class);
-        
+
         // Apagamos el Banner visual (reforzado)
         app.setBannerMode(Banner.Mode.OFF);
         // Apagamos el log de "Starting BotApplication..."
         app.setLogStartupInfo(false);
-        
+
         // Arrancamos
         app.run(args);
     }
@@ -80,7 +79,7 @@ limpiarDirectorioLogs();
             System.setProperty("spring.datasource.password", dbPass);
             System.setProperty("spring.datasource.driver-class-name", "com.mysql.cj.jdbc.Driver");
         }
-        
+
         // Configuraciones extra de Hibernate para que no ensucie la consola
         System.setProperty("spring.jpa.hibernate.ddl-auto", "update");
         System.setProperty("spring.jpa.show-sql", "false"); // Importante: APAGAR SQL

@@ -28,6 +28,7 @@ public final class PathConfig {
     public static final String INDICATORS_PATH = resolvePath(DIR_SCRIPTS, FILE_INDICATORS);
     public static final String ENGINE_TRAIN_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_TRAIN);
     public static final String MODELS_DIR = resolvePath(DIR_MODELS);
+    public static final String ENGINE_AI_RT_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_AI_RT);
 
     private static String calculateProjectRoot() {
         String userDir = System.getProperty("user.dir");
@@ -57,5 +58,49 @@ public final class PathConfig {
             throw new IllegalArgumentException("No existe la estrategia '" + nombreLimpio + "' en: " + STRATEGIES_DIR);
         }
         return rutaFinal.toAbsolutePath().toString();
+    }
+
+    public static String getValidModelPath(String nombreModelo, String timeframe, String symbol) {
+        // Ejemplo de nombre de archivo esperado: "random_forest_1h_BTCUSDT.pkl"
+        String nombreArchivo = String.format("%s_%s_%s.pkl", nombreModelo, timeframe, symbol);
+
+        if (nombreArchivo.contains("..") || nombreArchivo.contains("/") || nombreArchivo.contains("\\")) {
+            throw new IllegalArgumentException("Nombre de modelo inválido por seguridad.");
+        }
+
+        Path rutaFinal = Paths.get(MODELS_DIR, nombreArchivo);
+
+        if (!Files.exists(rutaFinal)) {
+            throw new IllegalArgumentException("No existe el modelo de IA '" + nombreArchivo + "' en la carpeta: " + MODELS_DIR + ". ¿Has ejecutado el comando 'train'?");
+        }
+        
+        return rutaFinal.toAbsolutePath().toString();
+    }
+
+    /**
+     * Comprueba si el script de Python de la estrategia existe.
+     */
+    public static boolean existeEstrategia(String nombreAlgoritmo) {
+        if (nombreAlgoritmo.contains("..") || nombreAlgoritmo.contains("/") || nombreAlgoritmo.contains("\\")) {
+            return false;
+        }
+        String nombreLimpio = nombreAlgoritmo.endsWith(EXTENSION_PYTHON)
+                ? nombreAlgoritmo
+                : nombreAlgoritmo + EXTENSION_PYTHON;
+
+        return Files.exists(Paths.get(STRATEGIES_DIR, nombreLimpio));
+    }
+
+    /**
+     * Comprueba si el archivo .pkl del modelo entrenado existe para esa moneda y timeframe.
+     */
+    public static boolean existeModelo(String nombreAlgoritmo) {
+        if (nombreAlgoritmo.contains("..") || nombreAlgoritmo.contains("/") || nombreAlgoritmo.contains("\\")) {
+            return false;
+        }
+
+        String nombreArchivo = String.format("%s.pkl", nombreAlgoritmo);
+        
+        return Files.exists(Paths.get(MODELS_DIR, nombreArchivo));
     }
 }

@@ -65,30 +65,21 @@ public class EstrategiaService {
      * @param capital     Capital inicial a reservar
      */
     @Transactional
-    public void iniciarTradeRT(String nombreEstra, String tf, List<String> coins,
+    public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
 
-        InstanciaEstrategia instancia = new InstanciaEstrategia();
-        instancia.setNombreEstrategia(nombreEstra);
-        instancia.setTimeframe(tf);
-        instancia.setCapitalAsignado(capital);
-        instancia.setRiskPerTrade(risk);
-        instancia.setSimbolos(new ArrayList<>(coins));
-        instancia.setEsReal(isReal);
-        instancia.setWalletAsociada(walletId);
-        instancia.setCapitalReservado(capital);
-        instancia.setCapitalComprometido(BigDecimal.ZERO);
-        instancia.setRiesgoAbierto(BigDecimal.ZERO);
-        instancia.setEliminado(false);
-        instancia.setEstado("CREADA");
+        // 1. Inicializar la estrategia usando nuestra nueva función (Patrón Factoría)
+        InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
+                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
 
-        // Guardar antes de activar para tener ID
+        // 2. Guardar en base de datos para generar su ID
         instancia = instanciaRepo.save(instancia);
 
-        // Activar contablemente (Mueve saldo de Disponible -> Reservado)
+        // 3. Activar contablemente (Mueve saldo de Disponible -> Reservado en la
+        // Wallet)
         accountingService.activateStrategy(walletId, instancia.getId(), capital);
 
-        // Lanzar motor técnico
+        // 4. Lanzar motor técnico de Python en segundo plano
         tradingService.ejecutarTradeEnTiempoReal(instancia, coins);
     }
 
