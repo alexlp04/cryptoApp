@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import com.bottrading.beans.Vela;
 import com.bottrading.beans.VelaDTO;
+import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
@@ -31,12 +32,14 @@ import java.util.stream.Collectors;
 public class FetchService {
 
     private final VelaRepository velaRepo;
+    private final IndicadorRepository indicadorRepo;
 
     private final Gson gson = new Gson();
 
     @Autowired
-    public FetchService(VelaRepository velaRepo) {
+    public FetchService(VelaRepository velaRepo, IndicadorRepository indicadorRepo) {
         this.velaRepo = velaRepo;
+        this.indicadorRepo = indicadorRepo;
     }
 
     /**
@@ -74,6 +77,45 @@ public class FetchService {
     }
 
     /**
+     * Coordina la descarga incremental inteligente.
+     * Revisa la BD y decide si descargar los X días completos o solo el hueco
+     * restante.
+     * * @return El timestamp (en milisegundos) desde el que se ha empezado a
+     * descargar.
+     */
+    public long fetchIncremental(String symbol, String interval, int dias, long now) {
+        long millisPerDay = 24L * 60L * 60L * 1000L;
+        long targetTimestamp = now - ((long) dias * millisPerDay);
+
+        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        long fetchFromTimestamp;
+
+        if (lastTimestamp != null && lastTimestamp > targetTimestamp) {
+            // Ya hay historial. Descargamos desde la última vela registrada
+            // (Sobreescribimos esa última vela por si la anterior vez se guardó incompleta)
+            fetchFromTimestamp = lastTimestamp;
+            log.info("Historial detectado. Descargando solo nuevas velas desde: {}", lastTimestamp);
+        } else {
+            // Historial vacío o insuficiente
+            fetchFromTimestamp = targetTimestamp;
+            log.info("Historial incompleto. Descargando {} días completos desde: {}", dias, targetTimestamp);
+        }
+
+        log.info("Limpiando datos residuales desde el punto de anclaje...");
+        ConsoleLoader.getInstance().startDots();
+
+        // Borramos SOLO de la fecha de anclaje en adelante. Lo viejo ni se toca.
+        indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
+        velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
+
+        // Llamamos a Python
+        callPythonAndSave(symbol, interval, fetchFromTimestamp);
+        ConsoleLoader.getInstance().stop();
+
+        return fetchFromTimestamp; // Devolvemos el dato para que el MarketDataService sepa qué hacer
+    }
+
+    /**
      * Ejecuta el script extractor de Python y persiste los datos recibidos en una
      * transacción por lotes.
      * Este método lee la salida JSON directamente del flujo del proceso (stream)
@@ -85,18 +127,19 @@ public class FetchService {
      * @param fromTimestamp El timestamp de inicio (opcional, null para descarga
      *                      completa).
      */
-private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
-        Process process = null; 
+    private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
+        Process process = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval); // Asegúrate que es python o python3
+            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval);
+
             if (fromTimestamp != null) {
                 pb.command().add(String.valueOf(fromTimestamp));
             }
 
             process = pb.start();
 
-            // Hilo para capturar errores 
-            final Process pRef = process; 
+            // Hilo para capturar errores
+            final Process pRef = process;
             new Thread(() -> {
                 try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
                     String line;
@@ -112,25 +155,25 @@ private void callPythonAndSave(String symbol, String interval, Long fromTimestam
             int totalGuardadas = 0;
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String lineaJson;
-                
+
                 // Leemos línea por línea. Cada línea es un lote de 10.000 velas de Python.
                 while ((lineaJson = reader.readLine()) != null) {
-                    
+
                     // Convertimos esta línea específica en una lista de DTOs
-                    List<VelaDTO> loteDTOs = gson.fromJson(lineaJson, new TypeToken<List<VelaDTO>>() {}.getType());
+                    List<VelaDTO> loteDTOs = gson.fromJson(lineaJson, new TypeToken<List<VelaDTO>>() {
+                    }.getType());
 
                     if (loteDTOs != null && !loteDTOs.isEmpty()) {
                         List<Vela> entidades = loteDTOs.stream()
                                 .map(dto -> mapToEntity(dto, symbol, interval))
                                 .collect(Collectors.toList());
-                                
+
                         // Guardamos el lote en la base de datos
                         velaRepo.saveAll(entidades);
-                        
+
                         totalGuardadas += entidades.size();
                         log.info("Lote guardado. Total acumulado: {} velas de {}.", totalGuardadas, symbol);
-                        
-                        // Ayudamos al Garbage Collector a limpiar la RAM tras cada lote
+
                         entidades.clear();
                         loteDTOs.clear();
                     }
@@ -143,13 +186,14 @@ private void callPythonAndSave(String symbol, String interval, Long fromTimestam
                 log.error("Script Python terminó con error (código {})", exitCode);
                 throw new RuntimeException("Script Python falló con código " + exitCode);
             }
-            
+
             log.info("Sincronización completa para {}. Velas totales guardadas: {}", symbol, totalGuardadas);
             ConsoleLoader.getInstance().stop();
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            if (process != null) process.destroy();
+            if (process != null)
+                process.destroy();
             log.warn("La sincronización fue interrumpida para {}", symbol);
             throw new RuntimeException("Hilo interrumpido durante la sincronización", e);
         } catch (Exception e) {
@@ -188,7 +232,7 @@ private void callPythonAndSave(String symbol, String interval, Long fromTimestam
         return v;
     }
 
-    private long getIntervalMillis(String interval) {
+    public static long getIntervalMillis(String interval) {
         return switch (interval) {
             case "1m" -> 60_000L;
             case "5m" -> 300_000L;

@@ -95,6 +95,7 @@ public class AppBot implements CommandLineRunner {
                 case "lsa" -> listarEstrategiasActivas();
                 case "lsd" -> listarEstrategiasDetenidas();
                 case "lst" -> listarEstrategiasTerminadas();
+                case "models" -> mostrarMenuModelos();
 
                 // Operativa
                 case "fetch" -> ejecutarFetch(parts);
@@ -318,8 +319,6 @@ public class AppBot implements CommandLineRunner {
         uiPrint("Riesgo por trade (0.01 - 1.0): ");
         BigDecimal risk = new BigDecimal(scanner.nextLine().trim());
 
-        String identificador = (args.getEstrategia() != null) ? args.getEstrategia() : args.getModelo();
-
         estrategiaService.iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
                 args.getCoins(), args.isReal(), walletID, risk, capitalAsignado);
         uiPrintln("Bot lanzado en segundo plano con éxito.");
@@ -343,13 +342,23 @@ public class AppBot implements CommandLineRunner {
             return;
         }
 
-        // NOTA: Tu método de entrenamiento actual solo acepta una moneda, así que
-        // cogemos la primera.
+        // TODO: Hacer que pueda entrenar con varias monedas a la vez
         String coin = args.getCoins().get(0);
 
-        uiPrintln("Iniciando pipeline de Inteligencia Artificial...");
-        String resultado = aiTrainingService.entrenarModelo(args.getModelo(), args.getTimeframe(), coin);
+        int diasEntrenamiento = validarYCalcularDias(args.getTimeframe(), args.getDays());
+        if (diasEntrenamiento == -1) {
+            uiPrintln("Operación cancelada.");
+            return;
+        }
 
+        uiPrintln("Iniciando pipeline de Inteligencia Artificial...");
+        String resultado = aiTrainingService.entrenarModelo(
+                            args.getModelo(), 
+                            args.getTimeframe(), 
+                            coin, 
+                            diasEntrenamiento,
+                            args.getHyperparams() 
+                    );
         uiPrintln("\n--- RESULTADOS DEL MODELO ---");
         uiPrintln(resultado);
         uiPrintln("-----------------------------");
@@ -480,4 +489,108 @@ public class AppBot implements CommandLineRunner {
                 -----------------------------------------------------
                 """);
     }
+
+    private int validarYCalcularDias(String tf, Integer requestedDays) {
+        int maxDays;
+        int defaultDays;
+
+        // Establecemos límites lógicos según la temporalidad
+        switch (tf.toLowerCase()) {
+            case "1m":
+                maxDays = 180;
+                defaultDays = 30;
+                break; // Máx 6 meses
+            case "5m":
+                maxDays = 365;
+                defaultDays = 90;
+                break; // Máx 1 año
+            case "15m":
+                maxDays = 730;
+                defaultDays = 180;
+                break; // Máx 2 años
+            case "1h":
+                maxDays = 1095;
+                defaultDays = 365;
+                break; // Máx 3 años
+            case "4h":
+                maxDays = 1825;
+                defaultDays = 730;
+                break; // Máx 5 años
+            case "1d":
+                maxDays = 3650;
+                defaultDays = 1095;
+                break;// Máx 10 años
+            default:
+                maxDays = 365;
+                defaultDays = 90;
+                break;
+        }
+
+        // Si el usuario no puso la bandera -d, usamos el default
+        if (requestedDays == null) {
+            uiPrintln("No se especificaron días (-d). Usando valor recomendado para " + tf + ": " + defaultDays
+                    + " días.");
+            return defaultDays;
+        }
+
+        // Si el usuario se pasó de la raya, le avisamos antes de explotar su RAM
+        if (requestedDays > maxDays) {
+            uiPrintln("ADVERTENCIA: Para el timeframe " + tf + ", el máximo recomendado es " + maxDays + " días.");
+            uiPrintln("Usar " + requestedDays
+                    + " días podría provocar un error de Memoria (Out Of Memory) y confundir a la IA.");
+            uiPrint("¿Estás seguro de que quieres intentar continuar? (s/n): ");
+            String confirm = scanner.nextLine().trim();
+            if (!confirm.equalsIgnoreCase("s")) {
+                return -1; // Código de cancelación
+            }
+        }
+
+        return requestedDays;
+    }
+
+private void mostrarMenuModelos() {
+        uiPrintln("\n=================================================================================");
+        uiPrintln("   CATÁLOGO DE MODELOS DE INTELIGENCIA ARTIFICIAL Y SUS HIPERPARÁMETROS   ");
+        uiPrintln("=================================================================================\n");
+        
+        uiPrintln("Uso en entrenamiento: train -m <modelo> -tf 15m -c BTCUSDT -params k1=v1,k2=v2\n");
+
+        uiPrintln("   1. RANDOM FOREST (-m random_forest) [Recomendado para empezar]");
+        uiPrintln("   El más robusto. Crea múltiples árboles de decisión y votan el resultado.");
+        uiPrintln("   > n_estimators (Int) : Número de árboles (100-500). Def: 100");
+        uiPrintln("   > max_depth    (Int) : Profundidad máxima del árbol (5-20). Def: 10");
+        uiPrintln("   > min_samples_split (Int): Mínimo de velas para crear rama (2-20).\n");
+
+        uiPrintln("   2. XGBOOST (-m xgboost) [Alta Precisión]");
+        uiPrintln("   El rey del Machine Learning. Muy potente pero propenso a memorizar ruido.");
+        uiPrintln("   > n_estimators  (Int)  : Iteraciones de aprendizaje (100-1000). Def: 150");
+        uiPrintln("   > learning_rate (Float): Tasa de aprendizaje (0.01-0.2). Def: 0.05");
+        uiPrintln("   > max_depth     (Int)  : Profundidad (3-10). Def: 6");
+        uiPrintln("   > gamma         (Float): Filtro anti-ruido, reducción mínima (0.0-5.0).\n");
+
+        uiPrintln("   3. LIGHTGBM (-m lightgbm) [Máxima Velocidad]");
+        uiPrintln("   Ideal para entrenar años de datos en temporalidades pequeñas (1m, 5m).");
+        uiPrintln("   > num_leaves    (Int)  : Hojas por árbol (20-100). Def: 31");
+        uiPrintln("   > learning_rate (Float): Tasa de aprendizaje (0.01-0.2). Def: 0.05");
+        uiPrintln("   > max_depth     (Int)  : Profundidad (3-12). Def: 6\n");
+
+        uiPrintln("   4. GRADIENT BOOSTING (-m gradient_boosting) [Clásico]");
+        uiPrintln("   > n_estimators  (Int)  : (100-500). Def: 100");
+        uiPrintln("   > learning_rate (Float): (0.01-0.2). Def: 0.1\n");
+
+        uiPrintln("   5. SUPPORT VECTOR MACHINES (-m svm) [Matemático]");
+        uiPrintln("   Detecta regímenes de mercado creando fronteras matemáticas.");
+        uiPrintln("   > C             (Float): Margen de error (0.1-100). Def: 1.0");
+        uiPrintln("   > kernel        (Str)  : Forma ('rbf', 'linear', 'poly'). Def: rbf\n");
+
+        uiPrintln("   6. DEEP LEARNING / RED NEURONAL (-m neural_network) [Avanzado]");
+        uiPrintln("   TensorFlow/Keras. Excelente si le pasas muchos indicadores.");
+        uiPrintln("   > epochs        (Int)  : Vueltas completas al dataset (10-100). Def: 50");
+        uiPrintln("   > batch_size    (Int)  : Velas procesadas de golpe (32, 64, 128). Def: 64");
+        uiPrintln("   > learning_rate (Float): Velocidad de ajuste (0.001-0.0001).");
+        uiPrintln("   > dropout_rate  (Float): Apaga neuronas para evitar sobreajuste (0.2-0.5).\n");
+        
+        uiPrintln("=================================================================================");
+    }
+
 }

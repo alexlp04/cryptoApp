@@ -37,4 +37,15 @@ public interface IndicadorRepository extends JpaRepository<IndicadorTecnico, Lon
     @Transactional
     @Query("DELETE FROM IndicadorTecnico i WHERE i.vela = :vela")
     void deleteByVela(@Param("vela") Vela vela);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM IndicadorTecnico i WHERE i.vela.id IN (SELECT v.id FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval AND v.openTime >= :openTime)")
+    void deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(
+            @Param("symbol") String symbol, 
+            @Param("interval") String interval, 
+            @Param("openTime") Long openTime
+    );
+
+    List<IndicadorTecnico> findByVelaIn(List<Vela> velas);
 }

@@ -9,7 +9,9 @@ from datetime import datetime
 # CONFIGURACIÓN DE LOGS
 # =========================
 # Creamos la carpeta logs en el directorio actual (raíz del proyecto)
-log_dir = os.path.join(os.getcwd(), "logs")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
 # Archivo de log diario (ej: engine_cbi_20260220.log)
@@ -20,8 +22,6 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler(log_file, encoding='utf-8')
-        # MUY IMPORTANTE: No usamos StreamHandler (print a consola) 
-        # para que Java solo lea el JSON final y no se corrompa.
     ]
 )
 

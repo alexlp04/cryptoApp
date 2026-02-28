@@ -19,7 +19,6 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler(log_file, encoding='utf-8')
-        # Sin salida por consola para no corromper el JSON que espera Java
     ]
 )
 
@@ -37,11 +36,11 @@ UPDATE_THRESHOLD = {
     "1M": timedelta(days=30),
 }
 
-def obtener_fecha_listado(symbol):
+def obtener_fecha_listado(symbol, timeframe):
     logging.info(f"Buscando fecha de listado original para {symbol}...")
     params = {
-        "symbol": symbol, # ARREGLADO: Antes estaba hardcodeado "BTCUSDT"
-        "interval": "1d",
+        "symbol": symbol, 
+        "interval": timeframe,
         "limit": 1,
         "startTime": 0
     }
@@ -112,7 +111,7 @@ def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
 
 def fetch(symbol, timeframe, since_binance=None):
     if since_binance is None or since_binance == "None":
-        fecha_listado = obtener_fecha_listado(symbol)
+        fecha_listado = obtener_fecha_listado(symbol,timeframe)
         if fecha_listado is not None:
             since_binance = fecha_listado
         else:

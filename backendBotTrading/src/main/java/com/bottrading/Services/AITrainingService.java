@@ -22,8 +22,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Servicio encargado de orquestar el entrenamiento de modelos de Inteligencia Artificial.
- * Fusiona los datos de mercado (Velas) con el Feature Engineering (Indicadores Técnicos)
+ * Servicio encargado de orquestar el entrenamiento de modelos de Inteligencia
+ * Artificial.
+ * Fusiona los datos de mercado (Velas) con el Feature Engineering (Indicadores
+ * Técnicos)
  * y delega el entrenamiento al script de Python.
  */
 @Slf4j
@@ -36,7 +38,8 @@ public class AITrainingService {
     private final Gson gson = new Gson();
 
     @Autowired
-    public AITrainingService(MarketDataService marketDataService, VelaRepository velaRepo, IndicadorRepository indicadorRepo) {
+    public AITrainingService(MarketDataService marketDataService, VelaRepository velaRepo,
+            IndicadorRepository indicadorRepo) {
         this.marketDataService = marketDataService;
         this.velaRepo = velaRepo;
         this.indicadorRepo = indicadorRepo;
@@ -46,18 +49,32 @@ public class AITrainingService {
      * Orquesta el proceso de preparación de datos y entrenamiento.
      */
     @Transactional
-    public String entrenarModelo(String nombreModelo, String timeframe, String symbol) {
-        try {
-            // 1. Asegurar que los datos y los indicadores están actualizados
-            marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe);
+public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) {        try {
+            long now = System.currentTimeMillis();
+
+            // 1. Asegurar que los datos y los indicadores están actualizados (usando tu parámetro now)
+            marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, dias, now);
 
             log.info("Extrayendo dataset (Velas + Indicadores) de la base de datos...");
             
+            // 🔥 CORRECCIÓN: El targetTimestamp debe restar los X días a la fecha actual
+            long targetTimestamp = now - ((long) dias * 24L * 60L * 60L * 1000L);
+            
             // 2. Extraer Velas Históricas
-            List<Vela> velas = velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, timeframe);
+            List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
+                    symbol, timeframe, targetTimestamp);
+                    
             if (velas.isEmpty()) {
                 return "Error: No hay datos suficientes de " + symbol + " para entrenar.";
             }
+
+            log.info("Extraídas {} velas. Obteniendo indicadores en bloque (Alta velocidad)...", velas.size());
+
+            List<IndicadorTecnico> todosLosIndicadores = indicadorRepo.findByVelaIn(velas);
+            Map<Long, List<IndicadorTecnico>> indicadoresPorVela = todosLosIndicadores.stream()
+                .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
+
+            log.info("Fusionando datos en memoria RAM...");
 
             // 3. Montar el Dataset fusionando Velas e Indicadores
             List<Map<String, Object>> dataset = new ArrayList<>();
@@ -67,26 +84,34 @@ public class AITrainingService {
                 row.put("close", v.getClose());
                 row.put("volume", v.getVolume());
 
-                // Recuperar indicadores asociados a esta vela (RSI, MACD, etc.)
-                List<IndicadorTecnico> indicadores = indicadorRepo.findByVela(v);
-                for (IndicadorTecnico ind : indicadores) {
-                    // Crea columnas dinámicas: Ej -> "RSI": 45.2
+                // Recuperar indicadores desde el mapa en memoria (Tarda 0 segundos)
+                List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(), new ArrayList<>());
+                for (IndicadorTecnico ind : indicadoresVela) {
                     row.put(ind.getTipo(), ind.getValor());
                 }
+                
                 dataset.add(row);
             }
 
+            log.info("--- DATASET LISTO --- {}");
+
             // 4. Construir el JSON para enviar a Python
             Map<String, Object> payload = new HashMap<>();
-            payload.put("model_type", nombreModelo); // ej: "random_forest"
+            payload.put("model_type", nombreModelo);
             payload.put("symbol", symbol);
             payload.put("timeframe", timeframe);
             payload.put("dataset", dataset);
+            payload.put("hyperparameters", hyperparams);
 
             String jsonPayload = gson.toJson(payload);
 
             log.info("Enviando {} registros al motor de IA (Python)...", dataset.size());
-            
+
+            // 🧹 Limpieza de memoria RAM antes de despertar a Python
+            velas.clear();
+            todosLosIndicadores.clear();
+            indicadoresPorVela.clear();
+
             // 5. Ejecutar script Python
             return invocarMotorPython(jsonPayload);
 
