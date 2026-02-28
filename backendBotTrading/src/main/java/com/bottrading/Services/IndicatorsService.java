@@ -45,11 +45,12 @@ public class IndicatorsService {
     /**
      * Calcula indicadores técnicos básicos procesando las velas por lotes.
      */
-    public void calculateBasicIndicators(String symbol, List<Vela> todasLasVelas) {
+    public void calculateBasicIndicators(String symbol, List<Vela> todasLasVelas, boolean guardarPrimeras50) {
         if (todasLasVelas == null || todasLasVelas.isEmpty()) {
             log.warn("La lista de velas está vacía. Abortando cálculo para {}", symbol);
             return;
         }
+
         ConsoleLoader.getInstance().startDots();
         log.info("Iniciando cálculo de indicadores por lotes. Total de velas: {}", todasLasVelas.size());
         int totalProcesadas = 0;
@@ -61,8 +62,10 @@ public class IndicatorsService {
 
             int numLote = (i / BATCH_SIZE) + 1;
 
+            boolean guardarTodoEsteLote = (i == 0) && guardarPrimeras50;
+
             try {
-                int procesadasEnLote = procesarLote(loteVelas, i == 0);
+                int procesadasEnLote = procesarLote(loteVelas, guardarTodoEsteLote);
                 totalProcesadas += procesadasEnLote;
 
                 if (procesadasEnLote > 0) {
@@ -75,7 +78,7 @@ public class IndicatorsService {
         }
         ConsoleLoader.getInstance().stop();
 
-        log.info("Cálculo de indicadores finalizado para {}", symbol);
+        log.info("Cálculo de indicadores finalizado para {}. Total guardados en BD: {}", symbol, totalProcesadas);
     }
 
     /**

@@ -13,9 +13,10 @@ from datetime import datetime
 # CONFIGURACIÓN DE LOGS
 # =========================
 # Creamos una carpeta para logs si no existe
-log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
-
 log_file = os.path.join(log_dir, f"engine_{datetime.now().strftime('%Y%m%d')}.log")
 
 logging.basicConfig(

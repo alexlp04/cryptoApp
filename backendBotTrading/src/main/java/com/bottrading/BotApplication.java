@@ -84,5 +84,7 @@ public class BotApplication {
         System.setProperty("spring.jpa.hibernate.ddl-auto", "update");
         System.setProperty("spring.jpa.show-sql", "false"); // Importante: APAGAR SQL
         System.setProperty("spring.jpa.properties.hibernate.format_sql", "false");
+        // Si quieres ver los logs del log.info descomenta esto
+        // System.setProperty("logging.level.com.bottrading", "INFO");
     }
 }
