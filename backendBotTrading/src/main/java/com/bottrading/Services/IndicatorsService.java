@@ -1,7 +1,7 @@
 package com.bottrading.services;
 
 import com.bottrading.beans.*;
-import com.bottrading.repositories.*;
+import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
@@ -86,35 +86,42 @@ public class IndicatorsService {
      * 
      * @return El número de indicadores guardados en este lote.
      */
-    private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
-        Process process = pb.start();
+    private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws PythonProcessException {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
+            Process process = pb.start();
 
-        List<VelaDTO> velasDTO = loteVelas.stream()
-                .map(this::mapToDTO)
-                .collect(Collectors.toList());
+            List<VelaDTO> velasDTO = loteVelas.stream()
+                    .map(this::mapToDTO)
+                    .collect(Collectors.toList());
 
-        enviarDatosAPython(process, velasDTO);
-        int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
+            enviarDatosAPython(process, velasDTO);
+            int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
 
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            log.warn("Python terminó con código de error {}", exitCode);
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                log.warn("Python terminó con código de error {}", exitCode);
+            }
+
+            velasDTO.clear();
+            return guardados;
+        } catch (IOException e) {
+            throw new PythonProcessException("Error al iniciar proceso Python: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new PythonProcessException("Proceso interrumpido durante cálculo de indicadores", e);
         }
-
-        velasDTO.clear();
-        return guardados;
     }
 
-    private void enviarDatosAPython(Process process, List<VelaDTO> velasDTO) throws IOException {
+    private void enviarDatosAPython(Process process, List<VelaDTO> velasDTO) throws PythonProcessException {
         try (OutputStream os = process.getOutputStream()) {
             os.write(gson.toJson(velasDTO).getBytes(StandardCharsets.UTF_8));
-            os.flush();
-        }
+            os.flush();        } catch (IOException e) {
+            throw new PythonProcessException("Error al enviar datos a Python: " + e.getMessage(), e);        }
     }
 
     private int leerResultadosDePythonYGuardar(Process process, List<Vela> loteVelas, boolean esPrimerLote)
-            throws IOException {
+            throws PythonProcessException, IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             List<IndicadorTecnicoDTO> dtos = gson.fromJson(reader,
                     new TypeToken<List<IndicadorTecnicoDTO>>() {
@@ -151,7 +158,7 @@ public class IndicatorsService {
 
         jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
             @Override
-            public void setValues(PreparedStatement ps, int i) throws SQLException {
+            public void setValues(@org.springframework.lang.NonNull PreparedStatement ps, int i) throws SQLException {
                 IndicadorTecnico ind = indicadores.get(i);
 
                 ps.setLong(1, ind.getVela().getId());

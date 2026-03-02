@@ -141,7 +141,6 @@ public class EstrategiaService {
             }
         } else {
             log.info("La estrategia no existe o ya estaba finalizada.");
-            return;
         }
     }
 

@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.beans.Vela;
-import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 
 import jakarta.transaction.Transactional;
@@ -22,31 +21,44 @@ import lombok.extern.slf4j.Slf4j;
 public class MarketDataService {
 
     private final VelaRepository velaRepo;
-    private final IndicadorRepository indicadorRepo;
     private final FetchService fetchService;
     private final IndicatorsService indicatorsService;
 
     @Autowired
-    public MarketDataService(VelaRepository velaRepo, IndicadorRepository indicadorRepo, FetchService fetchService, IndicatorsService indicatorsService) {
+    public MarketDataService(VelaRepository velaRepo, FetchService fetchService, IndicatorsService indicatorsService) {
         this.velaRepo = velaRepo;
-        this.indicadorRepo = indicadorRepo;
         this.fetchService = fetchService;
         this.indicatorsService = indicatorsService;
     }
 
     /**
      * Descarga y actualiza las velas (candlesticks) para una lista de símbolos.
+     * OPTIMIZACIÓN: Ahora se ejecuta EN PARALELO para símbolos múltiples.
      * Delega la lógica de conexión y persistencia al {@link FetchService}.
      */
     public void actualizarDatosMercado(List<String> symbols, String interval) {
-        for (String symbol : symbols) {
-            fetchService.fetch(symbol, interval);
+        if (symbols == null || symbols.isEmpty()) {
+            log.warn("Lista de símbolos vacía. Abortando");
+            return;
         }
+        
+        log.info("Iniciando descargas paralelas para {} símbolos en {}", symbols.size(), interval);
+        
+        symbols.parallelStream()
+               .forEach(symbol -> {
+                   try {
+                       fetchService.fetch(symbol, interval);
+                   } catch (Exception e) {
+                       log.error("Error descargando {}: {}", symbol, e.getMessage());
+                   }
+               });
+        
+        log.info("Descargas completadas para todos los símbolos");
     }
 
     /**
      * Recupera TODOS los datos históricos de la base de datos y lanza el proceso de cálculo de indicadores.
-     * Esto se usa si se quiere recalcular absolutamente todo desde el principio.
+     * NOTA: El recálculo completo de la base de datos se implementará en futuras versiones.
      */
     public void calcularIndicadoresParaSimbolo(String symbol, String interval) {
         log.info("Calculando indicadores técnicos masivos para {} en {}...", symbol, interval);
@@ -58,7 +70,7 @@ public class MarketDataService {
             return;
         }
         
-        // Como estamos calculando la BD entera, le decimos a IndicatorsService que guarde TODO (true)
+        // El cálculo de indicadores se ejecuta inmediatamente después de descargar datos completos
         indicatorsService.calculateBasicIndicators(symbol, velas, true);
     }
 
@@ -85,16 +97,11 @@ public class MarketDataService {
 
         // Calculamos si esto ha sido una descarga completa o solo un trozo incremental
         long millisPerDay = 24L * 60L * 60L * 1000L;
-        boolean esDescargaCompleta = (fetchedFrom == (now - ((long) dias * millisPerDay)));
+        boolean esDescargaCompleta = (fetchedFrom == (now - dias * millisPerDay));
 
         log.info("Generando variables predictivas desde el anclaje (con warmup)...");
-        this.calcularIndicadoresParaSimboloDesde(symbol, interval, calcFromTimestamp, esDescargaCompleta);
         
-        log.info("--- DATASET LISTO ---");
-    }
-
-    private void calcularIndicadoresParaSimboloDesde(String symbol, String interval, long calcFromTimestamp, boolean esDescargaCompleta) {
-        // Pedimos a la BD las velas nuevas + las 50 anteriores de calentamiento
+        // OPTIMIZACIÓN: Integrar directamente sin método privado intermedio
         List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(symbol, interval, calcFromTimestamp);
         
         if (velas.isEmpty()) {
@@ -102,8 +109,9 @@ public class MarketDataService {
             return;
         }
         
-        // Delegamos al servicio de indicadores pasándole nuestra bandera inteligente
         indicatorsService.calculateBasicIndicators(symbol, velas, esDescargaCompleta);
+        
+        log.info("--- DATASET LISTO ---");
     }
 
 }

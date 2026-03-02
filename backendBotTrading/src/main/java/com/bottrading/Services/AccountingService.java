@@ -1,5 +1,7 @@
 package com.bottrading.services;
 
+import com.bottrading.exceptions.ValidationException;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -57,7 +59,7 @@ public class AccountingService {
                     .orElseThrow(() -> new RuntimeException("Estrategia no encontrada"));
 
             if (w.getBalanceDisponible().compareTo(capital) < 0) {
-                throw new RuntimeException("Fondos insuficientes en balance disponible");
+                throw new ValidationException("Fondos insuficientes en balance disponible");
             }
 
             w.setBalanceDisponible(w.getBalanceDisponible().subtract(capital));
@@ -76,16 +78,30 @@ public class AccountingService {
     }
 
     /**
-     * Pausa una estrategia cambiando su estado a DETENIDA.
-     * NOTA: No libera el capital reservado.
+     * Pausa temporalmente una estrategia SIN liberar el capital reservado.
+     * El capital permanece congelado pero la estrategia puede reanudarse.
+     * 
+     * NOTA: El capital permanece bloqueado. Si necesitas recuperarlo, usa closeStrategy().
      *
      * @param walletId ID de la wallet asociada.
      * @param estrategiaId ID de la estrategia.
      */
-    public void pauseStrategy(Long walletId, Long estrategiaId) {
+    public void pauseStrategyTemporarily(Long walletId, Long estrategiaId) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId).orElseThrow();
         e.setEstado("DETENIDA");
+        
+        // Registrar en Ledger la pausa (sin movimiento de dinero, solo meta dato)
+        LedgerEntry le = new LedgerEntry();
+        le.setWalletId(walletId);
+        le.setEstrategiaId(e.getId());
+        le.setType(LedgerType.STRATEGY_PAUSED);
+        le.setAmount(BigDecimal.ZERO);
+        le.setBalanceAfter(e.getCapitalReservado());
+        le.setTimestamp(Instant.now());
+        ledgerRepo.save(le);
+        
         estrategiaRepo.save(e);
+        log.info("Estrategia {} pausada temporalmente (capital congelado)", estrategiaId);
     }
 
     /**
@@ -121,6 +137,7 @@ public class AccountingService {
     /**
      * Mueve capital dentro de la estrategia: de 'Reservado' a 'Comprometido' (Margen).
      * Se llama al abrir una posición (BUY/SHORT).
+     * IMPORTANTE: Ahora registra la operación en el Ledger para auditoria completa.
      *
      * @param estrategiaId ID de la estrategia.
      * @param margin Cantidad a invertir en la operación.
@@ -131,12 +148,22 @@ public class AccountingService {
                 .orElseThrow(() -> new RuntimeException("Instancia no encontrada"));
 
         if (e.getCapitalReservado().compareTo(margin) < 0) {
-            throw new RuntimeException("Capital reservado insuficiente en la estrategia para abrir operación");
+            throw new ValidationException("Capital reservado insuficiente en la estrategia para abrir operación");
         }
 
         e.setCapitalReservado(e.getCapitalReservado().subtract(margin));
         e.setCapitalComprometido(e.getCapitalComprometido().add(margin));
         e.setRiesgoAbierto(e.getRiesgoAbierto().add(risk));
+
+        // 🔥 NUEVO: Registrar en Ledger para auditoria completa
+        LedgerEntry le = new LedgerEntry();
+        le.setWalletId(e.getWalletAsociada());
+        le.setEstrategiaId(e.getId());
+        le.setType(LedgerType.MARGIN_COMMITTED);
+        le.setAmount(margin.negate());
+        le.setBalanceAfter(e.getCapitalReservado());
+        le.setTimestamp(Instant.now());
+        ledgerRepo.save(le);
 
         estrategiaRepo.save(e);
     }

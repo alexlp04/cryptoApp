@@ -2,10 +2,12 @@ package com.bottrading.services;
 
 import com.bottrading.beans.Vela;
 import com.bottrading.beans.VelaDTO;
+import com.bottrading.exceptions.DataFetchException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.SafeParser;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
@@ -16,7 +18,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -85,7 +86,7 @@ public class FetchService {
      */
     public long fetchIncremental(String symbol, String interval, int dias, long now) {
         long millisPerDay = 24L * 60L * 60L * 1000L;
-        long targetTimestamp = now - ((long) dias * millisPerDay);
+        long targetTimestamp = now - dias * millisPerDay;
 
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
         long fetchFromTimestamp;
@@ -158,7 +159,6 @@ public class FetchService {
 
                 // Leemos línea por línea. Cada línea es un lote de 10.000 velas de Python.
                 while ((lineaJson = reader.readLine()) != null) {
-
                     // Convertimos esta línea específica en una lista de DTOs
                     List<VelaDTO> loteDTOs = gson.fromJson(lineaJson, new TypeToken<List<VelaDTO>>() {
                     }.getType());
@@ -184,7 +184,7 @@ public class FetchService {
 
             if (exitCode != 0) {
                 log.error("Script Python terminó con error (código {})", exitCode);
-                throw new RuntimeException("Script Python falló con código " + exitCode);
+                throw new DataFetchException("Script Python falló con código " + exitCode);
             }
 
             log.info("Sincronización completa para {}. Velas totales guardadas: {}", symbol, totalGuardadas);
@@ -195,10 +195,10 @@ public class FetchService {
             if (process != null)
                 process.destroy();
             log.warn("La sincronización fue interrumpida para {}", symbol);
-            throw new RuntimeException("Hilo interrumpido durante la sincronización", e);
+            throw new DataFetchException("Hilo interrumpido durante la sincronización", e);
         } catch (Exception e) {
             log.error("Error crítico en FetchService: {}", e.getMessage(), e);
-            throw new RuntimeException("Fallo en sincronización de datos", e);
+            throw new DataFetchException("Fallo en sincronización de datos", e);
         }
     }
 
@@ -214,21 +214,21 @@ public class FetchService {
      */
     private Vela mapToEntity(VelaDTO dto, String symbol, String interval) {
         Vela v = new Vela();
-        v.setSymbol(symbol);
-        v.setInterval(interval);
-        v.setOpenTime(dto.open_time);
-        v.setCloseTime(dto.close_time);
+        v.setSymbol(SafeParser.toString(symbol));
+        v.setInterval(SafeParser.toString(interval));
+        v.setOpenTime(SafeParser.toLong(dto.getOpenTime()));
+        v.setCloseTime(SafeParser.toLong(dto.getCloseTime()));
 
-        v.setOpen(new BigDecimal(dto.open));
-        v.setHigh(new BigDecimal(dto.high));
-        v.setLow(new BigDecimal(dto.low));
-        v.setClose(new BigDecimal(dto.close));
-        v.setVolume(new BigDecimal(dto.volume));
-        v.setQuoteVolume(new BigDecimal(dto.quote_volume));
-        v.setTakerBaseVolume(new BigDecimal(dto.taker_base_volume));
-        v.setTakerQuoteVolume(new BigDecimal(dto.taker_quote_volume));
+        v.setOpen(SafeParser.toBigDecimal(dto.getOpen()));
+        v.setHigh(SafeParser.toBigDecimal(dto.getHigh()));
+        v.setLow(SafeParser.toBigDecimal(dto.getLow()));
+        v.setClose(SafeParser.toBigDecimal(dto.getClose()));
+        v.setVolume(SafeParser.toBigDecimal(dto.getVolume()));
+        v.setQuoteVolume(SafeParser.toBigDecimal(dto.getQuoteVolume()));
+        v.setTakerBaseVolume(SafeParser.toBigDecimal(dto.getTakerBaseVolume()));
+        v.setTakerQuoteVolume(SafeParser.toBigDecimal(dto.getTakerQuoteVolume()));
 
-        v.setTrades(dto.trades);
+        v.setTrades(SafeParser.toInt(dto.getTrades()));
         return v;
     }
 
