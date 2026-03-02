@@ -13,6 +13,7 @@ public class SignalDTO {
     private boolean isReal;
 
     public SignalDTO() {
+        // Constructor vacío para serialización JSON
     }
 
     public String getType() {

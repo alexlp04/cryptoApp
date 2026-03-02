@@ -1,23 +1,36 @@
 package com.bottrading.beans;
 
-public class VelaDTO {
-    public Long id;
-    public String symbol;
-    public String time_interval;
-    public Long open_time;
-    public String open;
-    public String high;
-    public String low;
-    public String close;
-    public String volume;
-    public Long close_time;
-    public String quote_volume;
-    public Integer trades;
-    public String taker_base_volume;
-    public String taker_quote_volume;
+import java.io.Serializable;
 
+/**
+ * Clase DTO corregida siguiendo el estándar CamelCase de Java.
+ */
+public class VelaDTO implements Serializable {
 
+    private Long id;
+    private String symbol;
+    private String timeInterval;
+    private Long openTime;
+    private String open;
+    private String high;
+    private String low;
+    private String close;
+    private String volume;
+    private Long closeTime;
+    private String quoteVolume;
+    private Integer trades;
+    private String takerBaseVolume;
+    private String takerQuoteVolume;
     
+    // Getters y Setters
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
     public String getSymbol() {
         return symbol;
     }
@@ -27,19 +40,19 @@ public class VelaDTO {
     }
 
     public String getTimeInterval() {
-        return time_interval;
+        return timeInterval;
     }
 
-    public void setTimeInterval(String time_interval) {
-        this.time_interval = time_interval;
+    public void setTimeInterval(String timeInterval) {
+        this.timeInterval = timeInterval;
     }
 
     public Long getOpenTime() {
-        return open_time;
+        return openTime;
     }
 
-    public void setOpenTime(Long open_time) {
-        this.open_time = open_time;
+    public void setOpenTime(Long openTime) {
+        this.openTime = openTime;
     }
 
     public String getOpen() {
@@ -83,19 +96,19 @@ public class VelaDTO {
     }
 
     public Long getCloseTime() {
-        return close_time;
+        return closeTime;
     }
 
-    public void setCloseTime(Long close_time) {
-        this.close_time = close_time;
+    public void setCloseTime(Long closeTime) {
+        this.closeTime = closeTime;
     }
 
     public String getQuoteVolume() {
-        return quote_volume;
+        return quoteVolume;
     }
 
-    public void setQuoteVolume(String quote_volume) {
-        this.quote_volume = quote_volume;
+    public void setQuoteVolume(String quoteVolume) {
+        this.quoteVolume = quoteVolume;
     }
 
     public Integer getTrades() {
@@ -107,77 +120,37 @@ public class VelaDTO {
     }
 
     public String getTakerBaseVolume() {
-        return taker_base_volume;
+        return takerBaseVolume;
     }
 
-    public void setTakerBaseVolume(String taker_base_volume) {
-        this.taker_base_volume = taker_base_volume;
+    public void setTakerBaseVolume(String takerBaseVolume) {
+        this.takerBaseVolume = takerBaseVolume;
     }
 
     public String getTakerQuoteVolume() {
-        return taker_quote_volume;
+        return takerQuoteVolume;
     }
 
-    public void setTakerQuoteVolume(String taker_quote_volume) {
-        this.taker_quote_volume = taker_quote_volume;
+    public void setTakerQuoteVolume(String takerQuoteVolume) {
+        this.takerQuoteVolume = takerQuoteVolume;
     }
 
-    public Long getId() {
-        return id;
+    public String toString() {
+        return "VelaDTO{" +
+                "id=" + id +
+                ", symbol='" + symbol + '\'' +
+                ", timeInterval='" + timeInterval + '\'' +
+                ", openTime=" + openTime +
+                ", open='" + open + '\'' +
+                ", high='" + high + '\'' +
+                ", low='" + low + '\'' +
+                ", close='" + close + '\'' +
+                ", volume='" + volume + '\'' +
+                ", closeTime=" + closeTime +
+                ", quoteVolume='" + quoteVolume + '\'' +
+                ", trades=" + trades +
+                ", takerBaseVolume='" + takerBaseVolume + '\'' +
+                ", takerQuoteVolume='" + takerQuoteVolume + '\'' +
+                '}';
     }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getTime_interval() {
-        return time_interval;
-    }
-
-    public void setTime_interval(String time_interval) {
-        this.time_interval = time_interval;
-    }
-
-    public Long getOpen_time() {
-        return open_time;
-    }
-
-    public void setOpen_time(Long open_time) {
-        this.open_time = open_time;
-    }
-
-    public Long getClose_time() {
-        return close_time;
-    }
-
-    public void setClose_time(Long close_time) {
-        this.close_time = close_time;
-    }
-
-    public String getQuote_volume() {
-        return quote_volume;
-    }
-
-    public void setQuote_volume(String quote_volume) {
-        this.quote_volume = quote_volume;
-    }
-
-    public String getTaker_base_volume() {
-        return taker_base_volume;
-    }
-
-    public void setTaker_base_volume(String taker_base_volume) {
-        this.taker_base_volume = taker_base_volume;
-    }
-
-    public String getTaker_quote_volume() {
-        return taker_quote_volume;
-    }
-
-    public void setTaker_quote_volume(String taker_quote_volume) {
-        this.taker_quote_volume = taker_quote_volume;
-    }
-
-    // Constructor, getters y setters si es necesario
-
 }

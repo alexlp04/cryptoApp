@@ -2,6 +2,8 @@ package com.bottrading.services;
 
 import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.SignalDTO;
+import com.bottrading.exceptions.PythonProcessException;
+import com.bottrading.exceptions.SignalProcessingException;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
@@ -22,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.Queue;
 
 /**
  * Servicio técnico de bajo nivel encargado de la gestión de procesos y hilos.
@@ -40,6 +44,13 @@ public class TradingService {
 
     // Mapa thread-safe para mantener referencias a los procesos en ejecución
     private final Map<Long, StrategyContext> procesosActivos = new ConcurrentHashMap<>();
+    
+    // Cola de señales fallidas para reintentos (Long = instanciaId, SignalDTO = signal)
+    private final Map<Long, Queue<SignalDTO>> failedSignalsQueue = new ConcurrentHashMap<>();
+    
+    // Contador de fallos consecutivos por estrategia
+    private final Map<Long, Integer> consecutiveFailures = new ConcurrentHashMap<>();
+    private static final int MAX_CONSECUTIVE_FAILURES = 5;
 
     @Autowired
     public TradingService(PaperTradingService paperTradingService, AccountingService accountingService) {
@@ -102,7 +113,7 @@ public class TradingService {
             // 4. Esperar cierre ordenado
             int exitCode = process.waitFor();
             if (exitCode != 0 && !Thread.currentThread().isInterrupted()) {
-                throw new RuntimeException("Proceso Python terminó con código: " + exitCode);
+                throw new PythonProcessException("Proceso Python terminó con código: " + exitCode);
             }
 
         } catch (InterruptedException e) {
@@ -121,7 +132,7 @@ public class TradingService {
     // MÉTODOS AUXILIARES (Divide y Vencerás)
     // =========================================================================
 
-    private Process iniciarProcesoPython(InstanciaEstrategia instancia) throws IOException {
+    private Process iniciarProcesoPython(InstanciaEstrategia instancia) throws PythonProcessException {
         String scriptPath;
         if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {
             log.info("Arrancando Motor de IA para estrategia: {}", instancia.getNombreModelo());
@@ -131,21 +142,25 @@ public class TradingService {
             scriptPath = PathConfig.ENGINE_RT_PATH; // Script normal
         }
 
-        ProcessBuilder pb = new ProcessBuilder("python", scriptPath);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
+        try {
+            ProcessBuilder pb = new ProcessBuilder("python", scriptPath);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
 
-        procesosActivos.compute(instancia.getId(), (k, ctx) -> {
-            if (ctx == null)
-                return new StrategyContext(process, null);
-            ctx.pythonProcess = process;
-            return ctx;
-        });
+            procesosActivos.compute(instancia.getId(), (k, ctx) -> {
+                if (ctx == null)
+                    return new StrategyContext(process, null);
+                ctx.pythonProcess = process;
+                return ctx;
+            });
 
-        return process;
+            return process;
+        } catch (IOException e) {
+            throw new PythonProcessException("Fallo al iniciar proceso Python: " + e.getMessage(), e);
+        }
     }
 
-    private void escucharSalidaPython(Process process, InstanciaEstrategia instancia) throws IOException {
+    private void escucharSalidaPython(Process process, InstanciaEstrategia instancia) throws PythonProcessException {
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
 
@@ -156,23 +171,109 @@ public class TradingService {
                 }
                 procesarLineaLog(line, instancia);
             }
+        } catch (IOException e) {
+            throw new PythonProcessException("Error al leer salida del proceso Python: " + e.getMessage(), e);
         }
     }
 
     private void procesarLineaLog(String line, InstanciaEstrategia instancia) {
         if (line.trim().startsWith("{")) {
-            try {
-                SignalDTO signal = gson.fromJson(line, SignalDTO.class);
-                paperTradingService.onSignal(instancia.getId(), signal);
-            } catch (Exception e) {
-                log.error("JSON corrupto de Python: {}", line);
-            }
+            procesarParseJsonSignal(line, instancia);
         } else {
+            // Log normal de Python
             log.info("LOG [{}]: {}", instancia.getNombreEstrategia(), line);
         }
     }
 
+    private void procesarParseJsonSignal(String line, InstanciaEstrategia instancia) {
+        try {
+            SignalDTO signal = gson.fromJson(line, SignalDTO.class);
+            procesarSignalConReintento(instancia, signal);
+        } catch (com.google.gson.JsonSyntaxException e) {
+            log.error("JSON corrupto de Python (será ignorado): {} - Error: {}", line, e.getMessage());
+        } catch (SignalProcessingException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Error crítico procesando línea: {}", e.getMessage(), e);
+            throw new SignalProcessingException("Error irrecuperable en procesamiento de señal", e);
+        }
+    }
+
+    /**
+     * Procesa una señal con reintento automático en caso de fallo.
+     */
+    private void procesarSignalConReintento(InstanciaEstrategia instancia, SignalDTO signal) {
+        try {
+            paperTradingService.onSignal(instancia.getId(), signal);
+            // Reset contador si tuvo éxito
+            consecutiveFailures.put(instancia.getId(), 0);
+            log.debug("Señal procesada correctamente: {} {}", signal.getAction(), signal.getSymbol());
+            
+        } catch (Exception e) {
+            // Si falla, encolar para reintentos
+            log.warn("Fallo al procesar señal (será reintentada): {} - Error: {}", 
+                     signal.getSymbol(), e.getMessage());
+            
+            enqueueFailedSignal(instancia.getId(), signal);
+            
+            // Monitoreo de fallos consecutivos
+            int failCount = consecutiveFailures.getOrDefault(instancia.getId(), 0) + 1;
+            consecutiveFailures.put(instancia.getId(), failCount);
+            
+            // Si hay demasiados fallos, detener la estrategia
+            if (failCount >= MAX_CONSECUTIVE_FAILURES) {
+                log.error("❌ {} fallos consecutivos en estrategia {}. Deteniendo...", 
+                          MAX_CONSECUTIVE_FAILURES, instancia.getId());
+                throw new SignalProcessingException("Demasiados errores de señal. Estrategia detenida.");
+            }
+        }
+    }
+
+    /**
+     * Encola una señal fallida para reintentarla más tarde.
+     */
+    private void enqueueFailedSignal(Long instanciaId, SignalDTO signal) {
+        failedSignalsQueue
+            .computeIfAbsent(instanciaId, k -> new LinkedBlockingQueue<>())
+            .offer(signal);
+    }
+
+    /**
+     * Procesa la cola de señales fallidas (reintentos).
+     * Se puede ser llamado periódicamente o al terminar la estrategia.
+     */
+    public void procesarSignalesPendientes(Long instanciaId) {
+        Queue<SignalDTO> cola = failedSignalsQueue.get(instanciaId);
+        if (cola == null || cola.isEmpty()) {
+            return;
+        }
+
+        log.info("Procesando {} señales en cola para estrategia {}", cola.size(), instanciaId);
+        
+        while (!cola.isEmpty()) {
+            SignalDTO signal = cola.poll();
+            try {
+                paperTradingService.onSignal(instanciaId, signal);
+                consecutiveFailures.put(instanciaId, 0);
+                log.info("✅ Señal de reintento procesada: {} {}", signal.getAction(), signal.getSymbol());
+            } catch (Exception e) {
+                log.warn("⚠️ Reintento fallido, volviendo a encolar: {} - Error: {}", 
+                        signal.getSymbol(), e.getMessage());
+                cola.offer(signal); // Reintentar más tarde
+            }
+        }
+    }
+
     private void gestionarCierre(InstanciaEstrategia instancia, boolean errorCritico) {
+        Long instanciaId = instancia.getId();
+        
+        // Procesar las últimas señales en cola antes de cerrar
+        try {
+            procesarSignalesPendientes(instanciaId);
+        } catch (Exception e) {
+            log.warn("Advertencia al procesar cola pendiente: {}", e.getMessage());
+        }
+        
         if (errorCritico) {
             try {
                 accountingService.closeStrategy(instancia.getWalletAsociada(), instancia.getId());
@@ -183,13 +284,17 @@ public class TradingService {
         } else {
             detenerEstrategia(instancia.getId());
         }
+        
+        // Limpiar colas y errores
+        failedSignalsQueue.remove(instanciaId);
+        consecutiveFailures.remove(instanciaId);
     }
 
     /**
      * Serializa y envía la configuración inicial al script de Python a través de
      * STDIN.
      */
-    private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws IOException {
+    private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws PythonProcessException {
         // Usamos un HashMap normal en lugar de Map.of para poder añadir claves condicionalmente
         Map<String, Object> payload = new HashMap<>();
         
@@ -206,6 +311,8 @@ public class TradingService {
         try (OutputStream os = p.getOutputStream()) {
             os.write(gson.toJson(payload).getBytes(StandardCharsets.UTF_8));
             os.flush();
+        } catch (IOException e) {
+            throw new PythonProcessException("Error al enviar configuración a Python: " + e.getMessage(), e);
         }
     }
 
@@ -249,7 +356,7 @@ public class TradingService {
     /**
      * Obtiene el conjunto de IDs de las estrategias que están corriendo
      * actualmente.
-     * * @return Set de IDs.
+     * @return Set de IDs.
      */
     public Set<Long> getIdsEstrategiasActivas() {
         return new HashSet<>(procesosActivos.keySet());

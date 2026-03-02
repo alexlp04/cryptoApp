@@ -3,6 +3,7 @@ package com.bottrading.services;
 import com.bottrading.beans.Usuario;
 import com.bottrading.beans.Wallet;
 import com.bottrading.beans.WalletType;
+import com.bottrading.exceptions.ValidationException;
 import com.bottrading.repositories.WalletRepository;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,11 +44,11 @@ public class WalletService {
         Usuario usuario = sessionManager.getCurrentUser();
 
         if (walletRepo.existsByUsuarioAndNombre(usuario, nombre)) {
-            throw new RuntimeException("Ya existe una wallet con el nombre: " + nombre);
+            throw new ValidationException("Ya existe una wallet con el nombre: " + nombre);
         }
 
         if (balanceInicial.compareTo(BigDecimal.ZERO) < 0) {
-            throw new RuntimeException("El balance inicial no puede ser negativo");
+            throw new ValidationException("El balance inicial no puede ser negativo");
         }
 
         Wallet wallet = new Wallet();
@@ -70,10 +71,10 @@ public class WalletService {
     @Transactional
     public void eliminarWallet(long id) {
         Wallet wallet = walletRepo.findById(id)
-                .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada"));
 
         if (wallet.isActive()) {
-            throw new RuntimeException("No se puede eliminar una wallet activa. Detén las estrategias asociadas primero.");
+            throw new ValidationException("No se puede eliminar una wallet activa. Detén las estrategias asociadas primero.");
         }
 
         walletRepo.delete(wallet);
@@ -90,7 +91,7 @@ public class WalletService {
     public void cambiarEstadoActivo(String nombre, boolean activo) {
         Usuario usuario = sessionManager.getCurrentUser();
         Wallet wallet = walletRepo.findByUsuarioAndNombre(usuario, nombre)
-                .orElseThrow(() -> new RuntimeException("Wallet no encontrada: " + nombre));
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + nombre));
 
         wallet.setActive(activo);
         walletRepo.save(wallet);
@@ -106,7 +107,7 @@ public class WalletService {
         Usuario usuario = sessionManager.getCurrentUser();
         return walletRepo.findByUsuarioAndNombre(usuario, nombre)
                 .map(Wallet::getBalanceReal)
-                .orElseThrow(() -> new RuntimeException("Wallet no encontrada: " + nombre));
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + nombre));
     }
 
     /**
@@ -140,7 +141,7 @@ public class WalletService {
 
         return walletRepo.findByUsuarioAndNombre(usuario, nombreWallet)
                 .map(Wallet::getId)
-                .orElseThrow(() -> new RuntimeException(
+                .orElseThrow(() -> new ValidationException(
                         "No se encontró la wallet '" + nombreWallet + "' para el usuario actual"));
     }
 }

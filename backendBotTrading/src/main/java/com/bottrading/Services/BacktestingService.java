@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -10,6 +11,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import com.bottrading.beans.Vela;
+import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 
@@ -30,7 +32,7 @@ public class BacktestingService {
      * Su complejidad cognitiva ahora es mínima porque solo llama a otros métodos.
      */
     public String ejecutarBacktest(String rutaEstrategia, String timeframe, Map<String, List<Vela>> velasPorSimbolo)
-            throws Exception {
+            throws StrategyExecutionException {
         // 1. Preparar datos
         Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
 
@@ -51,7 +53,7 @@ public class BacktestingService {
         velasPorSimbolo.forEach((symbol, listaVelas) -> {
             List<Map<String, Object>> listaTransformada = listaVelas.stream()
                     .map(this::convertirVelaAMapa) // Delegamos la conversión de 1 vela
-                    .collect(Collectors.toList());
+                    .toList();
             resultado.put(symbol, listaTransformada);
         });
 
@@ -80,30 +82,36 @@ public class BacktestingService {
         return gson.toJson(payload);
     }
 
-    private String invocarMotorPython(String jsonPayload) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_BACKTEST_PATH);
-        pb.redirectErrorStream(false);
-        Process process = pb.start();
+    private String invocarMotorPython(String jsonPayload) throws StrategyExecutionException {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_BACKTEST_PATH);
+            pb.redirectErrorStream(false);
+            Process process = pb.start();
 
-        // Escritura (Input)
-        try (OutputStream os = process.getOutputStream()) {
-            os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
-            os.flush();
+            // Escritura (Input)
+            try (OutputStream os = process.getOutputStream()) {
+                os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
+                os.flush();
+            }
+
+            // Lectura (Output)
+            String stdout = leerStream(process.getInputStream());
+            String stderr = leerStream(process.getErrorStream());
+
+            int exitCode = process.waitFor();
+
+            if (exitCode != 0) {
+                String errorMsg = stderr.isBlank() ? stdout : stderr;
+                throw new StrategyExecutionException("Fallo en motor Backtest (Exit Code " + exitCode + "):\n" + errorMsg);
+            }
+
+            return stdout;
+        } catch (IOException e) {
+            throw new StrategyExecutionException("Error de I/O en BacktestingService: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StrategyExecutionException("Proceso interrumpido durante backtest", e);
         }
-
-        // Lectura (Output)
-        // helper
-        String stdout = leerStream(process.getInputStream());
-        String stderr = leerStream(process.getErrorStream());
-
-        int exitCode = process.waitFor();
-
-        if (exitCode != 0) {
-            String errorMsg = stderr.isBlank() ? stdout : stderr;
-            throw new Exception("Fallo en motor Backtest (Exit Code " + exitCode + "):\n" + errorMsg);
-        }
-
-        return stdout;
     }
 
     /**

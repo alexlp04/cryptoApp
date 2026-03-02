@@ -129,20 +129,20 @@ def fetch(symbol, timeframe, since_binance=None):
     logging.info(f"Transformando {len(all_data)} registros al formato JSON de la aplicación...")
     json_data = [
         {
-            "open_time": d[0],
+            "openTime": d[0],
             "open": float(d[1]),
             "high": float(d[2]),
             "low": float(d[3]),
             "close": float(d[4]),
             "volume": float(d[5]),
-            "close_time": d[6],
-            "quote_volume": float(d[7]),
+            "closeTime": d[6],
+            "quoteVolume": float(d[7]),
             "trades": int(d[8]),
-            "taker_base_volume": float(d[9]),
-            "taker_quote_volume": float(d[10]),
+            "takerBaseVolume": float(d[9]),
+            "takerQuoteVolume": float(d[10]),
             "ignore": int(d[11]),
             "symbol": symbol,
-            "time_interval": timeframe
+            "timeInterval": timeframe
         }
         for d in all_data
     ]

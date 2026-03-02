@@ -1,7 +1,9 @@
 package com.bottrading.services;
 
+import com.bottrading.exceptions.FileOperationException;
 import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.SafeParser;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
@@ -28,6 +30,7 @@ import java.util.*;
 @Service
 public class FileService {
 
+
     private final Gson gson = new Gson();
 
     /**
@@ -40,13 +43,11 @@ public class FileService {
      * @throws Exception Si ocurre un error de parseo o escritura.
      */
     public void guardarResultadosCompletos(String nombreEstrategia, String timeframe, String jsonResultado)
-            throws Exception {
+            throws FileOperationException {
 
         Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {
         }.getType());
 
-        // Serializamos y deserializamos de nuevo para obtener los tipos concretos sin
-        // warnings
         String tradesJson = gson.toJson(resultado.get("trades"));
         List<Map<String, Object>> trades = gson.fromJson(tradesJson, new TypeToken<List<Map<String, Object>>>() {
         }.getType());
@@ -105,7 +106,7 @@ public class FileService {
                         trade.getOrDefault(AppConstants.KEY_CAPITAL, ""));
             }
         } catch (IOException e) {
-            log.error("Error al guardar trade: {}", e.getMessage());
+            throw new FileOperationException("Error al guardar trade: " + e.getMessage(), e);
         }
     }
 
@@ -113,18 +114,15 @@ public class FileService {
      * Sobrecarga de `guardarTrade` para uso manual desde Java con tipos fuertes.
      */
     public synchronized void guardarTrade(String nombreEstrategia, String timeframe, String symbol,
-            String side, BigDecimal price, long timestamp,
-            BigDecimal pnl, BigDecimal capital, boolean isBacktest) {
+            String side, BigDecimal price, long timestamp, BigDecimal pnl) {
         Map<String, Object> map = new HashMap<>();
         map.put(AppConstants.KEY_SIDE, side);
         map.put(AppConstants.KEY_PRICE, price);
         map.put(AppConstants.KEY_TIMESTAMP, timestamp);
         if (pnl != null)
             map.put(AppConstants.KEY_PNL, String.format("%.8f", pnl));
-        if (capital != null)
-            map.put(AppConstants.KEY_CAPITAL, String.format("%.2f", capital));
 
-        guardarTrade(nombreEstrategia, timeframe, symbol, map, isBacktest);
+        guardarTrade(nombreEstrategia, timeframe, symbol, map, false);
     }
 
     /**
@@ -132,78 +130,70 @@ public class FileService {
      * Si ya existe una entrada para ese símbolo y timeframe, la sobrescribe.
      *
      * @param nombreEstrategia Nombre de la estrategia.
-     * @param timeframe        Timeframe.
-     * @param stats            Mapa con las métricas (win_rate, drawdown, etc.).
-     * @param isBacktest       True si es simulación.
+     * @param timeframe Timeframe.
+     * @param stats Mapa con las métricas (win_rate, drawdown, etc.).
+     * @param isBacktest True si es simulación.
      */
     public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
         try {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
             Path filePath = getCarpetaEstrategia(nombreEstrategia).resolve("results" + suffix);
+            String currentSymbol = SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), "UNKNOWN");
+            
+            guardarOActualizarStats(filePath, stats, currentSymbol, timeframe);
+            log.trace("Stats guardadas en CSV: {} [{}] {}", nombreEstrategia, currentSymbol, timeframe);
+            
+        } catch (IOException e) {
+            throw new FileOperationException("Error al guardar estadísticas: " + e.getMessage(), e);
+        }
+    }
 
-            List<Map<String, Object>> rows = new ArrayList<>();
+    /**
+     * Método auxiliar para guardar o actualizar una línea de estadísticas.
+     */
+    private void guardarOActualizarStats(Path filePath, Map<String, Object> stats, String currentSymbol, String timeframe) throws IOException {
+        List<String> lineas = new ArrayList<>();
 
-            if (Files.exists(filePath)) {
-                try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
-                    br.readLine(); // Skip header
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        // SOLUCIÓN: Usamos parseCsvLine en lugar de split sencillo
-                        String[] p = parseCsvLine(line);
-
-                        if (p.length < 14)
-                            continue;
-
-                        Map<String, Object> row = new HashMap<>();
-                        row.put(AppConstants.KEY_SYMBOL, p[0]);
-                        row.put(AppConstants.KEY_TIMEFRAME, p[1]);
-                        row.put(AppConstants.KEY_OP_GANADAS, p[2]);
-                        row.put(AppConstants.KEY_OP_PERDIDAS, p[3]);
-                        row.put(AppConstants.KEY_OP_TOTALES, p[4]);
-                        row.put(AppConstants.KEY_MAX_DRAWDOWN, p[5]);
-                        row.put(AppConstants.KEY_ABS_DRAWDOWN, p[6]);
-                        row.put(AppConstants.KEY_RET_ACUMULADO, p[7]);
-                        row.put(AppConstants.KEY_RET_TOTAL, p[8]);
-                        row.put(AppConstants.KEY_WIN_RATE, p[9]);
-                        row.put(AppConstants.KEY_PROFIT_FACTOR, p[10]);
-                        row.put(AppConstants.KEY_FECHA_INICIO, p[11]);
-                        row.put(AppConstants.KEY_FECHA_FIN, p[12]);
-                        row.put(AppConstants.KEY_RESULTADO, p[13]);
-                        rows.add(row);
+        if (Files.exists(filePath)) {
+            try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+                String line = br.readLine();
+                if (line != null) {
+                    lineas.add(line);
+                }
+                while ((line = br.readLine()) != null) {
+                    String[] p = parseCsvLine(line);
+                    if (!(p.length >= 2 && p[0].equals(currentSymbol) && p[1].equals(timeframe))) {
+                        lineas.add(line);
                     }
                 }
             }
+        } else {
+            lineas.add(AppConstants.CSV_HEADER_STATS);
+        }
 
-            // Reemplazar o añadir
-            String currentSymbol = stats.get(AppConstants.KEY_SYMBOL).toString();
-            rows.removeIf(r -> r.get(AppConstants.KEY_SYMBOL).equals(currentSymbol)
-                    && r.get(AppConstants.KEY_TIMEFRAME).equals(timeframe));
-            rows.add(stats);
-
-            try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath, StandardCharsets.UTF_8))) {
-                pw.println(AppConstants.CSV_HEADER_STATS);
-
-                for (Map<String, Object> r : rows) {
-                    pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
-                            getSafe(r, AppConstants.KEY_SYMBOL),
-                            getSafe(r, AppConstants.KEY_TIMEFRAME),
-                            getSafe(r, AppConstants.KEY_OP_GANADAS),
-                            getSafe(r, AppConstants.KEY_OP_PERDIDAS),
-                            getSafe(r, AppConstants.KEY_OP_TOTALES),
-                            getSafe(r, AppConstants.KEY_MAX_DRAWDOWN),
-                            getSafe(r, AppConstants.KEY_ABS_DRAWDOWN),
-                            getSafe(r, AppConstants.KEY_RET_ACUMULADO),
-                            getSafe(r, AppConstants.KEY_RET_TOTAL),
-                            getSafe(r, AppConstants.KEY_WIN_RATE),
-                            getSafe(r, AppConstants.KEY_PROFIT_FACTOR),
-                            getSafe(r, AppConstants.KEY_FECHA_INICIO),
-                            getSafe(r, AppConstants.KEY_FECHA_FIN),
-                            getSafe(r, AppConstants.KEY_RESULTADO));
-                }
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath,
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))) {
+            
+            for (String line : lineas) {
+                pw.println(line);
             }
-        } catch (IOException e) {
-            log.error("Error al guardar stats: {}", e.getMessage());
+            
+            pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
+                    SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), ""),
+                    SafeParser.toString(stats.get(AppConstants.KEY_TIMEFRAME), ""),
+                    SafeParser.toString(stats.get(AppConstants.KEY_OP_GANADAS), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_OP_PERDIDAS), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_OP_TOTALES), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_MAX_DRAWDOWN), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_ABS_DRAWDOWN), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_RET_ACUMULADO), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_RET_TOTAL), "0"),
+                    escapeCsv(SafeParser.toString(stats.get(AppConstants.KEY_WIN_RATE), "0%")),
+                    SafeParser.toString(stats.get(AppConstants.KEY_PROFIT_FACTOR), "0"),
+                    SafeParser.toString(stats.get(AppConstants.KEY_FECHA_INICIO), ""),
+                    SafeParser.toString(stats.get(AppConstants.KEY_FECHA_FIN), ""),
+                    SafeParser.toString(stats.get(AppConstants.KEY_RESULTADO), ""));
         }
     }
 
@@ -214,24 +204,22 @@ public class FileService {
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
         if (Files.exists(carpeta)) {
-            System.out.println("\nLa carpeta de resultados '" + nombreEstrategia + "' ya existe.");
-            System.out.println("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
+            log.info("La carpeta de resultados '{}' ya existe.", nombreEstrategia);
+            log.info("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
 
-            Scanner sc = new Scanner(System.in);
-
-            if (sc.hasNextLine()) {
-                String respuesta = sc.nextLine().trim().toLowerCase();
-                if (respuesta.equals("s")) {
-                    limpiarArchivosBacktest(carpeta);
-                } else {
-                    log.info("Manteniendo archivos anteriores.");
+            try (Scanner sc = new Scanner(System.in)) {
+                if (sc.hasNextLine()) {
+                    String respuesta = sc.nextLine().trim().toLowerCase();
+                    if ("s".equals(respuesta)) {
+                        limpiarArchivosBacktest(carpeta);
+                    } else {
+                        log.info("Manteniendo archivos anteriores.");
+                    }
                 }
             }
-
         }
     }
 
-    // Método auxiliar para limpieza
     private void limpiarArchivosBacktest(Path carpeta) {
         try (var stream = Files.list(carpeta)) {
             stream.filter(path -> path.getFileName().toString().contains("backtest"))
@@ -258,8 +246,7 @@ public class FileService {
 
         if (Files.exists(filePath)) {
             try (BufferedReader br = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
-                br.readLine(); // Ignorar header
-                String line;
+                String line = br.readLine(); // ignorar header
                 while ((line = br.readLine()) != null) {
                     String[] p = line.split(",", -1);
                     if (p.length >= 14 && p[0].equals(symbol) && p[1].equals(timeframe)) {
@@ -281,44 +268,92 @@ public class FileService {
                     }
                 }
             } catch (IOException e) {
-                log.error("Error al leer stats: {}", e.getMessage());
+                throw new FileOperationException("Error al leer estadísticas: " + e.getMessage(), e);
             }
         }
         return stats;
     }
 
-    private String getSafe(Map<String, Object> map, String key) {
-        Object val = map.get(key);
-        return (val == null) ? "" : val.toString();
-    }
 
-    private Path getCarpetaEstrategia(String nombreEstrategia) throws IOException {
-        Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
-        if (!Files.exists(path)) {
-            Files.createDirectories(path);
+    private Path getCarpetaEstrategia(String nombreEstrategia) throws FileOperationException {
+        try {
+            Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
+            if (!Files.exists(path)) {
+                Files.createDirectories(path);
+            }
+            return path;
+        } catch (IOException e) {
+            throw new FileOperationException("Error al acceder a la carpeta de la estrategia: " + e.getMessage(), e);
         }
-        return path;
     }
 
     /**
      * Parsea una línea CSV respetando las comillas.
-     * Ejemplo: 'BTC, "100,00%", OK' -> ["BTC", "100,00%", "OK"]
+     * Implementa un parser simple e iterativo para evitar backtracking en regex.
      */
     private String[] parseCsvLine(String line) {
-        // Regex mágica: Separa por coma SOLO si está seguida de un número par de
-        // comillas
-        // (es decir, fuera de un bloque entrecomillado)
-        String[] tokens = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
-
-        // Limpiamos las comillas envolventes de los resultados
-        for (int i = 0; i < tokens.length; i++) {
-            String t = tokens[i];
-            if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
-                t = t.substring(1, t.length() - 1); // Quitar comillas extremas
-                t = t.replace("\"\"", "\""); // Restaurar comillas internas
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        int i = 0;
+        
+        while (i < line.length()) {
+            char c = line.charAt(i);
+            
+            if (handleQuoteCharacter(c, i, line, inQuotes, current)) {
+                if (line.charAt(i) == '\"' && i + 1 < line.length() && line.charAt(i + 1) == '\"') {
+                    i++; // Salta comilla doble
+                }
+                inQuotes = !inQuotes;
+            } else if (c == ',' && !inQuotes) {
+                tokens.add(trimQuotedString(current.toString()));
+                current = new StringBuilder();
+            } else {
+                current.append(c);
             }
-            tokens[i] = t;
+            i++;
         }
-        return tokens;
+        
+        tokens.add(trimQuotedString(current.toString()));
+        return tokens.toArray(new String[0]);
+    }
+
+    /**
+     * Determina si el carácter es una comilla válida para procesar.
+     */
+    private boolean handleQuoteCharacter(char c, int index, String line, boolean inQuotes, StringBuilder current) {
+        if (c != '\"') {
+            return false;
+        }
+        if (inQuotes && index + 1 < line.length() && line.charAt(index + 1) == '\"') {
+            current.append('\"');
+            return true;
+        }
+        return !inQuotes && current.toString().trim().isEmpty();
+    }
+
+    /**
+     * Limpia una cadena entrecomillada.
+     */
+    private String trimQuotedString(String token) {
+        token = token.trim();
+        if (token.startsWith("\"") && token.endsWith("\"") && token.length() >= 2) {
+            token = token.substring(1, token.length() - 1);
+        }
+        return token;
+    }
+
+    /**
+     * Escapa un valor para CSV. Si el valor contiene comas, comillas o saltos de línea,
+     * lo envuelve en comillas dobles para que no rompa la estructura de columnas.
+     */
+    private String escapeCsv(String data) {
+        if (data == null) return "";
+        if (data.contains(",") || data.contains("\"") || data.contains("\n")) {
+            // Reemplazamos las comillas internas por dobles comillas (estándar CSV)
+            data = data.replace("\"", "\"\"");
+            return "\"" + data + "\"";
+        }
+        return data;
     }
 }

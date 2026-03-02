@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import com.bottrading.beans.*;
 import com.bottrading.repositories.*;
+import com.bottrading.utils.SafeParser;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -28,16 +29,19 @@ public class PaperTradingService {
     private final InstanciaEstrategiaRepository instanciaRepo;
     private final PosicionRepository posicionRepo;
     private final FileService fileService;
+    private final StatsCache statsCache;
 
     @Autowired
     public PaperTradingService(AccountingService accountingService,
                                InstanciaEstrategiaRepository instanciaRepo,
                                PosicionRepository posicionRepo,
-                               FileService fileService) {
+                               FileService fileService,
+                               StatsCache statsCache) {
         this.accountingService = accountingService;
         this.instanciaRepo = instanciaRepo;
         this.posicionRepo = posicionRepo;
         this.fileService = fileService;
+        this.statsCache = statsCache;
     }
 
     /**
@@ -96,7 +100,7 @@ public class PaperTradingService {
 
         // Registro en archivo CSV
         fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
-                signal.getPrice(), signal.getTimestamp(), null, e.getCapitalReservado(), false);
+                signal.getPrice(), signal.getTimestamp(), null);
     }
 
     /**
@@ -123,7 +127,7 @@ public class PaperTradingService {
 
         // Registro en archivo CSV
         fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
-                signal.getPrice(), signal.getTimestamp(), pnlNeto, e.getCapitalReservado(), false);
+                signal.getPrice(), signal.getTimestamp(), pnlNeto);
 
         // Actualización de estadísticas agregadas
         Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
@@ -131,16 +135,19 @@ public class PaperTradingService {
     }
 
     /**
-     * Recalcula las estadísticas acumuladas de la estrategia basándose en el historial CSV y el último trade.
+     * Recalcula las estadísticas acumuladas de la estrategia basándose en el caché en memoria.
+     * Ya NO lee del CSV cada vez (lo hace StatsCache automáticamente cada 30s).
      */
     private Map<String, Object> calcularNuevasStats(InstanciaEstrategia e, String symbol, BigDecimal pnlActual) {
-        Map<String, Object> currentStats = fileService.leerStatsActuales(e.getNombreEstrategia(), e.getTimeframe(), symbol);
+        // Obtener stats actuales del caché (no del archivo)
+        Map<String, Object> currentStats = statsCache.getStats(e.getNombreEstrategia(), e.getTimeframe(), symbol);
 
-        // Parseo seguro de valores previos (pueden ser nulos o cadenas vacías)
-        int ganadas = parseSafeInt(currentStats.get("op_ganadas"));
-        int perdidas = parseSafeInt(currentStats.get("op_perdidas"));
-        BigDecimal retornoTotal = parseSafeBigDecimal(currentStats.get("retorno_total"));
+        // Parseo seguro usando SafeParser
+        int ganadas = SafeParser.toInt(currentStats.get("op_ganadas"), 0);
+        int perdidas = SafeParser.toInt(currentStats.get("op_perdidas"), 0);
+        BigDecimal retornoTotal = SafeParser.toBigDecimal(currentStats.get("retorno_total"), BigDecimal.ZERO);
 
+        // Actualizar contadores
         if (pnlActual.compareTo(BigDecimal.ZERO) > 0) {
             ganadas++;
         } else {
@@ -151,6 +158,7 @@ public class PaperTradingService {
         int totales = ganadas + perdidas;
         double winRate = (totales > 0) ? (double) ganadas / totales * 100 : 0;
 
+        // Construir mapa actualizado
         Map<String, Object> newStats = new HashMap<>(currentStats);
         newStats.put("symbol", symbol);
         newStats.put("timeframe", e.getTimeframe());
@@ -162,24 +170,11 @@ public class PaperTradingService {
         newStats.put("resultado", retornoTotal.compareTo(BigDecimal.ZERO) >= 0 ? "PROFIT" : "LOSS");
         newStats.put("fecha_fin", new Date().toString());
 
+        // Actualizar en caché (se guardará a disco automáticamente)
+        statsCache.updateStats(e.getNombreEstrategia(), e.getTimeframe(), symbol, newStats);
+
+        log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {:.2f}%", 
+                  ganadas, perdidas, winRate);
         return newStats;
-    }
-
-    // --- Helpers para parsing seguro ---
-
-    private int parseSafeInt(Object value) {
-        try {
-            return value != null ? Integer.parseInt(value.toString()) : 0;
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    private BigDecimal parseSafeBigDecimal(Object value) {
-        try {
-            return value != null ? new BigDecimal(value.toString()) : BigDecimal.ZERO;
-        } catch (Exception e) {
-            return BigDecimal.ZERO;
-        }
     }
 }

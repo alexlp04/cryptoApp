@@ -20,7 +20,7 @@ public abstract class BaseEntity {
     @Column(nullable = false)
     private boolean eliminado;
 
-    public BaseEntity() {
+    protected BaseEntity() {
         this.fechaCreacion = Instant.now();
     }
 

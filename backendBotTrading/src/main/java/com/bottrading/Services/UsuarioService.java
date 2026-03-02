@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.beans.Usuario;
+import com.bottrading.exceptions.ValidationException;
 import com.bottrading.repositories.UsuarioRepository;
 import com.bottrading.utils.HashUtils;
 
@@ -34,7 +35,7 @@ public class UsuarioService {
      */
     public Usuario registrar(String nombre, String password) {
         if (usuarioRepo.existsByNombre(nombre)) {
-            throw new RuntimeException("El nombre de usuario ya está en uso");
+            throw new ValidationException("El nombre de usuario ya está en uso");
         }
         Usuario u = new Usuario(nombre, HashUtils.hashPassword(password));
         u.setEliminado(false);
@@ -81,6 +82,6 @@ public class UsuarioService {
     @Transactional
     public Usuario obtenerPorNombre(String nombre) {
         return usuarioRepo.findByNombreAndEliminadoFalse(nombre)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado o dado de baja"));
+                .orElseThrow(() -> new ValidationException("Usuario no encontrado o dado de baja"));
     }
 }

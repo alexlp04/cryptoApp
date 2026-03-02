@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import com.bottrading.beans.IndicadorTecnico;
 import com.bottrading.beans.Vela;
+import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.PathConfig;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -58,7 +60,7 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
             log.info("Extrayendo dataset (Velas + Indicadores) de la base de datos...");
             
             // 🔥 CORRECCIÓN: El targetTimestamp debe restar los X días a la fecha actual
-            long targetTimestamp = now - ((long) dias * 24L * 60L * 60L * 1000L);
+            long targetTimestamp = now - ( dias * 24L * 60L * 60L * 1000L);
             
             // 2. Extraer Velas Históricas
             List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
@@ -117,34 +119,41 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
 
         } catch (Exception e) {
             log.error("Fallo durante el entrenamiento: {}", e.getMessage(), e);
-            return "Error crítico entrenando modelo: " + e.getMessage();
+            throw new StrategyExecutionException("Error crítico entrenando modelo: " + e.getMessage(), e);
         }
     }
 
-    private String invocarMotorPython(String jsonPayload) throws Exception {
-        // Llama al script definido en PathConfig
-        ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_TRAIN_PATH);
-        pb.redirectErrorStream(false);
-        Process process = pb.start();
+    private String invocarMotorPython(String jsonPayload) throws StrategyExecutionException {
+        try {
+            // Llama al script definido en PathConfig
+            ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_TRAIN_PATH);
+            pb.redirectErrorStream(false);
+            Process process = pb.start();
 
-        // Enviar el JSON enorme por la entrada estándar (Stdin)
-        try (OutputStream os = process.getOutputStream()) {
-            os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
-            os.flush();
+            // Enviar el JSON enorme por la entrada estándar (Stdin)
+            try (OutputStream os = process.getOutputStream()) {
+                os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
+                os.flush();
+            }
+
+            // Leer la respuesta (Métricas de la IA)
+            String stdout = leerStream(process.getInputStream());
+            String stderr = leerStream(process.getErrorStream());
+
+            int exitCode = process.waitFor();
+
+            if (exitCode != 0) {
+                String errorMsg = stderr.isBlank() ? stdout : stderr;
+                throw new StrategyExecutionException("Fallo en motor de IA (Exit Code " + exitCode + "):\n" + errorMsg);
+            }
+
+            return stdout;
+        } catch (IOException e) {
+            throw new StrategyExecutionException("Error de I/O en AITrainingService: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StrategyExecutionException("Proceso interrumpido durante entrenamiento de IA", e);
         }
-
-        // Leer la respuesta (Métricas de la IA)
-        String stdout = leerStream(process.getInputStream());
-        String stderr = leerStream(process.getErrorStream());
-
-        int exitCode = process.waitFor();
-
-        if (exitCode != 0) {
-            String errorMsg = stderr.isBlank() ? stdout : stderr;
-            throw new Exception("Fallo en motor de IA (Exit Code " + exitCode + "):\n" + errorMsg);
-        }
-
-        return stdout;
     }
 
     private String leerStream(java.io.InputStream is) throws java.io.IOException {
