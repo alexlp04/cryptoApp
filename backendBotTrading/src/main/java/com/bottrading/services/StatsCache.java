@@ -124,7 +124,6 @@ public class StatsCache {
             FLUSH_INTERVAL_SECONDS,
             TimeUnit.SECONDS
         );
-        log.info("Auto-flush iniciado (cada {} segundos)", FLUSH_INTERVAL_SECONDS);
     }
 
     /**

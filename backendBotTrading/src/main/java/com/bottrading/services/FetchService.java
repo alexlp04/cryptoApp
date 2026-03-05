@@ -1,25 +1,26 @@
 package com.bottrading.services;
 
-import com.bottrading.beans.Vela;
-import com.bottrading.beans.VelaDTO;
 import com.bottrading.exceptions.DataFetchException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.SafeParser;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Servicio encargado de la sincronización de datos de mercado
@@ -34,44 +35,39 @@ public class FetchService {
 
     private final VelaRepository velaRepo;
     private final IndicadorRepository indicadorRepo;
+    private final JdbcTemplate jdbcTemplate;
 
-    private final Gson gson = new Gson();
+    private static final int BATCH_INSERT_SIZE = 50000;
 
     @Autowired
-    public FetchService(VelaRepository velaRepo, IndicadorRepository indicadorRepo) {
+    public FetchService(VelaRepository velaRepo, IndicadorRepository indicadorRepo, JdbcTemplate jdbcTemplate) {
         this.velaRepo = velaRepo;
         this.indicadorRepo = indicadorRepo;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
      * Coordina la descarga incremental de datos de mercado.
-     * Verifica en la base de datos la última marca de tiempo (timestamp) registrada
-     * y solicita al script de Python solo los datos faltantes para evitar
-     * duplicados.
-     *
-     * @param symbol   El par de trading (ej: "BTCUSDT").
-     * @param interval El intervalo de la vela (ej: "1m", "1h").
      */
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
+        ConsoleLoader.getInstance().startDots("Verificando historial local para " + symbol);
 
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
 
         if (lastTimestamp == null) {
+            ConsoleLoader.getInstance().stopClear();
             log.info("No hay datos previos. Iniciando descarga completa...");
-            ConsoleLoader.getInstance().startDots();
-
             callPythonAndSave(symbol, interval, null);
 
         } else {
             long now = System.currentTimeMillis();
             if (now - lastTimestamp > getIntervalMillis(interval)) {
+                ConsoleLoader.getInstance().stopClear();
                 log.info("Datos desactualizados. Descargando desde: {}", lastTimestamp);
-                ConsoleLoader.getInstance().startDots();
                 callPythonAndSave(symbol, interval, lastTimestamp + 1);
-                ConsoleLoader.getInstance().stop();
-
             } else {
+                ConsoleLoader.getInstance().stop("✅ Historial de " + symbol + " ya está actualizado.");
                 log.info("Los datos ya están al día.");
             }
         }
@@ -79,59 +75,46 @@ public class FetchService {
 
     /**
      * Coordina la descarga incremental inteligente.
-     * Revisa la BD y decide si descargar los X días completos o solo el hueco
-     * restante.
-     * * @return El timestamp (en milisegundos) desde el que se ha empezado a
-     * descargar.
      */
     public long fetchIncremental(String symbol, String interval, int dias, long now) {
         long millisPerDay = 24L * 60L * 60L * 1000L;
         long targetTimestamp = now - dias * millisPerDay;
 
+        ConsoleLoader.getInstance().startDots("Analizando brechas de datos para " + symbol);
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
         long fetchFromTimestamp;
 
         if (lastTimestamp != null && lastTimestamp > targetTimestamp) {
-            // Ya hay historial. Descargamos desde la última vela registrada
-            // (Sobreescribimos esa última vela por si la anterior vez se guardó incompleta)
             fetchFromTimestamp = lastTimestamp;
             log.info("Historial detectado. Descargando solo nuevas velas desde: {}", lastTimestamp);
         } else {
-            // Historial vacío o insuficiente
             fetchFromTimestamp = targetTimestamp;
             log.info("Historial incompleto. Descargando {} días completos desde: {}", dias, targetTimestamp);
         }
 
-        log.info("Limpiando datos residuales desde el punto de anclaje...");
-        ConsoleLoader.getInstance().startDots();
-
-        // Borramos SOLO de la fecha de anclaje en adelante. Lo viejo ni se toca.
+        ConsoleLoader.getInstance().stopClear();
+        ConsoleLoader.getInstance().startSpinner("Limpiando datos residuales de " + symbol);
+        
         indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
         velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
 
-        // Llamamos a Python
+        ConsoleLoader.getInstance().stopClear();
+        
         callPythonAndSave(symbol, interval, fetchFromTimestamp);
-        ConsoleLoader.getInstance().stop();
 
-        return fetchFromTimestamp; // Devolvemos el dato para que el MarketDataService sepa qué hacer
+        return fetchFromTimestamp;
     }
 
     /**
-     * Ejecuta el script extractor de Python y persiste los datos recibidos en una
-     * transacción por lotes.
-     * Este método lee la salida JSON directamente del flujo del proceso (stream)
-     * para minimizar
-     * la sobrecarga de memoria al procesar grandes conjuntos de datos.
-     *
-     * @param symbol        El par de trading.
-     * @param interval      El intervalo de tiempo.
-     * @param fromTimestamp El timestamp de inicio (opcional, null para descarga
-     *                      completa).
+     * Ejecuta el script extractor de Python y persiste los datos en streaming.
      */
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         Process process = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.FETCHER_PATH, symbol, interval);
+            ConsoleLoader.getInstance().startSpinner("Sincronizando velas de mercado para " + symbol + " (Streaming)");
+            
+            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.FETCHER_PATH, symbol,
+                    interval);
 
             if (fromTimestamp != null) {
                 pb.command().add(String.valueOf(fromTimestamp));
@@ -139,97 +122,146 @@ public class FetchService {
 
             process = pb.start();
 
-            // Hilo para capturar errores
             final Process pRef = process;
             new Thread(() -> {
                 try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
                     String line;
                     while ((line = err.readLine()) != null) {
-                        log.error("PYTHON ERROR: {}", line);
+                        log.error("Python stderr: {}", line);
                     }
                 } catch (Exception e) {
-                    log.error("Error leyendo STDERR: {}", e.getMessage());
+                    log.error("Error reading stderr: {}", e.getMessage());
                 }
             }).start();
 
-            // --- LECTURA POR LOTES ---
-            int totalGuardadas = 0;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String lineaJson;
-
-                // Leemos línea por línea. Cada línea es un lote de 10.000 velas de Python.
-                while ((lineaJson = reader.readLine()) != null) {
-                    // Convertimos esta línea específica en una lista de DTOs
-                    List<VelaDTO> loteDTOs = gson.fromJson(lineaJson, new TypeToken<List<VelaDTO>>() {
-                    }.getType());
-
-                    if (loteDTOs != null && !loteDTOs.isEmpty()) {
-                        List<Vela> entidades = loteDTOs.stream()
-                                .map(dto -> mapToEntity(dto, symbol, interval))
-                                .collect(Collectors.toList());
-
-                        // Guardamos el lote en la base de datos
-                        velaRepo.saveAll(entidades);
-
-                        totalGuardadas += entidades.size();
-                        log.info("Lote guardado. Total acumulado: {} velas de {}.", totalGuardadas, symbol);
-
-                        entidades.clear();
-                        loteDTOs.clear();
-                    }
-                }
-            }
+            int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
 
             int exitCode = process.waitFor();
 
             if (exitCode != 0) {
-                log.error("Script Python terminó con error (código {})", exitCode);
-                throw new DataFetchException("Script Python falló con código " + exitCode);
+                ConsoleLoader.getInstance().stopClear();
+                log.error("Script Python exited with code {}", exitCode);
+                throw new DataFetchException("Script Python failed with code " + exitCode);
             }
 
-            log.info("Sincronización completa para {}. Velas totales guardadas: {}", symbol, totalGuardadas);
-            ConsoleLoader.getInstance().stop();
+            ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas procesadas: " + totalGuardadas);
+            log.info("Fetch completed for {}. Total saved: {} candles", symbol, totalGuardadas);
 
         } catch (InterruptedException e) {
+            ConsoleLoader.getInstance().stopClear();
             Thread.currentThread().interrupt();
             if (process != null)
                 process.destroy();
-            log.warn("La sincronización fue interrumpida para {}", symbol);
-            throw new DataFetchException("Hilo interrumpido durante la sincronización", e);
+            log.warn("Fetch interrupted for {}", symbol);
+            throw new DataFetchException("Sync thread interrupted", e);
         } catch (Exception e) {
-            log.error("Error crítico en FetchService: {}", e.getMessage(), e);
-            throw new DataFetchException("Fallo en sincronización de datos", e);
+            ConsoleLoader.getInstance().stopClear();
+            log.error("Critical error in FetchService: {}", e.getMessage(), e);
+            throw new DataFetchException("Data synchronization failed", e);
         }
     }
 
     /**
-     * Mapea un Objeto de Transferencia de Datos (DTO) a una Entidad JPA.
-     * Realiza una conversión segura de String a BigDecimal para garantizar la
-     * precisión financiera.
-     *
-     * @param dto      El objeto de datos crudos del JSON.
-     * @param symbol   El símbolo del mercado.
-     * @param interval El intervalo de tiempo.
-     * @return Una entidad Vela lista para persistir.
+     * Lee velas desde Python en streaming (formato TSV) e inserta en BD con batch.
+     * La lectura y persistencia ocurren en paralelo para maximizar rendimiento.
      */
-    private Vela mapToEntity(VelaDTO dto, String symbol, String interval) {
-        Vela v = new Vela();
-        v.setSymbol(SafeParser.toString(symbol));
-        v.setInterval(SafeParser.toString(interval));
-        v.setOpenTime(SafeParser.toLong(dto.getOpenTime()));
-        v.setCloseTime(SafeParser.toLong(dto.getCloseTime()));
+    private int leerVelasEnStreamingYGuardar(Process process, String symbol, String interval) throws IOException {
+        int totalGuardadas = 0;
+        int lineasLeidas = 0;
+        long tiempoInicio = System.currentTimeMillis();
+        List<Object[]> batch = new ArrayList<>(BATCH_INSERT_SIZE);
 
-        v.setOpen(SafeParser.toBigDecimal(dto.getOpen()));
-        v.setHigh(SafeParser.toBigDecimal(dto.getHigh()));
-        v.setLow(SafeParser.toBigDecimal(dto.getLow()));
-        v.setClose(SafeParser.toBigDecimal(dto.getClose()));
-        v.setVolume(SafeParser.toBigDecimal(dto.getVolume()));
-        v.setQuoteVolume(SafeParser.toBigDecimal(dto.getQuoteVolume()));
-        v.setTakerBaseVolume(SafeParser.toBigDecimal(dto.getTakerBaseVolume()));
-        v.setTakerQuoteVolume(SafeParser.toBigDecimal(dto.getTakerQuoteVolume()));
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8),
+                512 * 1024)) {
 
-        v.setTrades(SafeParser.toInt(dto.getTrades()));
-        return v;
+            String linea;
+            while ((linea = reader.readLine()) != null) {
+                if (linea.trim().isEmpty())
+                    continue;
+
+                lineasLeidas++;
+
+                try {
+                    // Esperamos exactamente 12 campos TSV del script Python
+                    String[] campos = linea.split("\t", 12);
+                    if (campos.length < 12)
+                        continue;
+
+                    Object[] datos = new Object[] {
+                            Long.parseLong(campos[0]),            // openTime
+                            new BigDecimal(campos[1]),             // open
+                            new BigDecimal(campos[2]),             // high
+                            new BigDecimal(campos[3]),             // low
+                            new BigDecimal(campos[4]),             // close
+                            new BigDecimal(campos[5]),             // volume
+                            Long.parseLong(campos[6]),            // closeTime
+                            new BigDecimal(campos[7]),             // quoteVolume
+                            Integer.parseInt(campos[8]),           // trades
+                            new BigDecimal(campos[9]),             // takerBaseVolume
+                            new BigDecimal(campos[10]),            // takerQuoteVolume
+                            symbol,
+                            interval
+                    };
+
+                    batch.add(datos);
+
+                    // Insertar cuando alcanzamos el tamaño del batch
+                    if (batch.size() >= BATCH_INSERT_SIZE) {
+                        int insertadas = guardarBatchVelas(batch);
+                        totalGuardadas += insertadas;
+                        if (totalGuardadas % 100000 == 0) {
+                            long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
+                            double velocidad = totalGuardadas / (tiempoTranscurrido / 1000.0);
+                            log.info("Progreso: {} registros guardados ({} registros/seg)", 
+                                     totalGuardadas, String.format("%.0f", velocidad));
+                        }
+                        batch.clear();
+                    }
+
+                } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+                    log.debug("Línea malformada omitida (línea {}): {}", lineasLeidas, linea);
+                }
+            }
+
+            // Insertar batch final si no está vacío
+            if (!batch.isEmpty()) {
+                int insertadas = guardarBatchVelas(batch);
+                totalGuardadas += insertadas;
+            }
+        }
+
+        long tiempoTotal = System.currentTimeMillis() - tiempoInicio;
+        double velocidadMedia = totalGuardadas > 0 ? totalGuardadas / (tiempoTotal / 1000.0) : 0;
+        log.info("Lectura streaming completada: {} registros guardados en {} ms ({} registros/seg)", 
+                 totalGuardadas, tiempoTotal, String.format("%.0f", velocidadMedia));
+
+        return totalGuardadas;
+    }
+
+    /**
+     * Inserta batch de velas directamente en BD usando JDBC sin ORM.
+     * ON DUPLICATE KEY UPDATE maneja solapamiento automáticamente.
+     */
+    private int guardarBatchVelas(List<Object[]> batch) {
+        if (batch.isEmpty()) {
+            return 0;
+        }
+        
+        String sql = "INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, taker_base_volume, taker_quote_volume, symbol, time_interval) " +
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+                     "ON DUPLICATE KEY UPDATE " +
+                     "  close = VALUES(close), volume = VALUES(volume)";
+
+        try {
+            int[] resultados = jdbcTemplate.batchUpdate(sql, batch);
+            int insertadas = (int) Arrays.stream(resultados).filter(r -> r > 0).count();
+            log.debug("Batch inserted: {} records", batch.size());
+            return insertadas;
+        } catch (Exception e) {
+            log.error("Error inserting batch of {} records: {}", batch.size(), e.getMessage());
+            throw new DataFetchException("Batch insert failed", e);
+        }
     }
 
     public static long getIntervalMillis(String interval) {

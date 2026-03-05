@@ -54,7 +54,7 @@ public class AppBot implements CommandLineRunner {
     // =========================================================================
 
     private void mostrarBienvenida() {
-        ConsoleLoader.getInstance().stop();
+        ConsoleLoader.getInstance().stopClear();
         uiPrintln("=================================================");
         uiPrintln("   BACKEND BOT TRADING - SPRING BOOT ENGINE      ");
         uiPrintln("=================================================");
@@ -246,8 +246,14 @@ public class AppBot implements CommandLineRunner {
             return;
         }
 
+        uiPrint("Capital a asignar: ");
+        BigDecimal capitalAsignado = new BigDecimal(scanner.nextLine().trim());
+
+        uiPrint("Riesgo por trade (0.01 - 1.0): ");
+        BigDecimal risk = new BigDecimal(scanner.nextLine().trim());
+
         uiPrintln("Iniciando Backtest...");
-        estrategiaService.ejecutarBacktest(args.getEstrategia(), args.getTimeframe(), args.getCoins());
+        estrategiaService.ejecutarBacktest(args.getEstrategia(), args.getTimeframe(), args.getCoins(), capitalAsignado, risk);
         uiPrintln("Backtest finalizado. Resultados guardados en CSV.");
     }
 

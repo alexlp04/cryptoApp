@@ -4,6 +4,7 @@ import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.SignalDTO;
 import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.exceptions.SignalProcessingException;
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
@@ -143,7 +144,7 @@ public class TradingService {
         }
 
         try {
-            ProcessBuilder pb = new ProcessBuilder("python", scriptPath);
+            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, scriptPath);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
