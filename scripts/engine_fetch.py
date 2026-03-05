@@ -12,7 +12,7 @@ import requests
 # =========================
 log_dir = os.path.join(os.getcwd(), "logs")
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"engine_fetch_{datetime.now().strftime('%Y%m%d')}.log")
+log_file = os.path.join(log_dir, "engine_fetch.log")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,9 +66,14 @@ def obtener_params(symbol, interval, since):
         params["startTime"] = since
     return params
 
-def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
-    logging.info(f"📥 Descargando datos desde {pd.to_datetime(since_binance, unit='ms')} para {symbol} ({timeframe})...")
-    all_data = []
+def obtener_datos_binance_streaming(symbol, timeframe, since_binance, max_retries=3):
+    """
+    Descarga datos de Binance y los envía por stdout inmediatamente en cada lote.
+    Esto permite que Java lea y procese mientras Python sigue descargando.
+    """
+    logging.info(f"Descargando datos desde {pd.to_datetime(since_binance, unit='ms')} para {symbol} ({timeframe}) en modo streaming...")
+    
+    total_enviadas = 0
     params = obtener_params(symbol, timeframe, since_binance)
     
     while True:
@@ -78,7 +83,7 @@ def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
             try:
                 params["startTime"] = since_binance
                 response = requests.get(URL_FETCH, params=params)
-                response.raise_for_status() # Asegura que si es un error 4XX o 5XX salte al except
+                response.raise_for_status()
                 data = response.json()
                 break
             except Exception as e:
@@ -87,27 +92,62 @@ def obtener_datos_binance(symbol, timeframe, since_binance, max_retries=3):
                 time.sleep(5)
 
         if retries == max_retries:
-            logging.error(f"❌ No se pudo obtener datos para {symbol} tras {max_retries} intentos. Abortando paginación.")
+            logging.error(f"No se pudo obtener datos para {symbol} tras {max_retries} intentos. Abortando paginación.")
             break
             
         if isinstance(data, list) and len(data) > 0:
             since_binance = data[-1][0] + 1
-            all_data.extend(data)
+            
+            # Enviar este lote inmediatamente a stdout (streaming)
+            for candle in data:
+                json_obj = {
+                    "openTime": candle[0],
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[5]),
+                    "closeTime": candle[6],
+                    "quoteVolume": float(candle[7]),
+                    "trades": int(candle[8]),
+                    "takerBaseVolume": float(candle[9]),
+                    "takerQuoteVolume": float(candle[10]),
+                    "ignore": int(candle[11])
+                }
+                
+                tsv_line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
+                    json_obj["openTime"],
+                    json_obj["open"],
+                    json_obj["high"],
+                    json_obj["low"],
+                    json_obj["close"],
+                    json_obj["volume"],
+                    json_obj["closeTime"],
+                    json_obj["quoteVolume"],
+                    json_obj["trades"],
+                    json_obj["takerBaseVolume"],
+                    json_obj["takerQuoteVolume"],
+                    json_obj["ignore"]
+                )
+                print(tsv_line, flush=True)
+                total_enviadas += 1
             
             last_datetime = datetime.fromtimestamp(since_binance / 1000, tz=timezone.utc)
             now = datetime.now(timezone.utc)
+            
+            if (total_enviadas) % 50000 == 0:
+                logging.info(f"Streaming progress: {total_enviadas} velas enviadas. Última: {pd.to_datetime(since_binance, unit='ms')}")
             
             if now - last_datetime < UPDATE_THRESHOLD[timeframe]:
                 logging.info(f"Datos actualizados hasta el presente ({last_datetime}). Fin de la descarga.")
                 break
             
-            logging.info(f"🔄 Progreso: Descargadas {len(all_data)} velas. Siguiente lote desde {pd.to_datetime(since_binance, unit='ms')}...")
             time.sleep(0.01)
         else:
             logging.info("Binance no devolvió más datos. Fin de la descarga.")
             break
 
-    return all_data    
+    return total_enviadas    
 
 def fetch(symbol, timeframe, since_binance=None):
     if since_binance is None or since_binance == "None":
@@ -150,39 +190,29 @@ def fetch(symbol, timeframe, since_binance=None):
     return json_data
 
 if __name__ == "__main__":
-    logging.info("=== Arrancando Motor de Descarga (Fetch) ===")
+    logging.info("=== Starting Fetch Engine (Streaming Mode) ===")
     try:
         symbol = sys.argv[1]        
         timeframe = sys.argv[2]
         since = sys.argv[3] if len(sys.argv) == 4 else None
 
-        logging.info(f"Parámetros recibidos -> Symbol: {symbol}, Timeframe: {timeframe}, Since: {since}")
+        logging.info(f"Parameters: Symbol={symbol}, Timeframe={timeframe}, Since={since}")
 
-        json_data = fetch(symbol, timeframe, since)
-        total_velas = len(json_data)
-        
-        logging.info(f"Descarga finalizada. {total_velas} velas en memoria. Preparando envío por lotes.")
-        
-        if total_velas == 0:
-            print("[]")
-            sys.stdout.flush()
-            sys.exit(0)
+        if since is None or since == "None":
+            fecha_listado = obtener_fecha_listado(symbol, timeframe)
+            if fecha_listado is not None:
+                since = fecha_listado
+            else:
+                since = 1502928000000  # Agosto 2017 por defecto
+        else:
+            since = int(since)
 
-        # --- SISTEMA DE LOTES (BATCHING) ---
-        BATCH_SIZE = 100000 # Tamaño del lote (puedes ajustarlo si Java sigue quejándose)
+        total_enviadas = obtener_datos_binance_streaming(symbol, timeframe, since)
         
-        for i in range(0, total_velas, BATCH_SIZE):
-            lote = json_data[i:i + BATCH_SIZE]
-            # Imprimimos el lote como un array JSON en una sola línea.
-            # Java leerá esta línea, guardará el lote en BD, y pasará a la siguiente.
-            print(json.dumps(lote))
-            sys.stdout.flush()
-            logging.info(f"Enviado lote de la vela {i} a la {i + len(lote)}.")
-
-        logging.info("=== Proceso finalizado correctamente. Todos los lotes enviados ===")
+        logging.info(f"Fetch completed. {total_enviadas} candles sent in streaming mode.")
+        sys.stdout.flush()
+        logging.info("=== Fetch Engine completed successfully ===")
         
     except Exception as e:
-        logging.error(f"Fallo crítico en el script de fetch: {str(e)}", exc_info=True)
-        # Imprimimos un array vacío para que Java no se quede colgado
-        print("[]") 
+        logging.error(f"Critical error in fetch engine: {str(e)}", exc_info=True)
         sys.exit(1)

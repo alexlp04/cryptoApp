@@ -30,18 +30,47 @@ import java.util.*;
 @Service
 public class FileService {
 
-
     private final Gson gson = new Gson();
+
+    /**
+     * Procesa y guarda solo las estadísticas del backtest.
+     * Los trades ya fueron guardados por Python en streaming a CSV.
+     *
+     * @param nombreEstrategia Nombre de la estrategia ejecutada.
+     * @param timeframe        Marco temporal utilizado.
+     * @param jsonResultado    JSON con solo estadísticas devuelto por Python.
+     * @throws Exception Si ocurre un error de parseo o escritura.
+     */
+    public void guardarEstadisticasDelBacktest(String nombreEstrategia, String timeframe, String jsonResultado)
+            throws FileOperationException {
+
+        Map<String, Object> resultado = gson.fromJson(jsonResultado, new TypeToken<Map<String, Object>>() {
+        }.getType());
+
+        String statsJson = gson.toJson(resultado.get("stats"));
+        List<Map<String, Object>> statsList = gson.fromJson(statsJson, new TypeToken<List<Map<String, Object>>>() {
+        }.getType());
+
+        if (statsList != null) {
+            for (Map<String, Object> stats : statsList) {
+                guardarStats(nombreEstrategia, timeframe, stats, true);
+            }
+        }
+    }
 
     /**
      * Procesa y guarda los resultados completos de un backtest (Trades +
      * Estadísticas).
+     * NOTA: Este método está DEPRECADO. Usar guardarEstadisticasDelBacktest en su
+     * lugar.
+     * Los trades ahora se guardan directamente por Python en streaming.
      *
      * @param nombreEstrategia Nombre de la estrategia ejecutada.
      * @param timeframe        Marco temporal utilizado.
      * @param jsonResultado    JSON crudo devuelto por el motor de Python.
      * @throws Exception Si ocurre un error de parseo o escritura.
      */
+    @Deprecated
     public void guardarResultadosCompletos(String nombreEstrategia, String timeframe, String jsonResultado)
             throws FileOperationException {
 
@@ -130,9 +159,9 @@ public class FileService {
      * Si ya existe una entrada para ese símbolo y timeframe, la sobrescribe.
      *
      * @param nombreEstrategia Nombre de la estrategia.
-     * @param timeframe Timeframe.
-     * @param stats Mapa con las métricas (win_rate, drawdown, etc.).
-     * @param isBacktest True si es simulación.
+     * @param timeframe        Timeframe.
+     * @param stats            Mapa con las métricas (win_rate, drawdown, etc.).
+     * @param isBacktest       True si es simulación.
      */
     public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
@@ -140,10 +169,10 @@ public class FileService {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
             Path filePath = getCarpetaEstrategia(nombreEstrategia).resolve("results" + suffix);
             String currentSymbol = SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), "UNKNOWN");
-            
+
             guardarOActualizarStats(filePath, stats, currentSymbol, timeframe);
             log.trace("Stats guardadas en CSV: {} [{}] {}", nombreEstrategia, currentSymbol, timeframe);
-            
+
         } catch (IOException e) {
             throw new FileOperationException("Error al guardar estadísticas: " + e.getMessage(), e);
         }
@@ -152,7 +181,8 @@ public class FileService {
     /**
      * Método auxiliar para guardar o actualizar una línea de estadísticas.
      */
-    private void guardarOActualizarStats(Path filePath, Map<String, Object> stats, String currentSymbol, String timeframe) throws IOException {
+    private void guardarOActualizarStats(Path filePath, Map<String, Object> stats, String currentSymbol,
+            String timeframe) throws IOException {
         List<String> lineas = new ArrayList<>();
 
         if (Files.exists(filePath)) {
@@ -174,11 +204,11 @@ public class FileService {
 
         try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath,
                 StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))) {
-            
+
             for (String line : lineas) {
                 pw.println(line);
             }
-            
+
             pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
                     SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), ""),
                     SafeParser.toString(stats.get(AppConstants.KEY_TIMEFRAME), ""),
@@ -204,20 +234,20 @@ public class FileService {
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
         if (Files.exists(carpeta)) {
-            log.info("La carpeta de resultados '{}' ya existe.", nombreEstrategia);
-            log.info("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
+            System.out.println("La carpeta de resultados " + nombreEstrategia + " ya existe.");
+            System.out.print("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
 
-            try (Scanner sc = new Scanner(System.in)) {
-                if (sc.hasNextLine()) {
-                    String respuesta = sc.nextLine().trim().toLowerCase();
-                    if ("s".equals(respuesta)) {
-                        limpiarArchivosBacktest(carpeta);
-                    } else {
-                        log.info("Manteniendo archivos anteriores.");
-                    }
+            Scanner sc = new Scanner(System.in);
+            if (sc.hasNextLine()) {
+                String respuesta = sc.nextLine().trim().toLowerCase();
+                if ("s".equals(respuesta)) {
+                    limpiarArchivosBacktest(carpeta);
+                } else {
+                    System.out.println("Manteniendo archivos anteriores.");
                 }
             }
         }
+
     }
 
     private void limpiarArchivosBacktest(Path carpeta) {
@@ -274,7 +304,6 @@ public class FileService {
         return stats;
     }
 
-
     private Path getCarpetaEstrategia(String nombreEstrategia) throws FileOperationException {
         try {
             Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
@@ -296,10 +325,10 @@ public class FileService {
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;
         int i = 0;
-        
+
         while (i < line.length()) {
             char c = line.charAt(i);
-            
+
             if (handleQuoteCharacter(c, i, line, inQuotes, current)) {
                 if (line.charAt(i) == '\"' && i + 1 < line.length() && line.charAt(i + 1) == '\"') {
                     i++; // Salta comilla doble
@@ -313,7 +342,7 @@ public class FileService {
             }
             i++;
         }
-        
+
         tokens.add(trimQuotedString(current.toString()));
         return tokens.toArray(new String[0]);
     }
@@ -344,11 +373,13 @@ public class FileService {
     }
 
     /**
-     * Escapa un valor para CSV. Si el valor contiene comas, comillas o saltos de línea,
+     * Escapa un valor para CSV. Si el valor contiene comas, comillas o saltos de
+     * línea,
      * lo envuelve en comillas dobles para que no rompa la estructura de columnas.
      */
     private String escapeCsv(String data) {
-        if (data == null) return "";
+        if (data == null)
+            return "";
         if (data.contains(",") || data.contains("\"") || data.contains("\n")) {
             // Reemplazamos las comillas internas por dobles comillas (estándar CSV)
             data = data.replace("\"", "\"\"");

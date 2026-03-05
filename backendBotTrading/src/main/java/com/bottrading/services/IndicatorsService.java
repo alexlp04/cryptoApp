@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import com.bottrading.beans.*;
 import com.bottrading.exceptions.PythonProcessException;
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
@@ -51,7 +52,6 @@ public class IndicatorsService {
             return;
         }
 
-        ConsoleLoader.getInstance().startDots();
         log.info("Iniciando cálculo de indicadores por lotes. Total de velas: {}", todasLasVelas.size());
         int totalProcesadas = 0;
 
@@ -76,7 +76,6 @@ public class IndicatorsService {
                 log.error("Error procesando lote {}: {}", numLote, e.getMessage(), e);
             }
         }
-        ConsoleLoader.getInstance().stop();
 
         log.info("Cálculo de indicadores finalizado para {}. Total guardados en BD: {}", symbol, totalProcesadas);
     }
@@ -88,7 +87,7 @@ public class IndicatorsService {
      */
     private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws PythonProcessException {
         try {
-            ProcessBuilder pb = new ProcessBuilder("python3", PathConfig.INDICATORS_PATH);
+            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.INDICATORS_PATH);
             Process process = pb.start();
 
             List<VelaDTO> velasDTO = loteVelas.stream()

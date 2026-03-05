@@ -14,8 +14,8 @@ project_root = os.path.dirname(current_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
-# Archivo de log diario (ej: engine_cbi_20260220.log)
-log_file = os.path.join(log_dir, f"engine_cbi_{datetime.now().strftime('%Y%m%d')}.log")
+# Archivo de log con el nombre del script
+log_file = os.path.join(log_dir, "engine_indicators.log")
 
 logging.basicConfig(
     level=logging.INFO,

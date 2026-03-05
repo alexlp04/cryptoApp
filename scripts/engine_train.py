@@ -27,7 +27,7 @@ project_root = os.path.dirname(current_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
-log_file = os.path.join(log_dir, f"engine_train_{datetime.now().strftime('%Y%m%d')}.log")
+log_file = os.path.join(log_dir, "engine_train.log")
 
 logging.basicConfig(
     level=logging.INFO,

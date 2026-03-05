@@ -5,6 +5,7 @@ import com.bottrading.beans.Vela;
 import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
+import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import lombok.extern.slf4j.Slf4j;
@@ -126,7 +127,7 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
     private String invocarMotorPython(String jsonPayload) throws StrategyExecutionException {
         try {
             // Llama al script definido en PathConfig
-            ProcessBuilder pb = new ProcessBuilder("python", PathConfig.ENGINE_TRAIN_PATH);
+            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.ENGINE_TRAIN_PATH);
             pb.redirectErrorStream(false);
             Process process = pb.start();
 

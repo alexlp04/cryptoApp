@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.Console;
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.*;
@@ -252,39 +253,36 @@ public class EstrategiaService {
     // SECCIÓN 3: BACKTESTING
     // ========================================================================
 
-    public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins) throws Exception {
+    public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins, BigDecimal capitalAsignado, BigDecimal risk) throws Exception {
         fileService.verificarYLimpiarCarpetaEstrategia(nombreEstra);
-        ConsoleLoader.getInstance().startDots();
-
         // 1. Obtener datos históricos
+        ConsoleLoader.getInstance().startDots("Preparando datos para backtest");
         Map<String, List<Vela>> velasPorSimbolo = new HashMap<>();
         for (String symbol : coins) {
             List<Vela> velas = velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, tf);
             velasPorSimbolo.put(symbol, velas);
             if (velas.isEmpty()) {
-                ConsoleLoader.getInstance().stop();
-                log.warn("Advertencia: No hay velas para {} en {}", symbol, tf);
-                ConsoleLoader.getInstance().startDots();
+                log.warn("Warning: No candles found for {} in {}", symbol, tf);
             }
         }
 
         if (velasPorSimbolo.isEmpty()) {
-            ConsoleLoader.getInstance().stop();
-            log.error("Abortando: Sin datos para procesar.");
+            log.error("Aborted: No data to process.");
             return;
         }
 
-        // 2. Ejecutar motor
+        // 2. Ejecutar motor (Python guardará trades a CSV automáticamente)
         String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
-        String jsonResultado = backtestingService.ejecutarBacktest(strategyPath, tf, velasPorSimbolo);
-        ConsoleLoader.getInstance().stop();
-
-        // 3. Guardar resultados
+        ConsoleLoader.getInstance().stopClear();
+        String jsonResultado = backtestingService.ejecutarBacktest(strategyPath, nombreEstra, tf, velasPorSimbolo, capitalAsignado, risk);
+        
+        // 3. Procesar y guardar solo las estadísticas desde Java
         if (jsonResultado != null && !jsonResultado.isEmpty()) {
-            fileService.guardarResultadosCompletos(nombreEstra, tf, jsonResultado);
-            log.info("Resultados guardados en: {}{}{}", PathConfig.RESULTS_DIR, File.separator, nombreEstra);
+            fileService.guardarEstadisticasDelBacktest(nombreEstra, tf, jsonResultado);
+            ConsoleLoader.getInstance().stopClear();
+            log.info("Backtest results saved to: {}{}{}", PathConfig.RESULTS_DIR, File.separator, nombreEstra);
         } else {
-            log.error("El motor de backtest no devolvió resultados.");
+            log.error("Backtesting engine did not return results.");
         }
     }
 }

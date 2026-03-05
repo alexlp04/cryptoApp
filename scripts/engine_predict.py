@@ -9,9 +9,12 @@ from datetime import datetime
 # =========================
 # CONFIGURACIÓN DE LOGS
 # =========================
-log_dir = os.path.join(os.getcwd(), "models", "logs")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"engine_predict_{datetime.now().strftime('%Y%m%d')}.log")
+
+log_file = os.path.join(log_dir, "engine_predict.log")
 
 logging.basicConfig(
     level=logging.INFO,

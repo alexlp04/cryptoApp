@@ -11,7 +11,8 @@ public class ConsoleLoader {
         running = false;
     }
 
-    public static ConsoleLoader getInstance() {
+    // Hacemos el Singleton Thread-Safe
+    public static synchronized ConsoleLoader getInstance() {
         if (instance == null) {
             instance = new ConsoleLoader();
         }
@@ -19,14 +20,14 @@ public class ConsoleLoader {
     }
 
     /**
-     * Tipo 1: puntos animados ". .. ..."
+     * Tipo 1: puntos animados con mensaje personalizable
      */
-    public void startDots() {
+    public void startDots(String message) {
         start(() -> {
             String[] dots = { ".  ", ".. ", "..." };
             int i = 0;
             while (running) {
-                System.out.print("\rCargando" + dots[i % dots.length]);
+                System.out.print("\r" + message + dots[i % dots.length]);
                 i++;
                 sleep(400);
             }
@@ -34,14 +35,14 @@ public class ConsoleLoader {
     }
 
     /**
-     * Tipo 2: spinner giratorio "| / - \\"
+     * Tipo 2: spinner giratorio con mensaje personalizable
      */
-    public void startSpinner() {
+    public void startSpinner(String message) {
         start(() -> {
             char[] spinner = { '|', '/', '-', '\\' };
             int i = 0;
             while (running) {
-                System.out.print("\rCargando " + spinner[i % spinner.length]);
+                System.out.print("\r" + message + " " + spinner[i % spinner.length]);
                 i++;
                 sleep(200);
             }
@@ -49,26 +50,35 @@ public class ConsoleLoader {
     }
 
     /**
-     * Detener animación
+     * Detiene la animación y muestra un mensaje final.
+     * Si finalMessage es nulo o vacío, la línea queda limpia.
      */
-    public void stop() {
+    public void stop(String finalMessage) {
         running = false;
         if (loaderThread != null && loaderThread.isAlive()) {
             try {
-                loaderThread.join(); // espera a que termine
+                loaderThread.join(); // espera a que el hilo termine su ciclo
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
-        System.out.print("\rCarga completa!   \n"); // limpia línea final
+        
+        // Sobreescribe la línea actual con espacios para borrar el rastro de la animación
+        System.out.print("\r                                                                      \r");
+        
+        // Imprime el mensaje final si existe, si no, no hace nada
+        if (finalMessage != null && !finalMessage.isEmpty()) {
+            System.out.println(finalMessage);
+        }
     }
+
+    public void stopClear() { stop(""); } // Método de atajo para borrar todo
 
     /**
      * Función interna que inicia el hilo con la animación
      */
     private void start(Runnable animationLogic) {
-        if (running)
-            return; // ya está corriendo
+        if (running) return; // evita instanciar múltiples hilos
         running = true;
         loaderThread = new Thread(animationLogic);
         loaderThread.start();
