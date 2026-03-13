@@ -2,6 +2,7 @@ package com.bottrading.services;
 
 import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.SignalDTO;
+import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.exceptions.SignalProcessingException;
 import com.bottrading.utils.AppConstants;
@@ -10,7 +11,6 @@ import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -26,12 +26,19 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.Queue;
 
 /**
  * Servicio técnico de bajo nivel encargado de la gestión de procesos y hilos.
  * Administra el ciclo de vida de los scripts de Python (ejecución, comunicación
  * I/O y terminación).
+ *
+ * Mejoras en Fase 3:
+ * - Timeouts de 30s para procesos Python
+ * - Destrucción forzada de procesos en caso de timeout
+ * - Constructor injection (no @Autowired)
+ * - Resiliencia mejorada para colas de reintentos
  */
 @Slf4j
 @Service
@@ -39,21 +46,18 @@ public class TradingService {
 
     private final PaperTradingService paperTradingService;
     private final AccountingService accountingService;
-
-    private final Gson gson = new Gson();
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     // Mapa thread-safe para mantener referencias a los procesos en ejecución
     private final Map<Long, StrategyContext> procesosActivos = new ConcurrentHashMap<>();
-    
-    // Cola de señales fallidas para reintentos (Long = instanciaId, SignalDTO = signal)
+
+    // Cola de señales fallidas para reintentos
     private final Map<Long, Queue<SignalDTO>> failedSignalsQueue = new ConcurrentHashMap<>();
-    
+
     // Contador de fallos consecutivos por estrategia
     private final Map<Long, Integer> consecutiveFailures = new ConcurrentHashMap<>();
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
 
-    @Autowired
     public TradingService(PaperTradingService paperTradingService, AccountingService accountingService) {
         this.paperTradingService = paperTradingService;
         this.accountingService = accountingService;
@@ -96,36 +100,80 @@ public class TradingService {
     /**
      * Lógica principal del hilo de ejecución.
      * Arranca el proceso Python, envía la configuración y escucha señales en bucle.
+     * Incluye timeout y gestión mejorada de procesos.
      */
     private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
         boolean errorCritico = false;
         Process process = null;
+        long startTime = System.currentTimeMillis();
 
         try {
-            // 1. Iniciar proceso y registrarlo (ELIGE EL SCRIPT CORRECTO AQUÍ)
+            // 1. Iniciar proceso y registrarlo
             process = iniciarProcesoPython(instancia);
 
             // 2. Enviar configuración
             enviarPayload(process, instancia, symbols);
 
-            // 3. Bucle de escucha (Bloqueante)
-            escucharSalidaPython(process, instancia);
+            // 3. Bucle de escucha con timeout monitorizado
+            escucharSalidaPythonConTimeout(process, instancia, startTime);
 
             // 4. Esperar cierre ordenado
-            int exitCode = process.waitFor();
+            if (process.isAlive()) {
+                boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+                if (!finished) {
+                    log.warn("Proceso de estrategia {} aún vivo después de cierre, destruyendo", 
+                            instancia.getId());
+                    destroyProcessForcibly(process);
+                }
+            }
+            
+            int exitCode = process.exitValue();
             if (exitCode != 0 && !Thread.currentThread().isInterrupted()) {
                 throw new PythonProcessException("Proceso Python terminó con código: " + exitCode);
             }
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            log.warn("Hilo de estrategia {} interrumpido", instancia.getId());
         } catch (Exception e) {
             if (!Thread.currentThread().isInterrupted()) {
                 errorCritico = true;
-                log.error("Error en motor Python ({}): {}", instancia.getNombreEstrategia(), e.getMessage());
+                log.error("Error en motor Python ({}): {}", instancia.getNombreEstrategia(), e.getMessage(), e);
             }
         } finally {
+            if (process != null) {
+                destroyProcessForcibly(process);
+            }
             gestionarCierre(instancia, errorCritico);
+        }
+    }
+
+    /**
+     * Lee la salida de Python con monitoring de timeout.
+     */
+    private void escucharSalidaPythonConTimeout(Process process, InstanciaEstrategia instancia, long startTime) 
+            throws PythonProcessException {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (Thread.currentThread().isInterrupted()) {
+                    break;
+                }
+                
+                // Monitorear tiempo de vida del proceso
+                long elapsed = System.currentTimeMillis() - startTime;
+                if (elapsed > ProcessExecutorConfig.TIMEOUT_SECONDS * 1000) {
+                    log.warn("Estrategia {} excedió timeout de {}s, terminando", 
+                            instancia.getId(), ProcessExecutorConfig.TIMEOUT_SECONDS);
+                    throw new PythonProcessException("Timeout de estrategia excedido");
+                }
+                
+                procesarLineaLog(line, instancia);
+            }
+        } catch (IOException e) {
+            throw new PythonProcessException("Error al leer salida del proceso Python: " + e.getMessage(), e);
         }
     }
 
@@ -161,22 +209,6 @@ public class TradingService {
         }
     }
 
-    private void escucharSalidaPython(Process process, InstanciaEstrategia instancia) throws PythonProcessException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (Thread.currentThread().isInterrupted()) {
-                    break;
-                }
-                procesarLineaLog(line, instancia);
-            }
-        } catch (IOException e) {
-            throw new PythonProcessException("Error al leer salida del proceso Python: " + e.getMessage(), e);
-        }
-    }
-
     private void procesarLineaLog(String line, InstanciaEstrategia instancia) {
         if (line.trim().startsWith("{")) {
             procesarParseJsonSignal(line, instancia);
@@ -186,9 +218,24 @@ public class TradingService {
         }
     }
 
+    /**
+     * Destruye un proceso forzosamente y registra el evento.
+     */
+    private void destroyProcessForcibly(Process process) {
+        if (process != null && process.isAlive()) {
+            log.warn("Destruyendo proceso Python forzadamente");
+            process.destroyForcibly();
+            try {
+                process.waitFor(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     private void procesarParseJsonSignal(String line, InstanciaEstrategia instancia) {
         try {
-            SignalDTO signal = gson.fromJson(line, SignalDTO.class);
+            SignalDTO signal = new Gson().fromJson(line, SignalDTO.class);
             procesarSignalConReintento(instancia, signal);
         } catch (com.google.gson.JsonSyntaxException e) {
             log.error("JSON corrupto de Python (será ignorado): {} - Error: {}", line, e.getMessage());
@@ -292,25 +339,23 @@ public class TradingService {
     }
 
     /**
-     * Serializa y envía la configuración inicial al script de Python a través de
-     * STDIN.
+     * Serializa y envía la configuración inicial al script de Python a través de STDIN.
      */
     private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws PythonProcessException {
-        // Usamos un HashMap normal en lugar de Map.of para poder añadir claves condicionalmente
         Map<String, Object> payload = new HashMap<>();
-        
+
         payload.put("strategy_path", PathConfig.getValidStrategyPath(inst.getNombreEstrategia()));
         payload.put("symbols", new ArrayList<>(symbols));
         payload.put("timeframe", inst.getTimeframe());
         payload.put("capital", inst.getCapitalReservado());
 
-        // 🔥 AÑADIMOS EL MODELO AL PAYLOAD SI EXISTE
+        // Agregar modelo si existe (para estrategias de IA)
         if (inst.getNombreModelo() != null && !inst.getNombreModelo().isEmpty()) {
             payload.put("model_name", inst.getNombreModelo());
         }
 
         try (OutputStream os = p.getOutputStream()) {
-            os.write(gson.toJson(payload).getBytes(StandardCharsets.UTF_8));
+            os.write(new Gson().toJson(payload).getBytes(StandardCharsets.UTF_8));
             os.flush();
         } catch (IOException e) {
             throw new PythonProcessException("Error al enviar configuración a Python: " + e.getMessage(), e);
@@ -332,12 +377,12 @@ public class TradingService {
                 ctx.javaThread.cancel(true);
             }
 
-            // 2. Matar proceso del sistema operativo
-            if (ctx.pythonProcess != null && ctx.pythonProcess.isAlive()) {
-                ctx.pythonProcess.destroyForcibly();
+            // 2. Destruir proceso del sistema operativo de manera segura
+            if (ctx.pythonProcess != null) {
+                destroyProcessForcibly(ctx.pythonProcess);
             }
 
-            log.info("TradingService: Recursos liberados para ID " + instanciaId);
+            log.info("TradingService: Recursos liberados para ID {}", instanciaId);
         }
     }
 

@@ -12,6 +12,7 @@ import com.bottrading.beans.Wallet;
 import com.bottrading.repositories.InstanciaEstrategiaRepository;
 import com.bottrading.repositories.LedgerRepository;
 import com.bottrading.repositories.WalletRepository;
+import com.bottrading.utils.AppConstants;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
@@ -128,7 +129,7 @@ public class AccountingService {
             e.setCapitalAsignado(BigDecimal.ZERO);
         }
 
-        e.setEstado("FINALIZADA");
+        e.setEstado(AppConstants.KEY_TERMINADA);
         
         walletRepo.save(w);
         estrategiaRepo.save(e);

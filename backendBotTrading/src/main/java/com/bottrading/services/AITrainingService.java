@@ -2,14 +2,15 @@ package com.bottrading.services;
 
 import com.bottrading.beans.IndicadorTecnico;
 import com.bottrading.beans.Vela;
+import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,14 +23,22 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
  * Servicio encargado de orquestar el entrenamiento de modelos de Inteligencia
  * Artificial.
  * Fusiona los datos de mercado (Velas) con el Feature Engineering (Indicadores
- * Técnicos)
- * y delega el entrenamiento al script de Python.
+ * Técnicos) y delega el entrenamiento al script de Python.
+ *
+ * Mejoras en Fase 3:
+ * - Timeouts de 30s y retries automáticos (hasta 3 intentos)
+ * - ExecutorService para gestión de procesos
+ * - Destrucción forzada de procesos en caso de timeout
+ * - Constructor injection (no @Autowired)
  */
 @Slf4j
 @Service
@@ -38,9 +47,8 @@ public class AITrainingService {
     private final MarketDataService marketDataService;
     private final VelaRepository velaRepo;
     private final IndicadorRepository indicadorRepo;
-    private final Gson gson = new Gson();
+    private final ExecutorService executor = Executors.newFixedThreadPool(ProcessExecutorConfig.EXECUTOR_THREADS);
 
-    @Autowired
     public AITrainingService(MarketDataService marketDataService, VelaRepository velaRepo,
             IndicadorRepository indicadorRepo) {
         this.marketDataService = marketDataService;
@@ -48,25 +56,72 @@ public class AITrainingService {
         this.indicadorRepo = indicadorRepo;
     }
 
+    // =========================================================================
+    // LIFECYCLE MANAGEMENT
+    // =========================================================================
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Iniciando shutdown graceful de AITrainingService...");
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                log.warn("ExecutorService no terminó en 10s, forzando shutdown");
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Interrupción durante shutdown: {}", e.getMessage());
+            executor.shutdownNow();
+        }
+    }
+
     /**
-     * Orquesta el proceso de preparación de datos y entrenamiento.
+     * Orquesta el proceso de preparación de datos y entrenamiento con retries automáticos.
      */
     @Transactional
-public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) {        try {
+    public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) {
+        for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
+            try {
+                log.info("Intento {} de {} para entrenar modelo '{}'", intento, ProcessExecutorConfig.MAX_RETRIES,
+                        nombreModelo);
+                return ejecutarEntrenamiento(nombreModelo, timeframe, symbol, dias, hyperparams);
+
+            } catch (StrategyExecutionException e) {
+                if (intento == ProcessExecutorConfig.MAX_RETRIES) {
+                    log.error("Entrenamiento falló después de {} intentos: {}", ProcessExecutorConfig.MAX_RETRIES,
+                            e.getMessage());
+                    throw e;
+                }
+                log.warn("Intento {} falló, reintentando en {}ms...", intento, ProcessExecutorConfig.RETRY_DELAY_MS);
+                try {
+                    Thread.sleep(ProcessExecutorConfig.RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new StrategyExecutionException("Entrenamiento interrumpido durante reintento", ie);
+                }
+            }
+        }
+
+        throw new StrategyExecutionException("Entrenamiento falló tras " + ProcessExecutorConfig.MAX_RETRIES + " intentos");
+    }
+
+    private String ejecutarEntrenamiento(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) throws StrategyExecutionException {
+        try {
             long now = System.currentTimeMillis();
 
-            // 1. Asegurar que los datos y los indicadores están actualizados (usando tu parámetro now)
+            // 1. Asegurar que los datos y los indicadores están actualizados
             marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, dias, now);
 
             log.info("Extrayendo dataset (Velas + Indicadores) de la base de datos...");
-            
-            // 🔥 CORRECCIÓN: El targetTimestamp debe restar los X días a la fecha actual
-            long targetTimestamp = now - ( dias * 24L * 60L * 60L * 1000L);
-            
+
+            // Calcular timestamp objetivo
+            long targetTimestamp = now - (dias * 24L * 60L * 60L * 1000L);
+
             // 2. Extraer Velas Históricas
             List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
                     symbol, timeframe, targetTimestamp);
-                    
+
             if (velas.isEmpty()) {
                 return "Error: No hay datos suficientes de " + symbol + " para entrenar.";
             }
@@ -75,7 +130,7 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
 
             List<IndicadorTecnico> todosLosIndicadores = indicadorRepo.findByVelaIn(velas);
             Map<Long, List<IndicadorTecnico>> indicadoresPorVela = todosLosIndicadores.stream()
-                .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
+                    .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
 
             log.info("Fusionando datos en memoria RAM...");
 
@@ -87,16 +142,16 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
                 row.put("close", v.getClose());
                 row.put("volume", v.getVolume());
 
-                // Recuperar indicadores desde el mapa en memoria (Tarda 0 segundos)
+                // Recuperar indicadores desde el mapa en memoria
                 List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(), new ArrayList<>());
                 for (IndicadorTecnico ind : indicadoresVela) {
                     row.put(ind.getTipo(), ind.getValor());
                 }
-                
+
                 dataset.add(row);
             }
 
-            log.info("--- DATASET LISTO --- {}");
+            log.info("--- DATASET LISTO --- {} registros", dataset.size());
 
             // 4. Construir el JSON para enviar a Python
             Map<String, Object> payload = new HashMap<>();
@@ -106,54 +161,106 @@ public String entrenarModelo(String nombreModelo, String timeframe, String symbo
             payload.put("dataset", dataset);
             payload.put("hyperparameters", hyperparams);
 
-            String jsonPayload = gson.toJson(payload);
+            String jsonPayload = new Gson().toJson(payload);
 
             log.info("Enviando {} registros al motor de IA (Python)...", dataset.size());
 
-            // 🧹 Limpieza de memoria RAM antes de despertar a Python
+            // Limpieza de memoria RAM
             velas.clear();
             todosLosIndicadores.clear();
             indicadoresPorVela.clear();
+            dataset.clear();
 
-            // 5. Ejecutar script Python
-            return invocarMotorPython(jsonPayload);
+            // 5. Ejecutar script Python con timeouts
+            return invocarMotorPythonConTimeouts(jsonPayload);
 
         } catch (Exception e) {
-            log.error("Fallo durante el entrenamiento: {}", e.getMessage(), e);
+            log.error("Fallo durante entrenamiento: {}", e.getMessage(), e);
             throw new StrategyExecutionException("Error crítico entrenando modelo: " + e.getMessage(), e);
         }
     }
 
-    private String invocarMotorPython(String jsonPayload) throws StrategyExecutionException {
+    /**
+     * Invoca el motor Python con timeout de 30s y destrucción forzada en caso de error.
+     */
+    private String invocarMotorPythonConTimeouts(String jsonPayload) throws StrategyExecutionException {
+        Process process = null;
         try {
-            // Llama al script definido en PathConfig
+            long startTime = System.currentTimeMillis();
+            log.debug("Iniciando entrenamiento IA con payload de {} bytes", jsonPayload.length());
+
             ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.ENGINE_TRAIN_PATH);
             pb.redirectErrorStream(false);
-            Process process = pb.start();
+            process = pb.start();
 
-            // Enviar el JSON enorme por la entrada estándar (Stdin)
+            // Escribir payload
             try (OutputStream os = process.getOutputStream()) {
                 os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
                 os.flush();
+            } catch (IOException e) {
+                log.error("Error escribiendo payload al motor IA: {}", e.getMessage());
+                destroyProcessForcibly(process);
+                throw new StrategyExecutionException("No se pudo escribir datos al motor IA", e);
             }
 
-            // Leer la respuesta (Métricas de la IA)
+            // Esperar con timeout
+            boolean finished = process.waitFor(ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            if (!finished) {
+                log.error("Entrenamiento IA timeout después de {}s, destruyendo proceso", 
+                        ProcessExecutorConfig.TIMEOUT_SECONDS);
+                destroyProcessForcibly(process);
+                throw new StrategyExecutionException(
+                        "Entrenamiento IA excedió timeout de " + ProcessExecutorConfig.TIMEOUT_SECONDS + "s");
+            }
+
+            long duration = System.currentTimeMillis() - startTime;
+
+            // Leer salida
             String stdout = leerStream(process.getInputStream());
             String stderr = leerStream(process.getErrorStream());
+            int exitCode = process.exitValue();
 
-            int exitCode = process.waitFor();
+            log.info("Entrenamiento IA completado en {} ms (exit code: {})", duration, exitCode);
 
             if (exitCode != 0) {
-                String errorMsg = stderr.isBlank() ? stdout : stderr;
-                throw new StrategyExecutionException("Fallo en motor de IA (Exit Code " + exitCode + "):\n" + errorMsg);
+                String errorMsg = !stderr.isBlank() ? stderr : stdout;
+                log.error("Motor IA falló con código {}: {}", exitCode, errorMsg);
+                throw new StrategyExecutionException("Entrenamiento IA falló (Exit Code " + exitCode + "):\n" + errorMsg);
             }
 
             return stdout;
-        } catch (IOException e) {
-            throw new StrategyExecutionException("Error de I/O en AITrainingService: " + e.getMessage(), e);
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StrategyExecutionException("Proceso interrumpido durante entrenamiento de IA", e);
+            log.error("Proceso IA interrumpido: {}", e.getMessage());
+            if (process != null) {
+                destroyProcessForcibly(process);
+            }
+            throw new StrategyExecutionException("Entrenamiento IA interrumpido", e);
+        } catch (StrategyExecutionException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Error inesperado en entrenamiento IA: {}", e.getMessage(), e);
+            if (process != null) {
+                destroyProcessForcibly(process);
+            }
+            throw new StrategyExecutionException("Error inesperado: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Destruye un proceso forzosamente y registra el evento.
+     */
+    private void destroyProcessForcibly(Process process) {
+        if (process != null && process.isAlive()) {
+            log.warn("Destruyendo proceso Python forzadamente");
+            process.destroyForcibly();
+            try {
+                process.waitFor(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

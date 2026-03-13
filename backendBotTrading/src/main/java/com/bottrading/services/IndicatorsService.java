@@ -3,21 +3,21 @@ package com.bottrading.services;
 import com.bottrading.beans.*;
 import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.utils.AppConstants;
-import com.bottrading.utils.ConsoleLoader;
+import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -32,15 +32,17 @@ import java.util.stream.Collectors;
 public class IndicatorsService {
 
     private final JdbcTemplate jdbcTemplate;
-    private final Gson gson = new Gson();
+    private final ExecutorService executor;
 
     private static final int BATCH_SIZE = 100000;
     private static final int OVERLAP = 50;
+    private static final int TIMEOUT_SECONDS = 30;
+    private static final int MAX_RETRIES = 3;
+    private static final int CHUNK_SIZE = 10000;
 
-    @Autowired
     public IndicatorsService(JdbcTemplate jdbcTemplate) {
-        // Ya no necesitamos IndicadorRepository aquí, usaremos JdbcTemplate directo
         this.jdbcTemplate = jdbcTemplate;
+        this.executor = Executors.newFixedThreadPool(4);
     }
 
     /**
@@ -82,49 +84,83 @@ public class IndicatorsService {
 
     /**
      * Orquesta el envío y recepción de un único lote de datos hacia Python.
+     * Implementa timeouts, retries automáticos y streaming con MessagePack.
      * 
      * @return El número de indicadores guardados en este lote.
      */
     private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws PythonProcessException {
-        try {
-            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.INDICATORS_PATH);
-            Process process = pb.start();
+        int retries = 0;
+        
+        while (retries < MAX_RETRIES) {
+            Process process = null;
+            try {
+                ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.INDICATORS_PATH);
+                process = pb.start();
 
-            List<VelaDTO> velasDTO = loteVelas.stream()
-                    .map(this::mapToDTO)
-                    .collect(Collectors.toList());
+                List<VelaDTO> velasDTO = loteVelas.stream()
+                        .map(this::mapToDTO)
+                        .collect(Collectors.toList());
 
-            enviarDatosAPython(process, velasDTO);
-            int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
+                // Streaming con MessagePack en chunks
+                try (OutputStream os = process.getOutputStream()) {
+                    DataSerializationUtils.streamVelasInChunks(velasDTO, os, CHUNK_SIZE, false);
+                    os.flush();
+                }
 
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
-                log.warn("Python terminó con código de error {}", exitCode);
+                // Leer resultados con timeout
+                int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
+
+                // Esperar al proceso con timeout
+                if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    throw new PythonProcessException("Timeout en proceso Python tras " + TIMEOUT_SECONDS + "s");
+                }
+
+                int exitCode = process.exitValue();
+                if (exitCode != 0) {
+                    log.warn("Python terminó con código de error {}", exitCode);
+                }
+
+                velasDTO.clear();
+                return guardados;
+                
+            } catch (InterruptedException e) {
+                retries++;
+                Thread.currentThread().interrupt();
+                log.warn("Reintento {} para lote (InterruptedException): {}", retries, e.getMessage());
+                if (process != null) {
+                    process.destroyForcibly();
+                }
+                if (retries >= MAX_RETRIES) {
+                    throw new PythonProcessException("Fallo tras " + MAX_RETRIES + " reintentos", e);
+                }
+                
+            } catch (IOException e) {
+                if (process != null) {
+                    process.destroyForcibly();
+                }
+                throw new PythonProcessException("Error de I/O al procesar lote: " + e.getMessage(), e);
+                
+            } catch (Exception e) {
+                retries++;
+                log.warn("Reintento {} para lote: {}", retries, e.getMessage());
+                if (process != null) {
+                    process.destroyForcibly();
+                }
+                if (retries >= MAX_RETRIES) {
+                    throw new PythonProcessException("Fallo tras " + MAX_RETRIES + " reintentos", e);
+                }
             }
-
-            velasDTO.clear();
-            return guardados;
-        } catch (IOException e) {
-            throw new PythonProcessException("Error al iniciar proceso Python: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new PythonProcessException("Proceso interrumpido durante cálculo de indicadores", e);
         }
-    }
-
-    private void enviarDatosAPython(Process process, List<VelaDTO> velasDTO) throws PythonProcessException {
-        try (OutputStream os = process.getOutputStream()) {
-            os.write(gson.toJson(velasDTO).getBytes(StandardCharsets.UTF_8));
-            os.flush();        } catch (IOException e) {
-            throw new PythonProcessException("Error al enviar datos a Python: " + e.getMessage(), e);        }
+        
+        return 0;
     }
 
     private int leerResultadosDePythonYGuardar(Process process, List<Vela> loteVelas, boolean esPrimerLote)
             throws PythonProcessException, IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            List<IndicadorTecnicoDTO> dtos = gson.fromJson(reader,
-                    new TypeToken<List<IndicadorTecnicoDTO>>() {
-                    }.getType());
+        try (InputStream in = process.getInputStream()) {
+            // Deserializar desde MessagePack
+            List<IndicadorTecnicoDTO> dtos = DataSerializationUtils.deserializeIndicadoresFromStream(in, false);
 
             if (dtos == null || dtos.isEmpty()) {
                 return 0;
@@ -141,6 +177,7 @@ public class IndicatorsService {
             if (!resultados.isEmpty()) {
                 // 🔥 Inserción ultrarrápida (Batch Insert SQL nativo)
                 guardarIndicadoresMasivo(resultados);
+                log.debug("Guardados {} indicadores del lote", resultados.size());
             }
             return resultados.size();
         }
@@ -217,5 +254,22 @@ public class IndicatorsService {
         dto.setTrades(v.getTrades());
 
         return dto;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Iniciando shutdown de ExecutorService en IndicatorsService");
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("ExecutorService no terminó en tiempo. Forzando shutdown");
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            log.error("Interrupción durante shutdown graceful. Forzando shutdown");
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        log.info("Shutdown de ExecutorService completado");
     }
 }

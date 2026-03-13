@@ -88,6 +88,20 @@
     <version>3.0.0</version>
 </dependency>
 
+        <!-- MessagePack para serialización binaria eficiente -->
+        <dependency>
+            <groupId>org.msgpack</groupId>
+            <artifactId>msgpack-core</artifactId>
+            <version>0.9.3</version>
+        </dependency>
+
+        <!-- Dataformat MessagePack para Jackson -->
+        <dependency>
+            <groupId>org.msgpack</groupId>
+            <artifactId>jackson-dataformat-msgpack</artifactId>
+            <version>0.9.3</version>
+        </dependency>
+
     </dependencies>
 
     <build>
