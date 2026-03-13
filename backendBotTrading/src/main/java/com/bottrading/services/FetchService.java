@@ -5,22 +5,22 @@ import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
+import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
-
+import com.bottrading.beans.VelaDTO;
 import lombok.extern.slf4j.Slf4j;
-
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import jakarta.annotation.PreDestroy;
+import java.io.*;
 import java.math.BigDecimal;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Servicio encargado de la sincronización de datos de mercado
@@ -36,14 +36,17 @@ public class FetchService {
     private final VelaRepository velaRepo;
     private final IndicadorRepository indicadorRepo;
     private final JdbcTemplate jdbcTemplate;
+    private final ExecutorService executor;
 
     private static final int BATCH_INSERT_SIZE = 50000;
+    private static final int TIMEOUT_SECONDS = 30;
+    private static final int MAX_RETRIES = 3;
 
-    @Autowired
     public FetchService(VelaRepository velaRepo, IndicadorRepository indicadorRepo, JdbcTemplate jdbcTemplate) {
         this.velaRepo = velaRepo;
         this.indicadorRepo = indicadorRepo;
         this.jdbcTemplate = jdbcTemplate;
+        this.executor = Executors.newFixedThreadPool(4);
     }
 
     /**
@@ -106,121 +109,126 @@ public class FetchService {
     }
 
     /**
-     * Ejecuta el script extractor de Python y persiste los datos en streaming.
+     * Ejecuta el script extractor de Python y persiste los datos usando MessagePack streaming.
+     * Implementa timeouts, retries automáticos y manejo de errores robusto.
      */
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
-        Process process = null;
-        try {
-            ConsoleLoader.getInstance().startSpinner("Sincronizando velas de mercado para " + symbol + " (Streaming)");
-            
-            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.FETCHER_PATH, symbol,
-                    interval);
-
-            if (fromTimestamp != null) {
-                pb.command().add(String.valueOf(fromTimestamp));
-            }
-
-            process = pb.start();
-
-            final Process pRef = process;
-            new Thread(() -> {
-                try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
-                    String line;
-                    while ((line = err.readLine()) != null) {
-                        log.error("Python stderr: {}", line);
-                    }
-                } catch (Exception e) {
-                    log.error("Error reading stderr: {}", e.getMessage());
+        int retries = 0;
+        
+        while (retries < MAX_RETRIES) {
+            Process process = null;
+            try {
+                ConsoleLoader.getInstance().startSpinner("Sincronizando velas con MessagePack para " + symbol);
+                
+                ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.FETCHER_PATH, symbol, interval);
+                if (fromTimestamp != null) {
+                    pb.command().add(String.valueOf(fromTimestamp));
                 }
-            }).start();
 
-            int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
+                process = pb.start();
+                final Process pRef = process;
 
-            int exitCode = process.waitFor();
+                // Thread para leer stderr
+                new Thread(() -> {
+                    try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
+                        String line;
+                        while ((line = err.readLine()) != null) {
+                            log.error("Python stderr: {}", line);
+                        }
+                    } catch (Exception e) {
+                        log.error("Error reading stderr: {}", e.getMessage());
+                    }
+                }).start();
 
-            if (exitCode != 0) {
+                int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
+
+                // Esperar con timeout
+                if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    throw new DataFetchException("Timeout en fetch Python tras " + TIMEOUT_SECONDS + "s");
+                }
+
+                int exitCode = process.exitValue();
+                if (exitCode != 0) {
+                    ConsoleLoader.getInstance().stopClear();
+                    log.error("Script Python exited with code {}", exitCode);
+                    throw new DataFetchException("Script Python failed with code " + exitCode);
+                }
+
+                ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas: " + totalGuardadas);
+                log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
+                return;
+
+            } catch (InterruptedException e) {
+                retries++;
                 ConsoleLoader.getInstance().stopClear();
-                log.error("Script Python exited with code {}", exitCode);
-                throw new DataFetchException("Script Python failed with code " + exitCode);
+                Thread.currentThread().interrupt();
+                if (process != null) process.destroyForcibly();
+                log.warn("Reintento {} para fetch (InterruptedException): {}", retries, e.getMessage());
+                if (retries >= MAX_RETRIES) {
+                    throw new DataFetchException("Fallo tras " + MAX_RETRIES + " reintentos", e);
+                }
+            } catch (Exception e) {
+                retries++;
+                if (process != null) process.destroyForcibly();
+                log.warn("Reintento {} para fetch: {}", retries, e.getMessage());
+                if (retries >= MAX_RETRIES) {
+                    ConsoleLoader.getInstance().stopClear();
+                    log.error("Error crítico en FetchService tras {} reintentos: {}", MAX_RETRIES, e.getMessage(), e);
+                    throw new DataFetchException("Data synchronization failed", e);
+                }
             }
-
-            ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas procesadas: " + totalGuardadas);
-            log.info("Fetch completed for {}. Total saved: {} candles", symbol, totalGuardadas);
-
-        } catch (InterruptedException e) {
-            ConsoleLoader.getInstance().stopClear();
-            Thread.currentThread().interrupt();
-            if (process != null)
-                process.destroy();
-            log.warn("Fetch interrupted for {}", symbol);
-            throw new DataFetchException("Sync thread interrupted", e);
-        } catch (Exception e) {
-            ConsoleLoader.getInstance().stopClear();
-            log.error("Critical error in FetchService: {}", e.getMessage(), e);
-            throw new DataFetchException("Data synchronization failed", e);
         }
     }
 
     /**
-     * Lee velas desde Python en streaming (formato TSV) e inserta en BD con batch.
-     * La lectura y persistencia ocurren en paralelo para maximizar rendimiento.
+     * Lee velas desde Python en streaming con formato MessagePack e inserta en BD con batch.
+     * Reemplaza el anterior formato TSV con serialización binaria eficiente.
      */
     private int leerVelasEnStreamingYGuardar(Process process, String symbol, String interval) throws IOException {
         int totalGuardadas = 0;
-        int lineasLeidas = 0;
         long tiempoInicio = System.currentTimeMillis();
         List<Object[]> batch = new ArrayList<>(BATCH_INSERT_SIZE);
 
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8),
-                512 * 1024)) {
+        try (InputStream in = process.getInputStream()) {
+            // Deserializar MessagePack stream
+            List<VelaDTO> velasDTO = DataSerializationUtils.deserializeVelasFromStream(in, false);
+            
+            if (velasDTO == null || velasDTO.isEmpty()) {
+                log.warn("No se recibieron velas de Python para {}", symbol);
+                return 0;
+            }
 
-            String linea;
-            while ((linea = reader.readLine()) != null) {
-                if (linea.trim().isEmpty())
-                    continue;
+            for (VelaDTO dto : velasDTO) {
+                Object[] datos = new Object[] {
+                    dto.getOpenTime(),              // openTime
+                    new BigDecimal(dto.getOpen()),  // open
+                    new BigDecimal(dto.getHigh()),  // high
+                    new BigDecimal(dto.getLow()),   // low
+                    new BigDecimal(dto.getClose()), // close
+                    new BigDecimal(dto.getVolume()), // volume
+                    dto.getCloseTime(),             // closeTime
+                    new BigDecimal(dto.getQuoteVolume()), // quoteVolume
+                    dto.getTrades(),                // trades
+                    new BigDecimal(dto.getTakerBaseVolume()), // takerBaseVolume
+                    new BigDecimal(dto.getTakerQuoteVolume()), // takerQuoteVolume
+                    symbol,
+                    interval
+                };
 
-                lineasLeidas++;
+                batch.add(datos);
 
-                try {
-                    // Esperamos exactamente 12 campos TSV del script Python
-                    String[] campos = linea.split("\t", 12);
-                    if (campos.length < 12)
-                        continue;
-
-                    Object[] datos = new Object[] {
-                            Long.parseLong(campos[0]),            // openTime
-                            new BigDecimal(campos[1]),             // open
-                            new BigDecimal(campos[2]),             // high
-                            new BigDecimal(campos[3]),             // low
-                            new BigDecimal(campos[4]),             // close
-                            new BigDecimal(campos[5]),             // volume
-                            Long.parseLong(campos[6]),            // closeTime
-                            new BigDecimal(campos[7]),             // quoteVolume
-                            Integer.parseInt(campos[8]),           // trades
-                            new BigDecimal(campos[9]),             // takerBaseVolume
-                            new BigDecimal(campos[10]),            // takerQuoteVolume
-                            symbol,
-                            interval
-                    };
-
-                    batch.add(datos);
-
-                    // Insertar cuando alcanzamos el tamaño del batch
-                    if (batch.size() >= BATCH_INSERT_SIZE) {
-                        int insertadas = guardarBatchVelas(batch);
-                        totalGuardadas += insertadas;
-                        if (totalGuardadas % 100000 == 0) {
-                            long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
-                            double velocidad = totalGuardadas / (tiempoTranscurrido / 1000.0);
-                            log.info("Progreso: {} registros guardados ({} registros/seg)", 
-                                     totalGuardadas, String.format("%.0f", velocidad));
-                        }
-                        batch.clear();
+                // Insertar cuando alcanzamos el tamaño del batch
+                if (batch.size() >= BATCH_INSERT_SIZE) {
+                    int insertadas = guardarBatchVelas(batch);
+                    totalGuardadas += insertadas;
+                    if (totalGuardadas % 100000 == 0) {
+                        long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
+                        double velocidad = totalGuardadas / (tiempoTranscurrido / 1000.0);
+                        log.info("Progreso: {} registros guardados ({} registros/seg)", 
+                                 totalGuardadas, String.format("%.0f", velocidad));
                     }
-
-                } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
-                    log.debug("Línea malformada omitida (línea {}): {}", lineasLeidas, linea);
+                    batch.clear();
                 }
             }
 
@@ -233,7 +241,7 @@ public class FetchService {
 
         long tiempoTotal = System.currentTimeMillis() - tiempoInicio;
         double velocidadMedia = totalGuardadas > 0 ? totalGuardadas / (tiempoTotal / 1000.0) : 0;
-        log.info("Lectura streaming completada: {} registros guardados en {} ms ({} registros/seg)", 
+        log.info("Lectura MessagePack completada: {} registros guardados en {} ms ({} registros/seg)", 
                  totalGuardadas, tiempoTotal, String.format("%.0f", velocidadMedia));
 
         return totalGuardadas;
@@ -274,5 +282,22 @@ public class FetchService {
             case "1d" -> 86_400_000L;
             default -> 60_000L;
         };
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Iniciando shutdown de ExecutorService en FetchService");
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("ExecutorService no terminó en tiempo. Forzando shutdown");
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            log.error("Interrupción durante shutdown graceful. Forzando shutdown");
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        log.info("Shutdown de ExecutorService completado");
     }
 }
