@@ -8,6 +8,7 @@ import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.PathConfig;
 import com.bottrading.utils.PythonProcessSupport;
+import com.bottrading.utils.StrategyInspector;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -78,12 +79,13 @@ public class AITrainingService {
     /**
      * Orquesta el proceso de preparación de datos y entrenamiento con retries automáticos.
      */
-    public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) {
+    public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias,
+            Map<String, Object> hyperparams, String strategyName) {
         for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
             try {
                 log.info("Intento {} de {} para entrenar modelo '{}'", intento, ProcessExecutorConfig.MAX_RETRIES,
                         nombreModelo);
-                return ejecutarEntrenamiento(nombreModelo, timeframe, symbol, dias, hyperparams);
+                return ejecutarEntrenamiento(nombreModelo, timeframe, symbol, dias, hyperparams, strategyName);
 
             } catch (StrategyExecutionException e) {
                 if (intento == ProcessExecutorConfig.MAX_RETRIES) {
@@ -104,17 +106,37 @@ public class AITrainingService {
         throw new StrategyExecutionException("Entrenamiento falló tras " + ProcessExecutorConfig.MAX_RETRIES + " intentos");
     }
 
-    private String ejecutarEntrenamiento(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) throws StrategyExecutionException {
+    private String ejecutarEntrenamiento(String nombreModelo, String timeframe, String symbol, int dias,
+            Map<String, Object> hyperparams, String strategyName) throws StrategyExecutionException {
         try {
             long now = System.currentTimeMillis();
+            final boolean useDynamicStrategy = strategyName != null && !strategyName.isBlank();
+
+            Integer warmupCandles = null;
+            Integer totalCandles = null;
+            int daysForPreparation = dias;
+            if (useDynamicStrategy) {
+                warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+                totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
+                int candlesPerDay = resolveCandlesPerDay(timeframe);
+                daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
+            }
 
             // 1. Asegurar que los datos y los indicadores están actualizados
-            marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, dias, now);
+            marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, daysForPreparation, now);
 
-            log.info("Extrayendo dataset (Velas + Indicadores) de la base de datos...");
+            log.info("Extrayendo dataset {} de la base de datos...",
+                    useDynamicStrategy ? "(Velas OHLCV para estrategia dinámica)" : "(Velas + Indicadores)");
 
             // Calcular timestamp objetivo
-            long targetTimestamp = now - (dias * 24L * 60L * 60L * 1000L);
+            long targetTimestamp;
+            if (useDynamicStrategy) {
+                targetTimestamp = now - (daysForPreparation * 24L * 60L * 60L * 1000L);
+                log.info("Modo estrategia dinámica: strategy='{}', warmup={}, velas_requeridas={}, dias_efectivos={}",
+                        strategyName, warmupCandles, totalCandles, daysForPreparation);
+            } else {
+                targetTimestamp = now - (dias * 24L * 60L * 60L * 1000L);
+            }
 
             // 2. Extraer Velas Históricas
             List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
@@ -124,29 +146,43 @@ public class AITrainingService {
                 return "Error: No hay datos suficientes de " + symbol + " para entrenar.";
             }
 
-            log.info("Extraídas {} velas. Obteniendo indicadores en bloque (Alta velocidad)...", velas.size());
-
-            List<IndicadorTecnico> todosLosIndicadores = indicadorRepo.findByVelaIn(velas);
-            Map<Long, List<IndicadorTecnico>> indicadoresPorVela = todosLosIndicadores.stream()
-                    .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
-
-            log.info("Fusionando datos en memoria RAM...");
-
-            // 3. Montar el Dataset fusionando Velas e Indicadores
+            // 3. Montar dataset según el flujo (dinámico vs legacy)
             List<Map<String, Object>> dataset = new ArrayList<>();
-            for (Vela v : velas) {
-                Map<String, Object> row = new HashMap<>();
-                row.put("timestamp", v.getOpenTime());
-                row.put("close", v.getClose());
-                row.put("volume", v.getVolume());
+            List<IndicadorTecnico> todosLosIndicadores = new ArrayList<>();
+            Map<Long, List<IndicadorTecnico>> indicadoresPorVela = new HashMap<>();
 
-                // Recuperar indicadores desde el mapa en memoria
-                List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(), new ArrayList<>());
-                for (IndicadorTecnico ind : indicadoresVela) {
-                    row.put(ind.getTipo(), ind.getValor());
+            if (useDynamicStrategy) {
+                log.info("Extraídas {} velas. Construyendo dataset OHLCV puro para Python...", velas.size());
+                for (Vela v : velas) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("timestamp", v.getOpenTime());
+                    row.put("open", v.getOpen());
+                    row.put("high", v.getHigh());
+                    row.put("low", v.getLow());
+                    row.put("close", v.getClose());
+                    row.put("volume", v.getVolume());
+                    dataset.add(row);
                 }
+            } else {
+                log.info("Extraídas {} velas. Obteniendo indicadores en bloque (Alta velocidad)...", velas.size());
+                todosLosIndicadores = indicadorRepo.findByVelaIn(velas);
+                indicadoresPorVela = todosLosIndicadores.stream()
+                        .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
 
-                dataset.add(row);
+                log.info("Fusionando datos en memoria RAM...");
+                for (Vela v : velas) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("timestamp", v.getOpenTime());
+                    row.put("close", v.getClose());
+                    row.put("volume", v.getVolume());
+
+                    List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(), new ArrayList<>());
+                    for (IndicadorTecnico ind : indicadoresVela) {
+                        row.put(ind.getTipo(), ind.getValor());
+                    }
+
+                    dataset.add(row);
+                }
             }
 
             log.info("--- DATASET LISTO --- {} registros", dataset.size());
@@ -158,6 +194,10 @@ public class AITrainingService {
             payload.put("timeframe", timeframe);
             payload.put("dataset", dataset);
             payload.put("hyperparameters", hyperparams);
+            if (useDynamicStrategy) {
+                payload.put("strategy_name", strategyName);
+                payload.put("warmup_candles", warmupCandles);
+            }
 
             String jsonPayload = new Gson().toJson(payload);
 
@@ -261,5 +301,17 @@ public class AITrainingService {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             return reader.lines().collect(Collectors.joining("\n"));
         }
+    }
+
+    private int resolveCandlesPerDay(String timeframe) {
+        return switch (timeframe == null ? "" : timeframe.toLowerCase()) {
+            case "1m" -> 1440;
+            case "5m" -> 288;
+            case "15m" -> 96;
+            case "1h" -> 24;
+            case "4h" -> 6;
+            case "1d" -> 1;
+            default -> 288;
+        };
     }
 }

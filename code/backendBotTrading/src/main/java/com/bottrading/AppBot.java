@@ -260,13 +260,13 @@ public class AppBot implements CommandLineRunner {
 
         uiPrintln("Iniciando Backtest...");
         estrategiaService.ejecutarBacktest(
-            args.getEstrategia(),
-            args.getTimeframe(),
-            args.getCoins(),
-            capitalAsignado,
-            risk,
-            limpiarBacktestsPrevios,
-            guardarTrades);
+                args.getEstrategia(),
+                args.getTimeframe(),
+                args.getCoins(),
+                capitalAsignado,
+                risk,
+                limpiarBacktestsPrevios,
+                guardarTrades);
         uiPrintln("Backtest finalizado. Resultados guardados en CSV.");
     }
 
@@ -356,8 +356,8 @@ public class AppBot implements CommandLineRunner {
         }
 
         if (args.getModelo() == null || args.getTimeframe() == null || args.getCoins().isEmpty()) {
-            uiPrintln("Uso: train -model <modelo> -tf <timeframe> -coins <coin>");
-            uiPrintln("Ejemplo: train -model random_forest -tf 1h -coins BTCUSDT");
+            uiPrintln("Uso: train -model <modelo> -tf <timeframe> -coins <coin> [-strategy <nombre>]");
+            uiPrintln("Ejemplo: train -model random_forest -tf 1h -coins BTCUSDT -strategy RSISMAStrategy");
             return;
         }
 
@@ -372,12 +372,12 @@ public class AppBot implements CommandLineRunner {
 
         uiPrintln("Iniciando pipeline de Inteligencia Artificial...");
         String resultado = aiTrainingService.entrenarModelo(
-                            args.getModelo(), 
-                            args.getTimeframe(), 
-                            coin, 
-                            diasEntrenamiento,
-                            args.getHyperparams() 
-                    );
+                args.getModelo(),
+                args.getTimeframe(),
+                coin,
+                diasEntrenamiento,
+            args.getHyperparams(),
+            args.getEstrategia());
         uiPrintln("\n--- RESULTADOS DEL MODELO ---");
         uiPrintln(resultado);
         uiPrintln("-----------------------------");
@@ -567,11 +567,11 @@ public class AppBot implements CommandLineRunner {
         return requestedDays;
     }
 
-private void mostrarMenuModelos() {
+    private void mostrarMenuModelos() {
         uiPrintln("\n=================================================================================");
         uiPrintln("   CATÁLOGO DE MODELOS DE INTELIGENCIA ARTIFICIAL Y SUS HIPERPARÁMETROS   ");
         uiPrintln("=================================================================================\n");
-        
+
         uiPrintln("Uso en entrenamiento: train -m <modelo> -tf 15m -c BTCUSDT -params k1=v1,k2=v2\n");
 
         uiPrintln("   1. RANDOM FOREST (-m random_forest) [Recomendado para empezar]");
@@ -608,7 +608,7 @@ private void mostrarMenuModelos() {
         uiPrintln("   > batch_size    (Int)  : Velas procesadas de golpe (32, 64, 128). Def: 64");
         uiPrintln("   > learning_rate (Float): Velocidad de ajuste (0.001-0.0001).");
         uiPrintln("   > dropout_rate  (Float): Apaga neuronas para evitar sobreajuste (0.2-0.5).\n");
-        
+
         uiPrintln("=================================================================================");
     }
 

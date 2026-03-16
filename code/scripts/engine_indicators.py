@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import logging
 import os
+import msgpack
 from datetime import datetime
 
 # =========================
@@ -117,7 +118,8 @@ if __name__ == "__main__":
         
         if not input_data:
             logging.warning("No se recibieron datos de entrada. Finalizando proceso y devolviendo lista vacía.")
-            print("[]") 
+            sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
+            sys.stdout.buffer.flush()
             sys.exit(0)
 
         logging.info(f"Datos recibidos. Tamaño del payload: {len(input_data)} caracteres.")
@@ -129,22 +131,23 @@ if __name__ == "__main__":
         # Calculamos indicadores
         lista_indicadores = calcular_indicadores(df)
 
-        # Preparamos el JSON de salida
-        json_output = json.dumps(lista_indicadores)
-        logging.info(f"Enviando JSON a Java. Tamaño de respuesta: {len(json_output)} caracteres.")
-        
-        # Enviar resultado a Java por Stdout
-        print(json_output)
-        sys.stdout.flush()
+        packed = msgpack.packb(lista_indicadores, use_bin_type=True)
+        logging.info(f"Enviando MessagePack a Java. Tamaño de respuesta: {len(packed)} bytes.")
+
+        # Enviar resultado binario a Java por stdout buffer
+        sys.stdout.buffer.write(packed)
+        sys.stdout.buffer.flush()
         
         logging.info("=== Proceso finalizado y cerrado correctamente ===")
 
     except json.JSONDecodeError as e:
         logging.error(f"Error parseando el JSON enviado por Java: {str(e)}", exc_info=True)
-        print("[]")
+        sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
+        sys.stdout.buffer.flush()
         sys.exit(1)
     except Exception as e:
         # Cualquier otro error se captura aquí con la traza completa
         logging.error(f"Fallo crítico en el script: {str(e)}", exc_info=True)
-        print("[]") 
+        sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
+        sys.stdout.buffer.flush()
         sys.exit(1)
