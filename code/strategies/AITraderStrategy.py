@@ -70,3 +70,11 @@ class AITraderStrategy(BaseStrategy):
         rsi_sobrecomprado = row['RSI_14'] > 70
         
         return macd_bajista and rsi_sobrecomprado
+
+    def get_stop_loss(self, entry_price: float, row) -> float:
+        # Stop conservador para fallback cuando no hay modelo IA activo.
+        return entry_price * 0.98
+
+    def get_take_profit(self, entry_price: float, row) -> float:
+        # Take profit 1:2 respecto al stop para mantener R:R razonable.
+        return entry_price * 1.04

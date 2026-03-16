@@ -304,7 +304,7 @@ public class AppBot implements CommandLineRunner {
 
         if (args.getModelo() != null) {
             for (String coin : args.getCoins()) {
-                if (!PathConfig.existeModelo(args.getModelo())) {
+                if (!PathConfig.existeModelo(args.getModelo(), args.getTimeframe(), coin)) {
                     uiPrintln("Error: No se encuentra el modelo '" + args.getModelo() + ".");
                     uiPrintln("Pista: Ejecuta primero -> train -model " + args.getModelo() + " -tf "
                             + args.getTimeframe() + " -coins " + coin);

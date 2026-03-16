@@ -5,7 +5,7 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
 
 ## Fase A - Estabilidad runtime y datos (hacer primero)
 
-- [ ] Unificar protocolo de indicadores Java-Python en MessagePack end-to-end
+- [x] Unificar protocolo de indicadores Java-Python en MessagePack end-to-end
   - Archivos:
     - `code/scripts/engine_indicators.py`
     - `code/backendBotTrading/src/main/java/com/bottrading/services/IndicatorsService.java`
@@ -14,14 +14,14 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
     - `train` no rompe en etapa de indicadores
     - No aparece `MismatchedInputException` en logs
 
-- [ ] Corregir cierre prematuro de streams en serializacion por chunks
+- [x] Corregir cierre prematuro de streams en serializacion por chunks
   - Archivos:
     - `code/backendBotTrading/src/main/java/com/bottrading/utils/DataSerializationUtils.java`
   - Done cuando:
     - cargas grandes no rompen pipe
     - no hay truncamiento por `Stream closed`
 
-- [ ] Corregir semantica de `riesgo_abierto` (monto vs porcentaje)
+- [x] Corregir semantica de `riesgo_abierto` (monto vs porcentaje)
   - Archivos:
     - `code/backendBotTrading/src/main/java/com/bottrading/services/PaperTradingService.java`
     - `code/backendBotTrading/src/main/java/com/bottrading/services/AccountingService.java`
@@ -29,7 +29,7 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
     - abrir/cerrar posicion deja `riesgo_abierto` consistente
     - no crece de forma espuria tras cierres
 
-- [ ] Endurecer validacion de integridad en `fetch` para evitar falsos "al dia"
+- [x] Endurecer validacion de integridad en `fetch` para evitar falsos "al dia"
   - Archivos:
     - `code/backendBotTrading/src/main/java/com/bottrading/services/FetchService.java`
     - `code/backendBotTrading/src/main/java/com/bottrading/repositories/VelaRepository.java`
@@ -39,7 +39,7 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
 
 ## Fase B - Coherencia funcional IA y estrategia
 
-- [ ] Alinear naming de artefactos de modelo entre train/predict/CLI
+- [x] Alinear naming de artefactos de modelo entre train/predict/CLI
   - Archivos:
     - `code/scripts/engine_train.py`
     - `code/scripts/engine_predict.py`
@@ -47,7 +47,7 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
   - Done cuando:
     - modelo entrenado se puede cargar para prediccion/trade sin renombre manual
 
-- [ ] Unificar ruta de resultados de backtest
+- [x] Unificar ruta de resultados de backtest
   - Archivos:
     - `code/scripts/engine_backtest.py`
     - `code/backendBotTrading/src/main/java/com/bottrading/services/FileService.java`
@@ -55,7 +55,7 @@ Sin estimaciones. Ordenado por prioridad tecnica y dependencias.
     - todos los resultados quedan en `code/results/...`
     - Java los encuentra y lista correctamente
 
-- [ ] Corregir contrato de estrategias Python
+- [x] Corregir contrato de estrategias Python
   - Archivos:
     - `code/strategies/BaseStrategy.py`
     - `code/strategies/AITraderStrategy.py`

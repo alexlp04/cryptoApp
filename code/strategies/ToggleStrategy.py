@@ -10,10 +10,14 @@ class ToggleStrategy(BaseStrategy):
 
     def should_buy(self, row):
         # Compra si el timestamp es par (solo como prueba)
-        print("Evaluando compra en timestamp: " + str(row["timestamp"]))
         return int(row["timestamp"]) % 2 == 0
 
     def should_sell(self, row):
         # Vende si el timestamp es impar
-        print("Evaluando venta en timestamp: " + str(row["timestamp"]))
         return int(row["timestamp"]) % 2 != 0
+
+    def get_stop_loss(self, entry_price: float, row) -> float:
+        return entry_price * 0.99
+
+    def get_take_profit(self, entry_price: float, row) -> float:
+        return entry_price * 1.01

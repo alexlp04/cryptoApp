@@ -187,7 +187,8 @@ public class AccountingService {
         e.setCapitalComprometido(e.getCapitalComprometido().subtract(margin));
         // El margen vuelve al reservado + la ganancia (o - la pérdida)
         e.setCapitalReservado(e.getCapitalReservado().add(margin).add(pnl));
-        e.setRiesgoAbierto(e.getRiesgoAbierto().subtract(risk));
+        BigDecimal nuevoRiesgo = e.getRiesgoAbierto().subtract(risk);
+        e.setRiesgoAbierto(nuevoRiesgo.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : nuevoRiesgo);
 
         // 2. Actualizar patrimonio real de la wallet
         w.setBalanceReal(w.getBalanceReal().add(pnl));

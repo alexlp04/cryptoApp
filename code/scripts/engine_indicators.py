@@ -1,5 +1,4 @@
 import sys
-import json
 import pandas as pd
 import logging
 import os
@@ -113,18 +112,25 @@ def calcular_indicadores(df):
 if __name__ == "__main__":
     logging.info("=== Arrancando Motor de Indicadores Técnicos ===")
     try:
-        logging.info("Esperando recepción de datos JSON desde Java (Stdin)...")
-        input_data = sys.stdin.read()
-        
-        if not input_data:
+        logging.info("Esperando recepción de datos MessagePack desde Java (Stdin binario)...")
+
+        # Leer todos los chunks MessagePack enviados por Java (protocolo end-to-end MessagePack)
+        unpacker = msgpack.Unpacker(sys.stdin.buffer, raw=False)
+        data = []
+        for chunk in unpacker:
+            if isinstance(chunk, list):
+                data.extend(chunk)
+            elif isinstance(chunk, dict):
+                data.append(chunk)
+
+        if not data:
             logging.warning("No se recibieron datos de entrada. Finalizando proceso y devolviendo lista vacía.")
             sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
             sys.stdout.buffer.flush()
             sys.exit(0)
 
-        logging.info(f"Datos recibidos. Tamaño del payload: {len(input_data)} caracteres.")
-        
-        data = json.loads(input_data)
+        logging.info(f"Datos recibidos. Total velas: {len(data)} registros.")
+
         df = pd.DataFrame(data)
         logging.info(f"DataFrame cargado correctamente con {len(df)} velas.")
 
@@ -137,14 +143,9 @@ if __name__ == "__main__":
         # Enviar resultado binario a Java por stdout buffer
         sys.stdout.buffer.write(packed)
         sys.stdout.buffer.flush()
-        
+
         logging.info("=== Proceso finalizado y cerrado correctamente ===")
 
-    except json.JSONDecodeError as e:
-        logging.error(f"Error parseando el JSON enviado por Java: {str(e)}", exc_info=True)
-        sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
-        sys.stdout.buffer.flush()
-        sys.exit(1)
     except Exception as e:
         # Cualquier otro error se captura aquí con la traza completa
         logging.error(f"Fallo crítico en el script: {str(e)}", exc_info=True)

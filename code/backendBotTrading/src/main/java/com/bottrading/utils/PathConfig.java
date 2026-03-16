@@ -105,15 +105,29 @@ public final class PathConfig {
     }
 
     /**
-     * Comprueba si el archivo .pkl del modelo entrenado existe para esa moneda y timeframe.
+     * Comprueba si el archivo del modelo entrenado existe para ese algoritmo, timeframe y símbolo.
+     * Busca los formatos .pkl, .keras y .h5, incluyendo modelos con sufijo de estrategia.
      */
-    public static boolean existeModelo(String nombreAlgoritmo) {
-        if (nombreAlgoritmo.contains("..") || nombreAlgoritmo.contains("/") || nombreAlgoritmo.contains("\\")) {
+    public static boolean existeModelo(String modelo, String timeframe, String symbol) {
+        if (modelo.contains("..") || modelo.contains("/") || modelo.contains("\\") ||
+            timeframe.contains("..") || symbol.contains("..")) {
             return false;
         }
-
-        String nombreArchivo = String.format("%s.pkl", nombreAlgoritmo);
-        
-        return Files.exists(Paths.get(MODELS_DIR, nombreArchivo));
+        String baseName = String.format("%s_%s_%s", modelo, timeframe, symbol);
+        Path dir = Paths.get(MODELS_DIR);
+        // Verificar nombre exacto con las extensiones conocidas
+        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
+            if (Files.exists(dir.resolve(baseName + ext))) return true;
+        }
+        // También aceptar variantes con sufijo de estrategia: baseName_{strategy}.{ext}
+        try (var stream = Files.list(dir)) {
+            return stream.anyMatch(p -> {
+                String name = p.getFileName().toString();
+                return name.startsWith(baseName + "_") &&
+                       (name.endsWith(".pkl") || name.endsWith(".keras") || name.endsWith(".h5"));
+            });
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

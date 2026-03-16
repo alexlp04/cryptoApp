@@ -25,7 +25,8 @@ logging.basicConfig(
 )
 
 # --- CONFIGURACIÓN DE DIRECTORIO DE RESULTADOS ---
-os.makedirs(project_root, exist_ok=True)
+results_root = os.path.join(project_root, "results")
+os.makedirs(results_root, exist_ok=True)
 
 # --- CONFIGURACIÓN DE RUTAS ---
 if project_root not in sys.path:
@@ -37,7 +38,7 @@ def crear_carpeta_estrategia(nombre_estrategia: str) -> str:
     """
     Crea la carpeta para resultados de la estrategia y devuelve la ruta.
     """
-    estrategia_dir = os.path.join(project_root, nombre_estrategia)
+    estrategia_dir = os.path.join(results_root, nombre_estrategia)
     os.makedirs(estrategia_dir, exist_ok=True)
     return estrategia_dir
 

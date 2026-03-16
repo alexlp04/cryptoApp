@@ -118,8 +118,8 @@ public class PaperTradingService {
         BigDecimal montoFinal = pos.getMargenInvertido().multiply(multiplicador);
         BigDecimal pnlNeto = montoFinal.subtract(pos.getMargenInvertido());
 
-        // Liquidar contablemente
-        accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto, BigDecimal.ZERO);
+        // Liquidar contablemente: liberar el mismo riesgo que se comprometió al abrir
+        accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto, e.getRiskPerTrade());
 
         // Cerrar posición lógica
         pos.setAbierta(false);
