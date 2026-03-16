@@ -11,7 +11,14 @@ public final class AppConstants {
         throw new UnsupportedOperationException("Esta es una clase de utilidad y no puede ser instanciada");
     }
 
-    public static final String PYTHON_EXECUTABLE = "python3"; 
+    /**
+     * Ruta al ejecutable Python dentro del venv del proyecto.
+     * Se valida al arrancar la aplicación (PythonEnvironmentValidator).
+     * 
+     * IMPORTANTE: Este path debe coincidir con donde el usuario tenga instalado el venv.
+     * Por defecto apunta a ".venv/bin/python3" relativo al directorio raíz del proyecto.
+     */
+    public static final String PYTHON_EXECUTABLE = ".venv/bin/python3"; 
 
     // --- CLAVES JSON / CSV ---
     public static final String KEY_SYMBOL = "symbol";

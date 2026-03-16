@@ -12,7 +12,7 @@ public class EnvironmentValidator {
     Dotenv dotenv;
     try {
         dotenv = Dotenv.configure()
-                .directory("./backendBotTrading") // Forzamos la raíz actual
+                .directory("./") // Forzamos la raíz actual
                 .ignoreIfMissing() 
                 .load();
         

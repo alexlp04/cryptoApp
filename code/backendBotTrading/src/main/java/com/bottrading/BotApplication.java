@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import com.bottrading.exceptions.EnvironmentConfigException;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.EnvironmentValidator;
+import com.bottrading.utils.PythonEnvironmentValidator;
 
 import io.github.cdimascio.dotenv.Dotenv;
 
@@ -23,6 +24,9 @@ public class BotApplication {
 
             // 1. Carga y Validación estricta
             Dotenv dotenv = EnvironmentValidator.loadAndValidateEnvironment();
+            
+            // 1b. Validar que Python está disponible con todas las dependencias
+            PythonEnvironmentValidator.validatePythonEnvironment();
             
             limpiarDirectorioLogs();
             configurarPropiedadesSistema(dotenv);

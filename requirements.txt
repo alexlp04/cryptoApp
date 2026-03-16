@@ -1,0 +1,44 @@
+# ============================================================================
+# CryptoApp — Dependencias Python 3.11+
+# ============================================================================
+# Stack de datos, análisis técnico, ML, DL, y utilidades
+
+# --- Datos y Análisis Técnico ---
+pandas>=2.0.0
+numpy>=1.24.0
+ta>=0.11.0                   # Librería de indicadores técnicos (alternativa a pandas-ta)
+
+# --- Machine Learning Clásico ---
+scikit-learn>=1.3.0
+xgboost>=2.0.0
+lightgbm>=4.0.0
+joblib>=1.3.0                # Serialización de modelos .pkl
+
+# --- Deep Learning (con constraint Python 3.11) ---
+tensorflow>=2.14.0           # Para AITraderStrategy con Keras
+
+# --- Binance API ---
+python-binance>=1.0.17       # Cliente oficial de Binance
+
+# --- Optimización de Hiperparámetros ---
+optuna>=3.0.0
+
+# --- WebSocket (Paper Trading en tiempo real) ---
+websockets>=12.0
+aiohttp>=3.9.0
+
+# --- Serialización de datos ---
+msgpack>=1.0.7
+python-dotenv>=1.0.0
+
+# --- Calidad de Código y Testing ---
+pytest>=7.4.0
+pytest-cov>=4.1.0
+ruff>=0.1.0                  # Linting y formatting
+mypy>=1.7.0
+
+# --- Utilitarios ---
+python-dateutil>=2.8.2
+pytz>=2024.1
+requests>=2.31.0
+

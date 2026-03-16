@@ -13,29 +13,42 @@ public final class PathConfig {
         throw new UnsupportedOperationException("Clase de utilidad, no instanciar.");
     }
 
-    // Detectamos dinámicamente la raíz real del backend
+    // Detectamos dinámicamente la raíz real del proyecto (carpeta cryptoapp/)
     public static final String PROJECT_ROOT = calculateProjectRoot();
+    
+    // El código Python está en la carpeta "code/" dentro de PROJECT_ROOT
+    public static final String CODE_DIR = resolvePath("code");
 
-    // Definición de carpetas (Usando constantes de AppConstants)
-    public static final String PYTHON_SCRIPTS_DIR = resolvePath(DIR_SCRIPTS);
-    public static final String STRATEGIES_DIR = resolvePath(DIR_STRATEGIES);
-    public static final String RESULTS_DIR = resolvePath(DIR_RESULTS);
+    // Definición de carpetas (dentro de code/)
+    public static final String PYTHON_SCRIPTS_DIR = resolvePath("code", DIR_SCRIPTS);
+    public static final String STRATEGIES_DIR = resolvePath("code", DIR_STRATEGIES);
+    public static final String RESULTS_DIR = resolvePath("code", DIR_RESULTS);
 
-    // Definición de motores
-    public static final String ENGINE_RT_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_RT);
-    public static final String ENGINE_BACKTEST_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_BACKTEST);
-    public static final String FETCHER_PATH = resolvePath(DIR_SCRIPTS, FILE_FETCHER);
-    public static final String INDICATORS_PATH = resolvePath(DIR_SCRIPTS, FILE_INDICATORS);
-    public static final String ENGINE_TRAIN_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_TRAIN);
-    public static final String MODELS_DIR = resolvePath(DIR_MODELS);
-    public static final String ENGINE_AI_RT_PATH = resolvePath(DIR_SCRIPTS, FILE_ENGINE_AI_RT);
+    // Definición de motores (dentro de code/scripts/)
+    public static final String ENGINE_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_RT);
+    public static final String ENGINE_BACKTEST_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_BACKTEST);
+    public static final String FETCHER_PATH = resolvePath("code", DIR_SCRIPTS, FILE_FETCHER);
+    public static final String INDICATORS_PATH = resolvePath("code", DIR_SCRIPTS, FILE_INDICATORS);
+    public static final String ENGINE_TRAIN_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_TRAIN);
+    public static final String MODELS_DIR = resolvePath("code", "models");
+    public static final String ENGINE_AI_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_AI_RT);
 
     private static String calculateProjectRoot() {
         String userDir = System.getProperty("user.dir");
         Path path = Paths.get(userDir);
-        if (path.toString().contains(DIR_BACKEND)) {
-            return path.getParent().toAbsolutePath().toString();
+        
+        // Búsqueda recursiva hacia arriba hasta encontrar la carpeta que contiene "code/backendBotTrading"
+        while (path != null) {
+            // Si el parent directo contiene la carpeta "backendBotTrading", hemos encontrado la raíz
+            Path codeBackendPath = path.resolve("code").resolve("backendBotTrading");
+            if (Files.isDirectory(codeBackendPath)) {
+                return path.toAbsolutePath().toString();
+            }
+            
+            path = path.getParent();
         }
+        
+        // Fallback: usar user.dir como está
         return userDir;
     }
 

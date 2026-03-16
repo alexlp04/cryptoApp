@@ -1,11 +1,13 @@
 package com.bottrading.utils;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -15,17 +17,39 @@ import java.util.function.Consumer;
 
 /**
  * Utilidades comunes para ejecutar procesos Python de forma consistente.
+ * 
+ * Características:
+ * - Resuelve rutas relativas a absolutas usando le directorio raíz del proyecto
+ * - Maneja rutas dentro de venv
+ * - Ejecuta procesos con configuración estándar (UTF-8, etc.)
  */
 public final class PythonProcessSupport {
 
     private PythonProcessSupport() {
     }
 
+    /**
+     * Inicia un script Python resolviendo automáticamente las rutas relativas.
+     * 
+     * @param scriptPath Ruta relativa o absoluta al script Python
+     * @param redirectErrorStream Si verdadero, stderr se redirige a stdout
+     * @param args Argumentos para el script
+     * @return Proceso iniciado
+     * @throws IOException Si el proceso no se puede iniciar
+     */
     public static Process startPythonScript(String scriptPath, boolean redirectErrorStream, String... args)
             throws IOException {
+        
+        // 1. Resolver ruta absoluta del ejecutable Python (del venv)
+        String pythonExeAbsolute = resolvePythonExecutable();
+        
+        // 2. Resolver ruta absoluta del script
+        String scriptPathAbsolute = resolveScriptPath(scriptPath);
+        
+        // 3. Construir comando
         List<String> command = new ArrayList<>();
-        command.add(AppConstants.PYTHON_EXECUTABLE);
-        command.add(scriptPath);
+        command.add(pythonExeAbsolute);
+        command.add(scriptPathAbsolute);
         if (args != null) {
             for (String arg : args) {
                 if (arg != null && !arg.isBlank()) {
@@ -34,9 +58,68 @@ public final class PythonProcessSupport {
             }
         }
 
+        // 4. Configurar ProcessBuilder
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(redirectErrorStream);
+        
+        // Ejecutar desde el directorio raíz del proyecto para que las rutas relativas funcionen
+        pb.directory(new File(PathConfig.PROJECT_ROOT));
+        
         return pb.start();
+    }
+
+    /**
+     * Resuelve la ruta absoluta del ejecutable Python.
+     * Si es ruta relativa (e.g., ".venv/bin/python3"), se resuelve respecto al PROJECT_ROOT.
+     */
+    private static String resolvePythonExecutable() throws IOException {
+        String pythonExe = AppConstants.PYTHON_EXECUTABLE;
+        File pythonFile = new File(pythonExe);
+        
+        // Si ya es ruta absoluta y existe, usarla
+        if (pythonFile.isAbsolute() && pythonFile.exists()) {
+            return pythonExe;
+        }
+        
+        // Si es ruta relativa, resolver respecto a PROJECT_ROOT
+        File resolvedFile = Paths.get(PathConfig.PROJECT_ROOT, pythonExe).toFile();
+        if (resolvedFile.exists()) {
+            return resolvedFile.getAbsolutePath();
+        }
+        
+        // Fallback: intentar usar el ejecutable directamente (podría estar en PATH global)
+        // Esto permite que funcione si se recupera a "python3" en AppConstants
+        return pythonExe;
+    }
+
+    /**
+     * Resuelve la ruta absoluta del script Python.
+     * Si es ruta relativa, se resuelve respecto a PROJECT_ROOT.
+     */
+    private static String resolveScriptPath(String scriptPath) throws IOException {
+        File scriptFile = new File(scriptPath);
+        
+        // Si ya es ruta absoluta y existe, usarla
+        if (scriptFile.isAbsolute() && scriptFile.exists()) {
+            return scriptPath;
+        }
+        
+        // Si es ruta relativa y existe como tal, dejarla (ProcessBuilder.directory resolverá)
+        if (scriptFile.exists()) {
+            return scriptFile.getAbsolutePath();
+        }
+        
+        // Si es ruta relativa, resolver respecto a PROJECT_ROOT
+        File resolvedFile = Paths.get(PathConfig.PROJECT_ROOT, scriptPath).toFile();
+        if (resolvedFile.exists()) {
+            return resolvedFile.getAbsolutePath();
+        }
+        
+        // Si no existe, lanzar error explícito
+        throw new IOException(
+            "Script Python no encontrado: " + scriptPath + "\n" +
+            "Búsqueda realizada en: " + resolvedFile.getAbsolutePath()
+        );
     }
 
     public static Future<Void> drainLinesAsync(InputStream inputStream,
