@@ -5,8 +5,8 @@ import com.bottrading.beans.SignalDTO;
 import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.exceptions.SignalProcessingException;
-import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.PythonProcessSupport;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +46,7 @@ public class TradingService {
 
     private final PaperTradingService paperTradingService;
     private final AccountingService accountingService;
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     // Mapa thread-safe para mantener referencias a los procesos en ejecución
     private final Map<Long, StrategyContext> procesosActivos = new ConcurrentHashMap<>();
@@ -105,19 +105,23 @@ public class TradingService {
     private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
         boolean errorCritico = false;
         Process process = null;
+        Future<?> stderrFuture = null;
         long startTime = System.currentTimeMillis();
 
         try {
             // 1. Iniciar proceso y registrarlo
             process = iniciarProcesoPython(instancia);
 
-            // 2. Enviar configuración
+            // 2. Drenar stderr en paralelo para evitar bloqueo del proceso Python.
+            stderrFuture = iniciarLecturaErroresPython(process, instancia);
+
+            // 3. Enviar configuración
             enviarPayload(process, instancia, symbols);
 
-            // 3. Bucle de escucha con timeout monitorizado
+            // 4. Bucle de escucha con timeout monitorizado
             escucharSalidaPythonConTimeout(process, instancia, startTime);
 
-            // 4. Esperar cierre ordenado
+            // 5. Esperar cierre ordenado
             if (process.isAlive()) {
                 boolean finished = process.waitFor(5, TimeUnit.SECONDS);
                 if (!finished) {
@@ -141,6 +145,9 @@ public class TradingService {
                 log.error("Error en motor Python ({}): {}", instancia.getNombreEstrategia(), e.getMessage(), e);
             }
         } finally {
+            if (stderrFuture != null) {
+                stderrFuture.cancel(true);
+            }
             if (process != null) {
                 destroyProcessForcibly(process);
             }
@@ -192,9 +199,7 @@ public class TradingService {
         }
 
         try {
-            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, scriptPath);
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
+            Process process = PythonProcessSupport.startPythonScript(scriptPath, false);
 
             procesosActivos.compute(instancia.getId(), (k, ctx) -> {
                 if (ctx == null)
@@ -209,12 +214,30 @@ public class TradingService {
         }
     }
 
+    private Future<?> iniciarLecturaErroresPython(Process process, InstanciaEstrategia instancia) {
+        return PythonProcessSupport.drainLinesAsync(
+                process.getErrorStream(),
+                executor,
+                line -> log.warn("PYERR [{}]: {}", instancia.getNombreEstrategia(), line),
+                e -> {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        log.debug("Lectura stderr finalizada con aviso para estrategia {}: {}",
+                                instancia.getId(), e.getMessage());
+                    }
+                });
+    }
+
     private void procesarLineaLog(String line, InstanciaEstrategia instancia) {
-        if (line.trim().startsWith("{")) {
-            procesarParseJsonSignal(line, instancia);
+        String trimmedLine = line.trim();
+
+        if (trimmedLine.startsWith("SIGNAL\t")) {
+            procesarParseJsonSignal(trimmedLine.substring("SIGNAL\t".length()), instancia);
+        } else if (trimmedLine.startsWith("{")) {
+            // Compatibilidad retro: JSON directo por stdout.
+            procesarParseJsonSignal(trimmedLine, instancia);
         } else {
             // Log normal de Python
-            log.info("LOG [{}]: {}", instancia.getNombreEstrategia(), line);
+            log.info("PYLOG [{}]: {}", instancia.getNombreEstrategia(), line);
         }
     }
 
@@ -224,12 +247,7 @@ public class TradingService {
     private void destroyProcessForcibly(Process process) {
         if (process != null && process.isAlive()) {
             log.warn("Destruyendo proceso Python forzadamente");
-            process.destroyForcibly();
-            try {
-                process.waitFor(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
         }
     }
 
@@ -296,10 +314,16 @@ public class TradingService {
             return;
         }
 
-        log.info("Procesando {} señales en cola para estrategia {}", cola.size(), instanciaId);
-        
-        while (!cola.isEmpty()) {
+        int pendientesIniciales = cola.size();
+        log.info("Procesando {} señales en cola para estrategia {}", pendientesIniciales, instanciaId);
+
+        // Procesa solo el lote inicial para evitar bucles infinitos si una señal falla
+        // de forma persistente.
+        for (int i = 0; i < pendientesIniciales; i++) {
             SignalDTO signal = cola.poll();
+            if (signal == null) {
+                break;
+            }
             try {
                 paperTradingService.onSignal(instanciaId, signal);
                 consecutiveFailures.put(instanciaId, 0);
@@ -309,6 +333,10 @@ public class TradingService {
                         signal.getSymbol(), e.getMessage());
                 cola.offer(signal); // Reintentar más tarde
             }
+        }
+
+        if (!cola.isEmpty()) {
+            log.warn("Quedan {} señales pendientes tras el ciclo de reintentos para estrategia {}", cola.size(), instanciaId);
         }
     }
 
@@ -355,8 +383,7 @@ public class TradingService {
         }
 
         try (OutputStream os = p.getOutputStream()) {
-            os.write(new Gson().toJson(payload).getBytes(StandardCharsets.UTF_8));
-            os.flush();
+            PythonProcessSupport.writeUtf8(os, new Gson().toJson(payload));
         } catch (IOException e) {
             throw new PythonProcessException("Error al enviar configuración a Python: " + e.getMessage(), e);
         }

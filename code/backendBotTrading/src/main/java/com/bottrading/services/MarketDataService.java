@@ -1,6 +1,11 @@
 package com.bottrading.services;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -8,7 +13,7 @@ import org.springframework.stereotype.Service;
 import com.bottrading.beans.Vela;
 import com.bottrading.repositories.VelaRepository;
 
-import jakarta.transaction.Transactional;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -23,6 +28,7 @@ public class MarketDataService {
     private final VelaRepository velaRepo;
     private final FetchService fetchService;
     private final IndicatorsService indicatorsService;
+    private final ExecutorService marketDataExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Autowired
     public MarketDataService(VelaRepository velaRepo, FetchService fetchService, IndicatorsService indicatorsService) {
@@ -43,15 +49,20 @@ public class MarketDataService {
         }
         
         log.info("Iniciando descargas paralelas para {} símbolos en {}", symbols.size(), interval);
-        
-        symbols.parallelStream()
-               .forEach(symbol -> {
-                   try {
-                       fetchService.fetch(symbol, interval);
-                   } catch (Exception e) {
-                       log.error("Error descargando {}: {}", symbol, e.getMessage());
-                   }
-               });
+
+        List<CompletableFuture<Void>> tareas = new ArrayList<>(symbols.size());
+        for (String symbol : symbols) {
+            CompletableFuture<Void> tarea = CompletableFuture.runAsync(() -> {
+                try {
+                    fetchService.fetch(symbol, interval);
+                } catch (Exception e) {
+                    log.error("Error descargando {}: {}", symbol, e.getMessage(), e);
+                }
+            }, marketDataExecutor);
+            tareas.add(tarea);
+        }
+
+        CompletableFuture.allOf(tareas.toArray(new CompletableFuture[0])).join();
         
         log.info("Descargas completadas para todos los símbolos");
     }
@@ -82,7 +93,6 @@ public class MarketDataService {
      * @param interval El marco temporal.
      * @param dias     El número de días de datos históricos a preparar.
      */
-    @Transactional
     public void prepararDatosParaEntrenamiento(String symbol, String interval, int dias, long now) {
         log.info("--- PREPARANDO DATASET PARA IA: {} [{}] ---", symbol, interval);
         
@@ -112,6 +122,19 @@ public class MarketDataService {
         indicatorsService.calculateBasicIndicators(symbol, velas, esDescargaCompleta);
         
         log.info("--- DATASET LISTO ---");
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        marketDataExecutor.shutdown();
+        try {
+            if (!marketDataExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                marketDataExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            marketDataExecutor.shutdownNow();
+        }
     }
 
 }

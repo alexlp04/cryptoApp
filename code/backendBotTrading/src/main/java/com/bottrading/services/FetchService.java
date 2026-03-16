@@ -3,10 +3,10 @@ package com.bottrading.services;
 import com.bottrading.exceptions.DataFetchException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
-import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.PythonProcessSupport;
 import com.bottrading.beans.VelaDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -114,71 +114,94 @@ public class FetchService {
      */
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         int retries = 0;
-        
+
         while (retries < MAX_RETRIES) {
-            Process process = null;
             try {
-                ConsoleLoader.getInstance().startSpinner("Sincronizando velas con MessagePack para " + symbol);
-                
-                ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.FETCHER_PATH, symbol, interval);
-                if (fromTimestamp != null) {
-                    pb.command().add(String.valueOf(fromTimestamp));
-                }
-
-                process = pb.start();
-                final Process pRef = process;
-
-                // Thread para leer stderr
-                new Thread(() -> {
-                    try (BufferedReader err = new BufferedReader(new InputStreamReader(pRef.getErrorStream()))) {
-                        String line;
-                        while ((line = err.readLine()) != null) {
-                            log.error("Python stderr: {}", line);
-                        }
-                    } catch (Exception e) {
-                        log.error("Error reading stderr: {}", e.getMessage());
-                    }
-                }).start();
-
-                int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
-
-                // Esperar con timeout
-                if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    throw new DataFetchException("Timeout en fetch Python tras " + TIMEOUT_SECONDS + "s");
-                }
-
-                int exitCode = process.exitValue();
-                if (exitCode != 0) {
-                    ConsoleLoader.getInstance().stopClear();
-                    log.error("Script Python exited with code {}", exitCode);
-                    throw new DataFetchException("Script Python failed with code " + exitCode);
-                }
-
-                ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas: " + totalGuardadas);
-                log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
+                ejecutarIntentoFetch(symbol, interval, fromTimestamp);
                 return;
 
             } catch (InterruptedException e) {
-                retries++;
-                ConsoleLoader.getInstance().stopClear();
                 Thread.currentThread().interrupt();
-                if (process != null) process.destroyForcibly();
-                log.warn("Reintento {} para fetch (InterruptedException): {}", retries, e.getMessage());
-                if (retries >= MAX_RETRIES) {
-                    throw new DataFetchException("Fallo tras " + MAX_RETRIES + " reintentos", e);
-                }
+                retries = manejarReintentoFetch(retries, e, true);
             } catch (Exception e) {
-                retries++;
-                if (process != null) process.destroyForcibly();
-                log.warn("Reintento {} para fetch: {}", retries, e.getMessage());
-                if (retries >= MAX_RETRIES) {
-                    ConsoleLoader.getInstance().stopClear();
-                    log.error("Error crítico en FetchService tras {} reintentos: {}", MAX_RETRIES, e.getMessage(), e);
-                    throw new DataFetchException("Data synchronization failed", e);
-                }
+                retries = manejarReintentoFetch(retries, e, false);
             }
         }
+    }
+
+    private void ejecutarIntentoFetch(String symbol, String interval, Long fromTimestamp)
+            throws IOException, InterruptedException {
+        ConsoleLoader.getInstance().startSpinner("Sincronizando velas con MessagePack para " + symbol);
+
+        Process process = crearProcesoFetch(symbol, interval, fromTimestamp);
+        try {
+            drenarStderrAsync(process);
+            int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
+
+            validarTimeoutFetch(process);
+            validarExitCodeFetch(process);
+
+            ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas: " + totalGuardadas);
+            log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
+        } finally {
+            if (process.isAlive()) {
+                PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    private Process crearProcesoFetch(String symbol, String interval, Long fromTimestamp) throws IOException {
+        return PythonProcessSupport.startPythonScript(
+                PathConfig.FETCHER_PATH,
+                false,
+                symbol,
+                interval,
+                fromTimestamp != null ? String.valueOf(fromTimestamp) : null);
+    }
+
+    private void drenarStderrAsync(Process process) {
+        PythonProcessSupport.drainLinesAsync(
+                process.getErrorStream(),
+                executor,
+                line -> log.error("Python stderr: {}", line),
+                e -> log.error("Error reading stderr: {}", e.getMessage()));
+    }
+
+    private void validarTimeoutFetch(Process process) throws InterruptedException {
+        if (!PythonProcessSupport.waitFor(process, TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+            throw new DataFetchException("Timeout en fetch Python tras " + TIMEOUT_SECONDS + "s");
+        }
+    }
+
+    private void validarExitCodeFetch(Process process) {
+        int exitCode = process.exitValue();
+        if (exitCode != 0) {
+            ConsoleLoader.getInstance().stopClear();
+            log.error("Script Python exited with code {}", exitCode);
+            throw new DataFetchException("Script Python failed with code " + exitCode);
+        }
+    }
+
+    private int manejarReintentoFetch(int retriesActuales, Exception e, boolean interrupted) {
+        int nuevosRetries = retriesActuales + 1;
+        ConsoleLoader.getInstance().stopClear();
+
+        if (interrupted) {
+            log.warn("Reintento {} para fetch (InterruptedException): {}", nuevosRetries, e.getMessage());
+        } else {
+            log.warn("Reintento {} para fetch: {}", nuevosRetries, e.getMessage());
+        }
+
+        if (nuevosRetries >= MAX_RETRIES) {
+            log.error("Error crítico en FetchService tras {} reintentos: {}", MAX_RETRIES, e.getMessage(), e);
+            String msg = interrupted
+                    ? "Fallo tras " + MAX_RETRIES + " reintentos"
+                    : "Data synchronization failed";
+            throw new DataFetchException(msg, e);
+        }
+
+        return nuevosRetries;
     }
 
     /**
