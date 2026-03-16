@@ -228,26 +228,20 @@ public class FileService {
     }
 
     /**
-     * Limpia los archivos de backtest antiguos si el usuario lo confirma.
+     * Limpia los archivos de backtest antiguos cuando la capa de entrada lo solicite.
      */
-    public void verificarYLimpiarCarpetaEstrategia(String nombreEstrategia) {
+    public void verificarYLimpiarCarpetaEstrategia(String nombreEstrategia, boolean limpiarBacktestsPrevios) {
         Path carpeta = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
 
-        if (Files.exists(carpeta)) {
-            System.out.println("La carpeta de resultados " + nombreEstrategia + " ya existe.");
-            System.out.print("¿Deseas eliminar los archivos de BACKTEST anteriores antes de empezar? (s/n): ");
-
-            Scanner sc = new Scanner(System.in);
-            if (sc.hasNextLine()) {
-                String respuesta = sc.nextLine().trim().toLowerCase();
-                if ("s".equals(respuesta)) {
-                    limpiarArchivosBacktest(carpeta);
-                } else {
-                    System.out.println("Manteniendo archivos anteriores.");
-                }
-            }
+        if (!Files.exists(carpeta)) {
+            return;
         }
 
+        if (limpiarBacktestsPrevios) {
+            limpiarArchivosBacktest(carpeta);
+        } else {
+            log.info("Manteniendo archivos de backtest previos para {}", nombreEstrategia);
+        }
     }
 
     private void limpiarArchivosBacktest(Path carpeta) {

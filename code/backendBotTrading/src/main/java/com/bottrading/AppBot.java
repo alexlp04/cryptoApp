@@ -252,8 +252,21 @@ public class AppBot implements CommandLineRunner {
         uiPrint("Riesgo por trade (0.01 - 1.0): ");
         BigDecimal risk = new BigDecimal(scanner.nextLine().trim());
 
+        uiPrint("¿Eliminar archivos de backtest previos? (s/n): ");
+        boolean limpiarBacktestsPrevios = scanner.nextLine().trim().toLowerCase().startsWith("s");
+
+        uiPrint("¿Guardar trades del backtest en CSV? (s/n): ");
+        boolean guardarTrades = scanner.nextLine().trim().toLowerCase().startsWith("s");
+
         uiPrintln("Iniciando Backtest...");
-        estrategiaService.ejecutarBacktest(args.getEstrategia(), args.getTimeframe(), args.getCoins(), capitalAsignado, risk);
+        estrategiaService.ejecutarBacktest(
+            args.getEstrategia(),
+            args.getTimeframe(),
+            args.getCoins(),
+            capitalAsignado,
+            risk,
+            limpiarBacktestsPrevios,
+            guardarTrades);
         uiPrintln("Backtest finalizado. Resultados guardados en CSV.");
     }
 

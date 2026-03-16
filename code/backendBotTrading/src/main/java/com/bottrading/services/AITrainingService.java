@@ -6,13 +6,12 @@ import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
-import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.PythonProcessSupport;
 import com.google.gson.Gson;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -79,7 +78,6 @@ public class AITrainingService {
     /**
      * Orquesta el proceso de preparación de datos y entrenamiento con retries automáticos.
      */
-    @Transactional
     public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias, Map<String, Object> hyperparams) {
         for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
             try {
@@ -189,22 +187,12 @@ public class AITrainingService {
             long startTime = System.currentTimeMillis();
             log.debug("Iniciando entrenamiento IA con payload de {} bytes", jsonPayload.length());
 
-            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.ENGINE_TRAIN_PATH);
-            pb.redirectErrorStream(false);
-            process = pb.start();
+            process = PythonProcessSupport.startPythonScript(PathConfig.ENGINE_TRAIN_PATH, false);
 
-            // Escribir payload
-            try (OutputStream os = process.getOutputStream()) {
-                os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            } catch (IOException e) {
-                log.error("Error escribiendo payload al motor IA: {}", e.getMessage());
-                destroyProcessForcibly(process);
-                throw new StrategyExecutionException("No se pudo escribir datos al motor IA", e);
-            }
+            escribirPayloadEntrenamiento(process, jsonPayload);
 
             // Esperar con timeout
-            boolean finished = process.waitFor(ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            boolean finished = PythonProcessSupport.waitFor(process, ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (!finished) {
                 log.error("Entrenamiento IA timeout después de {}s, destruyendo proceso", 
@@ -255,12 +243,17 @@ public class AITrainingService {
     private void destroyProcessForcibly(Process process) {
         if (process != null && process.isAlive()) {
             log.warn("Destruyendo proceso Python forzadamente");
-            process.destroyForcibly();
-            try {
-                process.waitFor(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+        }
+    }
+
+    private void escribirPayloadEntrenamiento(Process process, String payload) {
+        try (OutputStream os = process.getOutputStream()) {
+            PythonProcessSupport.writeUtf8(os, payload);
+        } catch (IOException e) {
+            log.error("Error escribiendo payload al motor IA: {}", e.getMessage());
+            destroyProcessForcibly(process);
+            throw new StrategyExecutionException("No se pudo escribir datos al motor IA", e);
         }
     }
 

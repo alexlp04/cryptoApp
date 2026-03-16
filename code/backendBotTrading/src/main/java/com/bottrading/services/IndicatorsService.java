@@ -2,9 +2,9 @@ package com.bottrading.services;
 
 import com.bottrading.beans.*;
 import com.bottrading.exceptions.PythonProcessException;
-import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.PythonProcessSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,6 +15,7 @@ import java.io.*;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -90,70 +91,79 @@ public class IndicatorsService {
      */
     private int procesarLote(List<Vela> loteVelas, boolean esPrimerLote) throws PythonProcessException {
         int retries = 0;
-        
+
         while (retries < MAX_RETRIES) {
-            Process process = null;
             try {
-                ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.INDICATORS_PATH);
-                process = pb.start();
-
-                List<VelaDTO> velasDTO = loteVelas.stream()
-                        .map(this::mapToDTO)
-                        .collect(Collectors.toList());
-
-                // Streaming con MessagePack en chunks
-                try (OutputStream os = process.getOutputStream()) {
-                    DataSerializationUtils.streamVelasInChunks(velasDTO, os, CHUNK_SIZE, false);
-                    os.flush();
-                }
-
-                // Leer resultados con timeout
-                int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
-
-                // Esperar al proceso con timeout
-                if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    throw new PythonProcessException("Timeout en proceso Python tras " + TIMEOUT_SECONDS + "s");
-                }
-
-                int exitCode = process.exitValue();
-                if (exitCode != 0) {
-                    log.warn("Python terminó con código de error {}", exitCode);
-                }
-
-                velasDTO.clear();
-                return guardados;
-                
+                return ejecutarIntentoLote(loteVelas, esPrimerLote);
             } catch (InterruptedException e) {
-                retries++;
                 Thread.currentThread().interrupt();
-                log.warn("Reintento {} para lote (InterruptedException): {}", retries, e.getMessage());
-                if (process != null) {
-                    process.destroyForcibly();
-                }
-                if (retries >= MAX_RETRIES) {
-                    throw new PythonProcessException("Fallo tras " + MAX_RETRIES + " reintentos", e);
-                }
-                
+                retries = manejarReintentoLote(retries, e, true);
             } catch (IOException e) {
-                if (process != null) {
-                    process.destroyForcibly();
-                }
                 throw new PythonProcessException("Error de I/O al procesar lote: " + e.getMessage(), e);
-                
             } catch (Exception e) {
-                retries++;
-                log.warn("Reintento {} para lote: {}", retries, e.getMessage());
-                if (process != null) {
-                    process.destroyForcibly();
-                }
-                if (retries >= MAX_RETRIES) {
-                    throw new PythonProcessException("Fallo tras " + MAX_RETRIES + " reintentos", e);
-                }
+                retries = manejarReintentoLote(retries, e, false);
             }
         }
-        
+
         return 0;
+    }
+
+    private int ejecutarIntentoLote(List<Vela> loteVelas, boolean esPrimerLote)
+            throws IOException, InterruptedException {
+        Process process = crearProcesoIndicadores();
+        List<VelaDTO> velasDTO = loteVelas.stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+
+        try {
+            escribirVelasAlProceso(process, velasDTO);
+            int guardados = leerResultadosDePythonYGuardar(process, loteVelas, esPrimerLote);
+            validarFinalizacionProceso(process);
+            return guardados;
+        } finally {
+            velasDTO.clear();
+            if (process.isAlive()) {
+                PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    private Process crearProcesoIndicadores() throws IOException {
+        return PythonProcessSupport.startPythonScript(PathConfig.INDICATORS_PATH, false);
+    }
+
+    private void escribirVelasAlProceso(Process process, List<VelaDTO> velasDTO) throws IOException {
+        try (OutputStream os = process.getOutputStream()) {
+            DataSerializationUtils.streamVelasInChunks(velasDTO, os, CHUNK_SIZE, false);
+            os.flush();
+        }
+    }
+
+    private void validarFinalizacionProceso(Process process) throws InterruptedException {
+        if (!PythonProcessSupport.waitFor(process, TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+            throw new PythonProcessException("Timeout en proceso Python tras " + TIMEOUT_SECONDS + "s");
+        }
+
+        int exitCode = process.exitValue();
+        if (exitCode != 0) {
+            log.warn("Python terminó con código de error {}", exitCode);
+        }
+    }
+
+    private int manejarReintentoLote(int retriesActuales, Exception e, boolean interrupted) {
+        int nuevosRetries = retriesActuales + 1;
+        if (interrupted) {
+            log.warn("Reintento {} para lote (InterruptedException): {}", nuevosRetries, e.getMessage());
+        } else {
+            log.warn("Reintento {} para lote: {}", nuevosRetries, e.getMessage());
+        }
+
+        if (nuevosRetries >= MAX_RETRIES) {
+            throw new PythonProcessException("Fallo tras " + MAX_RETRIES + " reintentos", e);
+        }
+
+        return nuevosRetries;
     }
 
     private int leerResultadosDePythonYGuardar(Process process, List<Vela> loteVelas, boolean esPrimerLote)
@@ -166,7 +176,7 @@ public class IndicatorsService {
                 return 0;
             }
 
-            List<Long> idsValidos = obtenerIdsValidosDelLote(loteVelas, esPrimerLote);
+            Set<Long> idsValidos = obtenerIdsValidosDelLote(loteVelas, esPrimerLote);
 
             List<IndicadorTecnico> resultados = dtos.stream()
                     .filter(dto -> dto.getId() != null)
@@ -214,11 +224,11 @@ public class IndicatorsService {
      * Excluye los IDs de las velas de solapamiento para no guardar indicadores
      * duplicados.
      */
-    private List<Long> obtenerIdsValidosDelLote(List<Vela> loteVelas, boolean esPrimerLote) {
+    private Set<Long> obtenerIdsValidosDelLote(List<Vela> loteVelas, boolean esPrimerLote) {
         int inicioReal = esPrimerLote ? 0 : OVERLAP;
         return loteVelas.subList(inicioReal, loteVelas.size()).stream()
                 .map(Vela::getId)
-                .toList();
+                .collect(Collectors.toSet());
     }
 
     private IndicadorTecnico mapToEntity(IndicadorTecnicoDTO dto) {

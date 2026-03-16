@@ -252,8 +252,10 @@ public class EstrategiaService {
     // SECCIÓN 3: BACKTESTING
     // ========================================================================
 
-    public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins, BigDecimal capitalAsignado, BigDecimal risk) throws Exception {
-        fileService.verificarYLimpiarCarpetaEstrategia(nombreEstra);
+    public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins,
+            BigDecimal capitalAsignado, BigDecimal risk, boolean limpiarBacktestsPrevios,
+            boolean guardarTrades) throws Exception {
+        fileService.verificarYLimpiarCarpetaEstrategia(nombreEstra, limpiarBacktestsPrevios);
         // 1. Obtener datos históricos
         ConsoleLoader.getInstance().startDots("Preparando datos para backtest");
         Map<String, List<Vela>> velasPorSimbolo = new HashMap<>();
@@ -273,7 +275,14 @@ public class EstrategiaService {
         // 2. Ejecutar motor (Python guardará trades a CSV automáticamente)
         String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
         ConsoleLoader.getInstance().stopClear();
-        String jsonResultado = backtestingService.ejecutarBacktest(strategyPath, nombreEstra, tf, velasPorSimbolo, capitalAsignado, risk);
+        String jsonResultado = backtestingService.ejecutarBacktest(
+            strategyPath,
+            nombreEstra,
+            tf,
+            velasPorSimbolo,
+            capitalAsignado,
+            risk,
+            guardarTrades);
         
         // 3. Procesar y guardar solo las estadísticas desde Java
         if (jsonResultado != null && !jsonResultado.isEmpty()) {

@@ -17,15 +17,14 @@ import java.util.stream.Collectors;
 import com.bottrading.beans.Vela;
 import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.StrategyExecutionException;
-import com.bottrading.utils.AppConstants;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.PythonProcessSupport;
 import com.google.gson.Gson;
 
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -45,10 +44,6 @@ import org.springframework.stereotype.Service;
 public class BacktestingService {
 
     private final ExecutorService executor = Executors.newFixedThreadPool(ProcessExecutorConfig.EXECUTOR_THREADS);
-
-    /** Flag para permitir prompt interactivo (true) o modo batch (false). */
-    @Value("${backtest.interactive:false}")
-    private boolean interactiveMode;
 
     // =========================================================================
     // LIFECYCLE MANAGEMENT
@@ -74,7 +69,8 @@ public class BacktestingService {
     // ORQUESTACIÓN
     // =========================================================================
     public String ejecutarBacktest(String rutaEstrategia, String nombreEstrategia, String timeframe,
-            Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk)
+            Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk,
+            boolean guardarTrades)
             throws StrategyExecutionException {
 
         for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
@@ -87,8 +83,7 @@ public class BacktestingService {
                 Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
                 ConsoleLoader.getInstance().stopClear();
 
-                // 2. Construir payload con opción de guardar trades
-                boolean guardarTrades = decideGuardarTrades();
+                // 2. Construir payload con opción de guardar trades definida por la capa de CLI
                 String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
                         nombreEstrategia, guardarTrades);
 
@@ -130,38 +125,12 @@ public class BacktestingService {
     private Map<String, Object> convertirVelaAMapa(Vela v) {
         Map<String, Object> m = new HashMap<>();
         m.put("timestamp", v.getOpenTime());
-        // El uso de Optional o ternarios simples reduce la anidación visual
-        m.put("open", v.getOpen() != null ? v.getOpen().doubleValue() : null);
-        m.put("high", v.getHigh() != null ? v.getHigh().doubleValue() : null);
-        m.put("low", v.getLow() != null ? v.getLow().doubleValue() : null);
-        m.put("close", v.getClose() != null ? v.getClose().doubleValue() : null);
-        m.put("volume", v.getVolume() != null ? v.getVolume().doubleValue() : null);
+        m.put("open", v.getOpen());
+        m.put("high", v.getHigh());
+        m.put("low", v.getLow());
+        m.put("close", v.getClose());
+        m.put("volume", v.getVolume());
         return m;
-    }
-
-    /**
-     * Decide si guardar trades en CSV según el modo interactivo.
-     * En modo batch (interactiveMode=false), asume "no" para no bloquear.
-     */
-    private boolean decideGuardarTrades() {
-        if (!interactiveMode) {
-            log.debug("Modo batch: no guardando trades en CSV");
-            return false;
-        }
-
-        System.out.print(
-                "Quieres guardar los trades de este backtest en CSV? (Puede relentizar la ejecucion encarecidamente) (s/n): ");
-        System.out.flush();
-
-        // Leer línea con timeout (si está disponible)
-        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        try {
-            String line = reader.readLine();
-            return line != null && line.trim().toLowerCase().startsWith("s");
-        } catch (IOException e) {
-            log.warn("Error al leer entrada de usuario: {}, asumiendo 'no'", e.getMessage());
-            return false;
-        }
     }
 
     private String construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
@@ -171,8 +140,8 @@ public class BacktestingService {
         payload.put("strategy_name", nombreEstrategia);
         payload.put("timeframe", tf);
         payload.put("velas", velas);
-        payload.put("capital", capitalAsignado.doubleValue());
-        payload.put("risk_per_trade", risk.doubleValue());
+        payload.put("capital", capitalAsignado);
+        payload.put("risk_per_trade", risk);
         payload.put("escribir_trades", guardarTrades);
 
         // Nota: Mantener JSON por compatibilidad hacia atrás
@@ -191,22 +160,12 @@ public class BacktestingService {
             log.debug("Iniciando backtest con payload de {} bytes", jsonPayload.length());
 
             ConsoleLoader.getInstance().startSpinner("Ejecutando backtest");
-            ProcessBuilder pb = new ProcessBuilder(AppConstants.PYTHON_EXECUTABLE, PathConfig.ENGINE_BACKTEST_PATH);
-            pb.redirectErrorStream(false);
-            process = pb.start();
+            process = PythonProcessSupport.startPythonScript(PathConfig.ENGINE_BACKTEST_PATH, false);
 
-            // Escribir payload
-            try (OutputStream os = process.getOutputStream()) {
-                os.write(jsonPayload.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            } catch (IOException e) {
-                log.error("Error escribiendo payload al proceso Python: {}", e.getMessage());
-                destroyProcessForcibly(process);
-                throw new StrategyExecutionException("No se pudo escribir datos al motor Python", e);
-            }
+            escribirPayloadBacktest(process, jsonPayload);
 
             // Esperar con timeout
-            boolean finished = process.waitFor(ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            boolean finished = PythonProcessSupport.waitFor(process, ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
             ConsoleLoader.getInstance().stopClear();
 
             if (!finished) {
@@ -257,12 +216,17 @@ public class BacktestingService {
     private void destroyProcessForcibly(Process process) {
         if (process != null && process.isAlive()) {
             log.warn("Destruyendo proceso Python forzadamente");
-            process.destroyForcibly();
-            try {
-                process.waitFor(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+        }
+    }
+
+    private void escribirPayloadBacktest(Process process, String payload) {
+        try (OutputStream os = process.getOutputStream()) {
+            PythonProcessSupport.writeUtf8(os, payload);
+        } catch (IOException e) {
+            log.error("Error escribiendo payload al proceso Python: {}", e.getMessage());
+            destroyProcessForcibly(process);
+            throw new StrategyExecutionException("No se pudo escribir datos al motor Python", e);
         }
     }
 
