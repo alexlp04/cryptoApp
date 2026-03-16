@@ -43,15 +43,37 @@ def main():
 
         logging.info(f"Petición de predicción: {symbol} - {timeframe}")
 
-        # 2. Cargar el modelo .pkl guardado previamente
-        models_dir = os.path.join(os.getcwd(), 'models')
-        model_filename = f"{model_type}_{symbol}_{timeframe}.pkl"
-        model_path = os.path.join(models_dir, model_filename)
+        # 2. Cargar el modelo guardado previamente
+        # Convención de naming: {model_type}_{timeframe}_{symbol}[_{strategy_name}].{pkl|keras|h5}
+        # (misma convención que engine_train.py y engine_ai_rt.py)
+        strategy_name = payload.get("strategy_name")  # opcional
+        models_dir = os.path.join(project_root, 'models')
 
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"No se encontró el modelo entrenado en: {model_path}. ¡Entrénalo primero!")
+        base_filename = f"{model_type}_{timeframe}_{symbol}"
+        if strategy_name:
+            base_filename = f"{base_filename}_{strategy_name}"
 
-        model = joblib.load(model_path)
+        # Intentar extensiones en orden de prioridad
+        model_path = None
+        model_filename = None
+        for ext in [".pkl", ".keras", ".h5"]:
+            candidate = os.path.join(models_dir, base_filename + ext)
+            if os.path.exists(candidate):
+                model_path = candidate
+                model_filename = base_filename + ext
+                break
+
+        if model_path is None:
+            raise FileNotFoundError(
+                f"No se encontró el modelo entrenado para '{base_filename}' "
+                f"en: {models_dir}. ¡Entrénalo primero!"
+            )
+
+        if model_filename.endswith(".pkl"):
+            model = joblib.load(model_path)
+        else:
+            from tensorflow.keras.models import load_model as load_keras_model
+            model = load_keras_model(model_path)
         logging.info(f"Modelo {model_filename} cargado exitosamente.")
 
         # 3. Preparar los datos (Pandas DataFrame)

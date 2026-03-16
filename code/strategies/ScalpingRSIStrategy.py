@@ -19,3 +19,9 @@ class ScalpingRSIStrategy(BaseStrategy):
 
     def should_sell(self, row):
         return row['rsi'] > 55
+
+    def get_stop_loss(self, entry_price: float, row) -> float:
+        return entry_price * 0.997
+
+    def get_take_profit(self, entry_price: float, row) -> float:
+        return entry_price * 1.004

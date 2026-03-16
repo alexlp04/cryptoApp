@@ -14,6 +14,8 @@ import jakarta.annotation.PreDestroy;
 import java.io.*;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -200,7 +202,10 @@ public class IndicatorsService {
     private void guardarIndicadoresMasivo(List<IndicadorTecnico> indicadores) {
         // ATENCIÓN: Asegúrate de que los nombres de tabla y columnas coinciden con tu
         // DB real.
-        String sql = "INSERT INTO indicador_tecnico (vela_id, tipo, parametros, valor) VALUES (?, ?, ?, ?)";
+        String sql = "INSERT INTO indicador_tecnico (vela_id, tipo, parametros, valor, fecha_creacion, eliminado) " +
+                "VALUES (?, ?, ?, ?, ?, ?)";
+
+        final Timestamp now = Timestamp.from(Instant.now());
 
         jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
             @Override
@@ -211,6 +216,8 @@ public class IndicatorsService {
                 ps.setString(2, ind.getTipo());
                 ps.setString(3, ind.getParametros());
                 ps.setBigDecimal(4, ind.getValor());
+                ps.setTimestamp(5, now);
+                ps.setBoolean(6, false);
             }
 
             @Override

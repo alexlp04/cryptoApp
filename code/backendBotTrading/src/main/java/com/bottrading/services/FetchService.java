@@ -51,6 +51,8 @@ public class FetchService {
 
     /**
      * Coordina la descarga incremental de datos de mercado.
+     * Incluye detección de huecos en todo el rango histórico almacenado para evitar
+     * falsos "al día" cuando hay agujeros antiguos.
      */
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
@@ -62,17 +64,28 @@ public class FetchService {
             ConsoleLoader.getInstance().stopClear();
             log.info("No hay datos previos. Iniciando descarga completa...");
             callPythonAndSave(symbol, interval, null);
+            return;
+        }
 
+        long intervalMillis = getIntervalMillis(interval);
+        long now = System.currentTimeMillis();
+        Long minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
+        Long firstGap = null;
+        if (minTimestamp != null) {
+            firstGap = encontrarPrimerHueco(symbol, interval, minTimestamp, lastTimestamp, intervalMillis);
+        }
+
+        ConsoleLoader.getInstance().stopClear();
+
+        if (firstGap != null) {
+            log.warn("Hueco histórico detectado para {} [{}]. Resincronizando desde {}", symbol, interval, firstGap);
+            callPythonAndSave(symbol, interval, firstGap);
+        } else if (now - lastTimestamp > intervalMillis) {
+            log.info("Datos desactualizados. Descargando desde: {}", lastTimestamp);
+            callPythonAndSave(symbol, interval, lastTimestamp + 1);
         } else {
-            long now = System.currentTimeMillis();
-            if (now - lastTimestamp > getIntervalMillis(interval)) {
-                ConsoleLoader.getInstance().stopClear();
-                log.info("Datos desactualizados. Descargando desde: {}", lastTimestamp);
-                callPythonAndSave(symbol, interval, lastTimestamp + 1);
-            } else {
-                ConsoleLoader.getInstance().stop("✅ Historial de " + symbol + " ya está actualizado.");
-                log.info("Los datos ya están al día.");
-            }
+            ConsoleLoader.getInstance().stop("✅ Historial de " + symbol + " ya está actualizado.");
+            log.info("Los datos ya están al día.");
         }
     }
 
@@ -85,11 +98,19 @@ public class FetchService {
 
         ConsoleLoader.getInstance().startDots("Analizando brechas de datos para " + symbol);
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        long intervalMillis = getIntervalMillis(interval);
         long fetchFromTimestamp;
 
         if (lastTimestamp != null && lastTimestamp > targetTimestamp) {
-            fetchFromTimestamp = lastTimestamp;
-            log.info("Historial detectado. Descargando solo nuevas velas desde: {}", lastTimestamp);
+            Long firstGap = encontrarPrimerHueco(symbol, interval, targetTimestamp, lastTimestamp, intervalMillis);
+            if (firstGap != null) {
+                fetchFromTimestamp = firstGap;
+                log.warn("Hueco detectado en ventana de entrenamiento ({} días). Resincronizando desde {}", dias,
+                        fetchFromTimestamp);
+            } else {
+                fetchFromTimestamp = lastTimestamp;
+                log.info("Historial detectado sin huecos. Descargando solo nuevas velas desde: {}", lastTimestamp);
+            }
         } else {
             fetchFromTimestamp = targetTimestamp;
             log.info("Historial incompleto. Descargando {} días completos desde: {}", dias, targetTimestamp);
@@ -106,6 +127,49 @@ public class FetchService {
         callPythonAndSave(symbol, interval, fetchFromTimestamp);
 
         return fetchFromTimestamp;
+    }
+
+    /**
+     * Encuentra el primer hueco de velas en [fromTimestamp, toTimestamp].
+     * Si no hay huecos, devuelve null.
+     */
+    private Long encontrarPrimerHueco(String symbol, String interval, long fromTimestamp, long toTimestamp,
+            long intervalMillis) {
+        if (toTimestamp < fromTimestamp) {
+            return null;
+        }
+
+        long expected = ((toTimestamp - fromTimestamp) / intervalMillis) + 1;
+        long actual = velaRepo.countBySymbolAndIntervalAndOpenTimeBetween(symbol, interval, fromTimestamp, toTimestamp);
+
+        if (actual >= expected) {
+            return null;
+        }
+
+        Long firstInRange = velaRepo.findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(symbol, interval,
+                fromTimestamp, toTimestamp);
+        if (firstInRange == null) {
+            return fromTimestamp;
+        }
+
+        if (firstInRange > fromTimestamp) {
+            return fromTimestamp;
+        }
+
+        Long internalGap = velaRepo.findFirstInternalGapOpenTime(symbol, interval, fromTimestamp, toTimestamp,
+                intervalMillis);
+        if (internalGap != null) {
+            return internalGap;
+        }
+
+        Long maxInRange = velaRepo.findMaxOpenTimeBySymbolAndIntervalAndOpenTimeBetween(symbol, interval,
+                fromTimestamp, toTimestamp);
+        if (maxInRange != null && maxInRange + intervalMillis <= toTimestamp) {
+            return maxInRange + intervalMillis;
+        }
+
+        // Fallback defensivo si el conteo detectó inconsistencia pero no se pudo localizar.
+        return fromTimestamp;
     }
 
     /**
