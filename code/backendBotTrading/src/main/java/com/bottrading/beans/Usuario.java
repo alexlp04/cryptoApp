@@ -34,7 +34,7 @@ public class Usuario extends BaseEntity {
 
     @Override
     public String toString() {
-        return "Usuario [nombre=" + nombre + ", passwordHash=" + passwordHash + "]";
+        return "Usuario [nombre=" + nombre + "]";
     }
 
 }

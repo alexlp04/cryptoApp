@@ -2,19 +2,10 @@
 <configuration>
     <property name="LOG_PATH" value="logs" />
 
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{HH:mm:ss} %highlight(%-5level) %cyan(%logger{20}) - %msg%n</pattern>
-            <charset>UTF-8</charset>
-        </encoder>
-    </appender>
-
     <appender name="FILE-INFO" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_PATH}/app-general.logs</file>
-        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>INFO</level>
-            <onMatch>ACCEPT</onMatch>
-            <onMismatch>DENY</onMismatch>
         </filter>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <fileNamePattern>${LOG_PATH}/archived/app-general.%d{yyyy-MM-dd}.logs</fileNamePattern>
@@ -48,7 +39,6 @@
     <logger name="com.zaxxer.hikari" level="WARN" />
 
     <root level="INFO">
-        <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE-INFO" />
         <appender-ref ref="FILE-ERROR" />
     </root>

@@ -244,8 +244,8 @@ public class EstrategiaService {
     }
 
     public BigDecimal getCapitalComprometido(Long walletAsociada) {
-        Double sum = instanciaRepo.sumCapitalActivoByWallet(walletAsociada);
-        return sum != null ? BigDecimal.valueOf(sum) : BigDecimal.ZERO;
+        BigDecimal sum = instanciaRepo.sumCapitalActivoByWallet(walletAsociada);
+        return sum != null ? sum : BigDecimal.ZERO;
     }
 
     // ========================================================================

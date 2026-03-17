@@ -9,7 +9,7 @@ import jakarta.persistence.UniqueConstraint;
 
 @Entity
 @Table(name = "vela", uniqueConstraints = {
-        @UniqueConstraint(columnNames = { "symbol", "interval", "open_time" })
+    @UniqueConstraint(columnNames = { "symbol", "time_interval", "open_time" })
 })
 
 public class Vela extends BaseEntity {

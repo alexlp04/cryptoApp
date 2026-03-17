@@ -1,5 +1,7 @@
 package com.bottrading.services;
 
+import com.bottrading.bridge.PythonBridgeExecutionException;
+import com.bottrading.bridge.PythonBridgeFacade;
 import com.bottrading.beans.InstanciaEstrategia;
 import com.bottrading.beans.SignalDTO;
 import com.bottrading.config.ProcessExecutorConfig;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -35,10 +38,11 @@ import java.util.Queue;
  * I/O y terminación).
  *
  * Mejoras en Fase 3:
- * - Timeouts de 30s para procesos Python
+ * - Timeouts inteligentes para procesos Python (90s init + 5m inactividad)
  * - Destrucción forzada de procesos en caso de timeout
  * - Constructor injection (no @Autowired)
  * - Resiliencia mejorada para colas de reintentos
+ * - Logging a stdout en todos los motores para visibilidad de Java
  */
 @Slf4j
 @Service
@@ -46,6 +50,7 @@ public class TradingService {
 
     private final PaperTradingService paperTradingService;
     private final AccountingService accountingService;
+    private final PythonBridgeFacade pythonBridgeFacade;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     // Mapa thread-safe para mantener referencias a los procesos en ejecución
@@ -58,9 +63,12 @@ public class TradingService {
     private final Map<Long, Integer> consecutiveFailures = new ConcurrentHashMap<>();
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
 
-    public TradingService(PaperTradingService paperTradingService, AccountingService accountingService) {
+    public TradingService(PaperTradingService paperTradingService,
+            AccountingService accountingService,
+            PythonBridgeFacade pythonBridgeFacade) {
         this.paperTradingService = paperTradingService;
         this.accountingService = accountingService;
+        this.pythonBridgeFacade = pythonBridgeFacade;
     }
 
     /**
@@ -156,12 +164,22 @@ public class TradingService {
     }
 
     /**
-     * Lee la salida de Python con monitoring de timeout.
+     * Lee la salida de Python con monitoring de timeout por INACTIVIDAD.
+     * 
+     * Estrategia:
+     * - Para inicialización: permite hasta 90 segundos (el motor se conecta a Binance, carga estrategia, etc.)
+     * - Para runtime: permite hasta 5 minutos SIN output (si no hay señales/logs, probablemente está muerto)
+     * - Cada línea que se recibe resetea el contador de inactividad
      */
     private void escucharSalidaPythonConTimeout(Process process, InstanciaEstrategia instancia, long startTime) 
             throws PythonProcessException {
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+
+            final long INIT_TIMEOUT_MS = 90_000;       // 90s para inicialización
+            final long INACTIVITY_TIMEOUT_MS = 300_000; // 5m sin output
+            long lastActivityTime = System.currentTimeMillis();
+            boolean primeraActividad = true;
 
             String line;
             while ((line = reader.readLine()) != null) {
@@ -169,16 +187,35 @@ public class TradingService {
                     break;
                 }
                 
-                // Monitorear tiempo de vida del proceso
-                long elapsed = System.currentTimeMillis() - startTime;
-                if (elapsed > ProcessExecutorConfig.TIMEOUT_SECONDS * 1000) {
-                    log.warn("Estrategia {} excedió timeout de {}s, terminando", 
-                            instancia.getId(), ProcessExecutorConfig.TIMEOUT_SECONDS);
-                    throw new PythonProcessException("Timeout de estrategia excedido");
+                long now = System.currentTimeMillis();
+                long elapsedTotal = now - startTime;
+                long elapsedInactivity = now - lastActivityTime;
+                lastActivityTime = now; // Resetear inactividad al recibir línea
+                
+                // Solo verificar timeout de inicialización en la PRIMERA actividad
+                if (primeraActividad && elapsedTotal > INIT_TIMEOUT_MS) {
+                    log.warn("Estrategia {} excedió timeout de inicialización (90s), terminando", 
+                            instancia.getId());
+                    throw new PythonProcessException("Timeout de inicialización excedido (>90s)");
+                }
+                
+                if (primeraActividad) {
+                    primeraActividad = false;
+                    log.info("Estrategia {} superó inicialización, pasada a monitoreo de inactividad (5m)", 
+                            instancia.getId());
                 }
                 
                 procesarLineaLog(line, instancia);
             }
+            
+            // Si llegamos aquí, el motor cerró su stdout. Verificar si fue orderly o timeout de inactividad
+            long finalInactivity = System.currentTimeMillis() - lastActivityTime;
+            if (finalInactivity > INACTIVITY_TIMEOUT_MS) {
+                log.warn("Estrategia {} excedió timeout de inactividad (5m sin output), terminando", 
+                        instancia.getId());
+                throw new PythonProcessException("Timeout de inactividad (>5m sin output)");
+            }
+            
         } catch (IOException e) {
             throw new PythonProcessException("Error al leer salida del proceso Python: " + e.getMessage(), e);
         }
@@ -199,7 +236,11 @@ public class TradingService {
         }
 
         try {
-            Process process = PythonProcessSupport.startPythonScript(scriptPath, false);
+            Process process = pythonBridgeFacade.startProcess(
+                    "trading-rt-" + instancia.getId(),
+                    scriptPath,
+                    false,
+                    Collections.emptyList());
 
             procesosActivos.compute(instancia.getId(), (k, ctx) -> {
                 if (ctx == null)
@@ -209,22 +250,15 @@ public class TradingService {
             });
 
             return process;
-        } catch (IOException e) {
+        } catch (PythonBridgeExecutionException e) {
             throw new PythonProcessException("Fallo al iniciar proceso Python: " + e.getMessage(), e);
         }
     }
 
     private Future<?> iniciarLecturaErroresPython(Process process, InstanciaEstrategia instancia) {
-        return PythonProcessSupport.drainLinesAsync(
-                process.getErrorStream(),
-                executor,
-                line -> log.warn("PYERR [{}]: {}", instancia.getNombreEstrategia(), line),
-                e -> {
-                    if (!Thread.currentThread().isInterrupted()) {
-                        log.debug("Lectura stderr finalizada con aviso para estrategia {}: {}",
-                                instancia.getId(), e.getMessage());
-                    }
-                });
+        return pythonBridgeFacade.drainStderrAsync(
+                process,
+                line -> log.warn("PYERR [{}]: {}", instancia.getNombreEstrategia(), line));
     }
 
     private void procesarLineaLog(String line, InstanciaEstrategia instancia) {
@@ -232,9 +266,6 @@ public class TradingService {
 
         if (trimmedLine.startsWith("SIGNAL\t")) {
             procesarParseJsonSignal(trimmedLine.substring("SIGNAL\t".length()), instancia);
-        } else if (trimmedLine.startsWith("{")) {
-            // Compatibilidad retro: JSON directo por stdout.
-            procesarParseJsonSignal(trimmedLine, instancia);
         } else {
             // Log normal de Python
             log.info("PYLOG [{}]: {}", instancia.getNombreEstrategia(), line);
@@ -247,7 +278,7 @@ public class TradingService {
     private void destroyProcessForcibly(Process process) {
         if (process != null && process.isAlive()) {
             log.warn("Destruyendo proceso Python forzadamente");
-            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
+            pythonBridgeFacade.destroyProcess(process);
         }
     }
 
@@ -372,7 +403,9 @@ public class TradingService {
     private void enviarPayload(Process p, InstanciaEstrategia inst, List<String> symbols) throws PythonProcessException {
         Map<String, Object> payload = new HashMap<>();
 
-        payload.put("strategy_path", PathConfig.getValidStrategyPath(inst.getNombreEstrategia()));
+        if (inst.getNombreEstrategia() != null && !inst.getNombreEstrategia().isBlank()) {
+            payload.put("strategy_path", PathConfig.getValidStrategyPath(inst.getNombreEstrategia()));
+        }
         payload.put("symbols", new ArrayList<>(symbols));
         payload.put("timeframe", inst.getTimeframe());
         payload.put("capital", inst.getCapitalReservado());

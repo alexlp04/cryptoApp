@@ -44,7 +44,7 @@ class AITraderStrategy(BaseStrategy):
         df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
         # Rellenar los valores nulos (NaN) generados por los rolling windows con 0 o el valor anterior
-        df.fillna(method='bfill', inplace=True)
+        df.bfill(inplace=True)
         df.fillna(0, inplace=True)
 
         return df

@@ -4,6 +4,7 @@ import logging
 import os
 import msgpack
 from datetime import datetime
+from ipc_protocol import read_request_payload, write_response
 
 # =========================
 # CONFIGURACIÓN DE LOGS
@@ -17,12 +18,19 @@ os.makedirs(log_dir, exist_ok=True)
 # Archivo de log con el nombre del script
 log_file = os.path.join(log_dir, "engine_indicators.log")
 
+# Logger a archivo (para debugging offline)
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Logger a stderr para no contaminar stdout, reservado al frame MessagePack IPC.
+stream_handler = logging.StreamHandler(sys.stderr)
+stream_handler.setLevel(logging.INFO)
+stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8')
-    ]
+    level=logging.DEBUG,
+    handlers=[file_handler, stream_handler]
 )
 
 def calcular_indicadores(df):
@@ -112,21 +120,13 @@ def calcular_indicadores(df):
 if __name__ == "__main__":
     logging.info("=== Arrancando Motor de Indicadores Técnicos ===")
     try:
-        logging.info("Esperando recepción de datos MessagePack desde Java (Stdin binario)...")
-
-        # Leer todos los chunks MessagePack enviados por Java (protocolo end-to-end MessagePack)
-        unpacker = msgpack.Unpacker(sys.stdin.buffer, raw=False)
-        data = []
-        for chunk in unpacker:
-            if isinstance(chunk, list):
-                data.extend(chunk)
-            elif isinstance(chunk, dict):
-                data.append(chunk)
+        logging.info("Esperando recepción de datos IPC desde Java...")
+        payload = read_request_payload()
+        data = payload.get("velas", [])
 
         if not data:
             logging.warning("No se recibieron datos de entrada. Finalizando proceso y devolviendo lista vacía.")
-            sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
-            sys.stdout.buffer.flush()
+            write_response("INDICATORS_RESPONSE", {"indicadores": []})
             sys.exit(0)
 
         logging.info(f"Datos recibidos. Total velas: {len(data)} registros.")
@@ -138,17 +138,13 @@ if __name__ == "__main__":
         lista_indicadores = calcular_indicadores(df)
 
         packed = msgpack.packb(lista_indicadores, use_bin_type=True)
-        logging.info(f"Enviando MessagePack a Java. Tamaño de respuesta: {len(packed)} bytes.")
-
-        # Enviar resultado binario a Java por stdout buffer
-        sys.stdout.buffer.write(packed)
-        sys.stdout.buffer.flush()
+        logging.info(f"Enviando respuesta IPC a Java. Tamaño de indicadores: {len(packed)} bytes.")
+        write_response("INDICATORS_RESPONSE", {"indicadores": lista_indicadores})
 
         logging.info("=== Proceso finalizado y cerrado correctamente ===")
 
     except Exception as e:
         # Cualquier otro error se captura aquí con la traza completa
         logging.error(f"Fallo crítico en el script: {str(e)}", exc_info=True)
-        sys.stdout.buffer.write(msgpack.packb([], use_bin_type=True))
-        sys.stdout.buffer.flush()
+        write_response("ERROR", {"status": "error", "message": str(e), "indicadores": []})
         sys.exit(1)

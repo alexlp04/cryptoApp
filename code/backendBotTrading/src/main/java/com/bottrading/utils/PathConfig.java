@@ -113,8 +113,13 @@ public final class PathConfig {
             timeframe.contains("..") || symbol.contains("..")) {
             return false;
         }
-        String baseName = String.format("%s_%s_%s", modelo, timeframe, symbol);
+        // 0. Aceptar nombre libre: el usuario ha renombrado el fichero directamente
         Path dir = Paths.get(MODELS_DIR);
+        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
+            if (Files.exists(dir.resolve(modelo + ext))) return true;
+        }
+        // 1+2. Construcción estándar {modelo}_{timeframe}_{symbol} + variante con sufijo de estrategia
+        String baseName = String.format("%s_%s_%s", modelo, timeframe, symbol);
         // Verificar nombre exacto con las extensiones conocidas
         for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
             if (Files.exists(dir.resolve(baseName + ext))) return true;

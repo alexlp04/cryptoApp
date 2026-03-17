@@ -63,10 +63,6 @@ public class BotApplication {
         System.setProperty("spring.datasource.url", dotenv.get("DB_URL"));
         System.setProperty("spring.datasource.username", dotenv.get("DB_USER"));
         System.setProperty("spring.datasource.password", dotenv.get("DB_PASSWORD"));
-        
-        // Configuración JPA/Hibernate silenciosa
-        System.setProperty("spring.jpa.hibernate.ddl-auto", "update");
-        System.setProperty("spring.jpa.show-sql", "false");
     }
 
     private static void limpiarDirectorioLogs() {

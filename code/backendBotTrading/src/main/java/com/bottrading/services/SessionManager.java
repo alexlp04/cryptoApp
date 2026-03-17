@@ -32,7 +32,12 @@ public class SessionManager {
     }
 
     public void logout() {
-        log.info("Cerrando sesión de " + currentUser.getNombre() + "...");
+        if (currentUser == null) {
+            log.info("No hay sesión activa para cerrar.");
+            return;
+        }
+
+        log.info("Cerrando sesión de {}...", currentUser.getNombre());
         this.currentUser = null;
         log.info("Sesión cerrada.");
 
