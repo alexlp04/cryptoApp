@@ -1,5 +1,10 @@
 package com.bottrading.services;
 
+import com.bottrading.bridge.PythonBridgeExecutionException;
+import com.bottrading.bridge.PythonBridgeFacade;
+import com.bottrading.bridge.PythonBridgeRequest;
+import com.bottrading.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.bridge.protocol.IpcMessageType;
 import com.bottrading.beans.IndicadorTecnico;
 import com.bottrading.beans.Vela;
 import com.bottrading.config.ProcessExecutorConfig;
@@ -7,25 +12,17 @@ import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.PythonProcessSupport;
 import com.bottrading.utils.StrategyInspector;
 import com.google.gson.Gson;
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -44,36 +41,19 @@ import java.util.stream.Collectors;
 @Service
 public class AITrainingService {
 
+    private final Gson gson = new Gson();
+
     private final MarketDataService marketDataService;
     private final VelaRepository velaRepo;
     private final IndicadorRepository indicadorRepo;
-    private final ExecutorService executor = Executors.newFixedThreadPool(ProcessExecutorConfig.EXECUTOR_THREADS);
+    private final PythonBridgeFacade pythonBridgeFacade;
 
     public AITrainingService(MarketDataService marketDataService, VelaRepository velaRepo,
-            IndicadorRepository indicadorRepo) {
+            IndicadorRepository indicadorRepo, PythonBridgeFacade pythonBridgeFacade) {
         this.marketDataService = marketDataService;
         this.velaRepo = velaRepo;
         this.indicadorRepo = indicadorRepo;
-    }
-
-    // =========================================================================
-    // LIFECYCLE MANAGEMENT
-    // =========================================================================
-
-    @PreDestroy
-    public void shutdown() {
-        log.info("Iniciando shutdown graceful de AITrainingService...");
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                log.warn("ExecutorService no terminó en 10s, forzando shutdown");
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Interrupción durante shutdown: {}", e.getMessage());
-            executor.shutdownNow();
-        }
+        this.pythonBridgeFacade = pythonBridgeFacade;
     }
 
     /**
@@ -81,29 +61,7 @@ public class AITrainingService {
      */
     public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias,
             Map<String, Object> hyperparams, String strategyName) {
-        for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
-            try {
-                log.info("Intento {} de {} para entrenar modelo '{}'", intento, ProcessExecutorConfig.MAX_RETRIES,
-                        nombreModelo);
-                return ejecutarEntrenamiento(nombreModelo, timeframe, symbol, dias, hyperparams, strategyName);
-
-            } catch (StrategyExecutionException e) {
-                if (intento == ProcessExecutorConfig.MAX_RETRIES) {
-                    log.error("Entrenamiento falló después de {} intentos: {}", ProcessExecutorConfig.MAX_RETRIES,
-                            e.getMessage());
-                    throw e;
-                }
-                log.warn("Intento {} falló, reintentando en {}ms...", intento, ProcessExecutorConfig.RETRY_DELAY_MS);
-                try {
-                    Thread.sleep(ProcessExecutorConfig.RETRY_DELAY_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new StrategyExecutionException("Entrenamiento interrumpido durante reintento", ie);
-                }
-            }
-        }
-
-        throw new StrategyExecutionException("Entrenamiento falló tras " + ProcessExecutorConfig.MAX_RETRIES + " intentos");
+        return ejecutarEntrenamiento(nombreModelo, timeframe, symbol, dias, hyperparams, strategyName);
     }
 
     private String ejecutarEntrenamiento(String nombreModelo, String timeframe, String symbol, int dias,
@@ -199,7 +157,7 @@ public class AITrainingService {
                 payload.put("warmup_candles", warmupCandles);
             }
 
-            String jsonPayload = new Gson().toJson(payload);
+            String jsonPayload = gson.toJson(payload);
 
             log.info("Enviando {} registros al motor de IA (Python)...", dataset.size());
 
@@ -222,84 +180,55 @@ public class AITrainingService {
      * Invoca el motor Python con timeout de 30s y destrucción forzada en caso de error.
      */
     private String invocarMotorPythonConTimeouts(String jsonPayload) throws StrategyExecutionException {
-        Process process = null;
         try {
             long startTime = System.currentTimeMillis();
             log.debug("Iniciando entrenamiento IA con payload de {} bytes", jsonPayload.length());
 
-            process = PythonProcessSupport.startPythonScript(PathConfig.ENGINE_TRAIN_PATH, false);
+            PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_TRAIN_PATH)
+                    .operationName("train-model")
+                    .noTimeout()
+                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
+                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
+                    .stdinWriter(os -> escribirEnvelopeTrain(os, jsonPayload))
+                    .stdoutReader(this::parseResponseWithFallback)
+                    .onStderrLine(line -> log.info("PY [train]: {}", line))
+                    .build();
 
-            escribirPayloadEntrenamiento(process, jsonPayload);
-
-            // Esperar con timeout
-            boolean finished = PythonProcessSupport.waitFor(process, ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-            if (!finished) {
-                log.error("Entrenamiento IA timeout después de {}s, destruyendo proceso", 
-                        ProcessExecutorConfig.TIMEOUT_SECONDS);
-                destroyProcessForcibly(process);
-                throw new StrategyExecutionException(
-                        "Entrenamiento IA excedió timeout de " + ProcessExecutorConfig.TIMEOUT_SECONDS + "s");
-            }
+            String stdout = pythonBridgeFacade.execute(request);
 
             long duration = System.currentTimeMillis() - startTime;
-
-            // Leer salida
-            String stdout = leerStream(process.getInputStream());
-            String stderr = leerStream(process.getErrorStream());
-            int exitCode = process.exitValue();
-
-            log.info("Entrenamiento IA completado en {} ms (exit code: {})", duration, exitCode);
-
-            if (exitCode != 0) {
-                String errorMsg = !stderr.isBlank() ? stderr : stdout;
-                log.error("Motor IA falló con código {}: {}", exitCode, errorMsg);
-                throw new StrategyExecutionException("Entrenamiento IA falló (Exit Code " + exitCode + "):\n" + errorMsg);
-            }
+            log.info("Entrenamiento IA completado en {} ms", duration);
 
             return stdout;
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Proceso IA interrumpido: {}", e.getMessage());
-            if (process != null) {
-                destroyProcessForcibly(process);
-            }
-            throw new StrategyExecutionException("Entrenamiento IA interrumpido", e);
+        } catch (PythonBridgeExecutionException e) {
+            throw new StrategyExecutionException("Entrenamiento IA falló: " + e.getMessage(), e);
         } catch (StrategyExecutionException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error inesperado en entrenamiento IA: {}", e.getMessage(), e);
-            if (process != null) {
-                destroyProcessForcibly(process);
-            }
             throw new StrategyExecutionException("Error inesperado: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Destruye un proceso forzosamente y registra el evento.
-     */
-    private void destroyProcessForcibly(Process process) {
-        if (process != null && process.isAlive()) {
-            log.warn("Destruyendo proceso Python forzadamente");
-            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
-        }
+    private void escribirEnvelopeTrain(java.io.OutputStream outputStream, String jsonPayload) throws IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = gson.fromJson(jsonPayload, Map.class);
+        IpcMessagePackCodec.writeEnvelope(outputStream, IpcMessageType.TRAIN_REQUEST, payload);
     }
 
-    private void escribirPayloadEntrenamiento(Process process, String payload) {
-        try (OutputStream os = process.getOutputStream()) {
-            PythonProcessSupport.writeUtf8(os, payload);
-        } catch (IOException e) {
-            log.error("Error escribiendo payload al motor IA: {}", e.getMessage());
-            destroyProcessForcibly(process);
-            throw new StrategyExecutionException("No se pudo escribir datos al motor IA", e);
-        }
+    private String leerEnvelopeTrain(InputStream inputStream) throws IOException {
+        Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
+        Object payload = envelope.get("payload");
+        return gson.toJson(payload == null ? Map.of() : payload);
     }
 
-    private String leerStream(java.io.InputStream is) throws java.io.IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            return reader.lines().collect(Collectors.joining("\n"));
+    private String parseResponseWithFallback(InputStream inputStream) throws IOException {
+        byte[] raw = inputStream.readAllBytes();
+        try {
+            return leerEnvelopeTrain(new java.io.ByteArrayInputStream(raw));
+        } catch (Exception ignored) {
+            // Fallback legacy temporal por compatibilidad en despliegues mixtos.
+            return IpcMessagePackCodec.readUtf8Fallback(new java.io.ByteArrayInputStream(raw));
         }
     }
 

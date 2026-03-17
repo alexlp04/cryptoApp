@@ -1,13 +1,17 @@
 package com.bottrading.services;
 
+import com.bottrading.bridge.PythonBridgeExecutionException;
+import com.bottrading.bridge.PythonBridgeFacade;
+import com.bottrading.bridge.PythonBridgeRequest;
+import com.bottrading.bridge.protocol.IpcMessagePackCodec;
 import com.bottrading.exceptions.DataFetchException;
 import com.bottrading.repositories.IndicadorRepository;
 import com.bottrading.repositories.VelaRepository;
 import com.bottrading.utils.ConsoleLoader;
-import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.PythonProcessSupport;
 import com.bottrading.beans.VelaDTO;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -15,12 +19,11 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 import java.io.*;
 import java.math.BigDecimal;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
 
 /**
  * Servicio encargado de la sincronización de datos de mercado
@@ -33,25 +36,31 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class FetchService {
 
+    private static final Type VELA_DTO_LIST_TYPE = new TypeToken<List<VelaDTO>>() {}.getType();
+
+    private final Gson gson = new Gson();
+
     private final VelaRepository velaRepo;
     private final IndicadorRepository indicadorRepo;
     private final JdbcTemplate jdbcTemplate;
-    private final ExecutorService executor;
+    private final PythonBridgeFacade pythonBridgeFacade;
 
     private static final int BATCH_INSERT_SIZE = 50000;
-    private static final int TIMEOUT_SECONDS = 30;
     private static final int MAX_RETRIES = 3;
 
-    public FetchService(VelaRepository velaRepo, IndicadorRepository indicadorRepo, JdbcTemplate jdbcTemplate) {
+    public FetchService(VelaRepository velaRepo,
+            IndicadorRepository indicadorRepo,
+            JdbcTemplate jdbcTemplate,
+            PythonBridgeFacade pythonBridgeFacade) {
         this.velaRepo = velaRepo;
         this.indicadorRepo = indicadorRepo;
         this.jdbcTemplate = jdbcTemplate;
-        this.executor = Executors.newFixedThreadPool(4);
+        this.pythonBridgeFacade = pythonBridgeFacade;
     }
 
     /**
      * Coordina la descarga incremental de datos de mercado.
-     * Incluye detección de huecos en todo el rango histórico almacenado para evitar
+     * Incluye detección de huecos en el rango histórico completo para evitar
      * falsos "al día" cuando hay agujeros antiguos.
      */
     public void fetch(String symbol, String interval) {
@@ -177,161 +186,131 @@ public class FetchService {
      * Implementa timeouts, retries automáticos y manejo de errores robusto.
      */
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
-        int retries = 0;
-
-        while (retries < MAX_RETRIES) {
-            try {
-                ejecutarIntentoFetch(symbol, interval, fromTimestamp);
-                return;
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                retries = manejarReintentoFetch(retries, e, true);
-            } catch (Exception e) {
-                retries = manejarReintentoFetch(retries, e, false);
-            }
+        try {
+            ejecutarIntentoFetch(symbol, interval, fromTimestamp);
+        } catch (Exception e) {
+            throw new DataFetchException("Data synchronization failed", e);
         }
     }
 
     private void ejecutarIntentoFetch(String symbol, String interval, Long fromTimestamp)
-            throws IOException, InterruptedException {
+            throws PythonBridgeExecutionException {
         ConsoleLoader.getInstance().startSpinner("Sincronizando velas con MessagePack para " + symbol);
-
-        Process process = crearProcesoFetch(symbol, interval, fromTimestamp);
         try {
-            drenarStderrAsync(process);
-            int totalGuardadas = leerVelasEnStreamingYGuardar(process, symbol, interval);
+            List<String> args = new ArrayList<>();
+            args.add(symbol);
+            args.add(interval);
+            if (fromTimestamp != null) {
+                args.add(String.valueOf(fromTimestamp));
+            }
 
-            validarTimeoutFetch(process);
-            validarExitCodeFetch(process);
+            PythonBridgeRequest<Integer> request = PythonBridgeRequest.<Integer>builder(PathConfig.FETCHER_PATH)
+                    .operationName("fetch-" + symbol)
+                    .args(args)
+                    .noTimeout()
+                    .maxRetries(MAX_RETRIES)
+                    .retryDelayMs(1000L)
+                    .stdoutReader(in -> leerVelasEnStreamingYGuardar(in, symbol, interval))
+                    .onStderrLine(line -> log.info("PY [fetch:{}]: {}", symbol, line))
+                    .build();
+
+            int totalGuardadas = pythonBridgeFacade.execute(request);
 
             ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas: " + totalGuardadas);
             log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
-        } finally {
-            if (process.isAlive()) {
-                PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
-            }
-        }
-    }
-
-    private Process crearProcesoFetch(String symbol, String interval, Long fromTimestamp) throws IOException {
-        return PythonProcessSupport.startPythonScript(
-                PathConfig.FETCHER_PATH,
-                false,
-                symbol,
-                interval,
-                fromTimestamp != null ? String.valueOf(fromTimestamp) : null);
-    }
-
-    private void drenarStderrAsync(Process process) {
-        PythonProcessSupport.drainLinesAsync(
-                process.getErrorStream(),
-                executor,
-                line -> log.error("Python stderr: {}", line),
-                e -> log.error("Error reading stderr: {}", e.getMessage()));
-    }
-
-    private void validarTimeoutFetch(Process process) throws InterruptedException {
-        if (!PythonProcessSupport.waitFor(process, TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
-            throw new DataFetchException("Timeout en fetch Python tras " + TIMEOUT_SECONDS + "s");
-        }
-    }
-
-    private void validarExitCodeFetch(Process process) {
-        int exitCode = process.exitValue();
-        if (exitCode != 0) {
+        } catch (PythonBridgeExecutionException e) {
             ConsoleLoader.getInstance().stopClear();
-            log.error("Script Python exited with code {}", exitCode);
-            throw new DataFetchException("Script Python failed with code " + exitCode);
+            log.error("Error crítico en FetchService para {}: {}", symbol, e.getMessage(), e);
+            throw e;
         }
-    }
-
-    private int manejarReintentoFetch(int retriesActuales, Exception e, boolean interrupted) {
-        int nuevosRetries = retriesActuales + 1;
-        ConsoleLoader.getInstance().stopClear();
-
-        if (interrupted) {
-            log.warn("Reintento {} para fetch (InterruptedException): {}", nuevosRetries, e.getMessage());
-        } else {
-            log.warn("Reintento {} para fetch: {}", nuevosRetries, e.getMessage());
-        }
-
-        if (nuevosRetries >= MAX_RETRIES) {
-            log.error("Error crítico en FetchService tras {} reintentos: {}", MAX_RETRIES, e.getMessage(), e);
-            String msg = interrupted
-                    ? "Fallo tras " + MAX_RETRIES + " reintentos"
-                    : "Data synchronization failed";
-            throw new DataFetchException(msg, e);
-        }
-
-        return nuevosRetries;
     }
 
     /**
-     * Lee velas desde Python en streaming con formato MessagePack e inserta en BD con batch.
-     * Reemplaza el anterior formato TSV con serialización binaria eficiente.
+     * Lee velas desde Python en streaming IPC (frames MessagePack) e inserta en BD por lotes.
      */
-    private int leerVelasEnStreamingYGuardar(Process process, String symbol, String interval) throws IOException {
+    private int leerVelasEnStreamingYGuardar(InputStream in, String symbol, String interval) throws IOException {
         int totalGuardadas = 0;
         long tiempoInicio = System.currentTimeMillis();
         List<Object[]> batch = new ArrayList<>(BATCH_INSERT_SIZE);
 
-        try (InputStream in = process.getInputStream()) {
-            // Deserializar MessagePack stream
-            List<VelaDTO> velasDTO = DataSerializationUtils.deserializeVelasFromStream(in, false);
-            
-            if (velasDTO == null || velasDTO.isEmpty()) {
-                log.warn("No se recibieron velas de Python para {}", symbol);
-                return 0;
+        Map<String, Object> envelope;
+        while (!(envelope = IpcMessagePackCodec.readEnvelopeOrNull(in)).isEmpty()) {
+            List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
+            if (!velasChunk.isEmpty()) {
+                totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
             }
+        }
 
-            for (VelaDTO dto : velasDTO) {
-                Object[] datos = new Object[] {
-                    dto.getOpenTime(),              // openTime
-                    new BigDecimal(dto.getOpen()),  // open
-                    new BigDecimal(dto.getHigh()),  // high
-                    new BigDecimal(dto.getLow()),   // low
-                    new BigDecimal(dto.getClose()), // close
-                    new BigDecimal(dto.getVolume()), // volume
-                    dto.getCloseTime(),             // closeTime
-                    new BigDecimal(dto.getQuoteVolume()), // quoteVolume
-                    dto.getTrades(),                // trades
-                    new BigDecimal(dto.getTakerBaseVolume()), // takerBaseVolume
-                    new BigDecimal(dto.getTakerQuoteVolume()), // takerQuoteVolume
-                    symbol,
-                    interval
-                };
-
-                batch.add(datos);
-
-                // Insertar cuando alcanzamos el tamaño del batch
-                if (batch.size() >= BATCH_INSERT_SIZE) {
-                    int insertadas = guardarBatchVelas(batch);
-                    totalGuardadas += insertadas;
-                    if (totalGuardadas % 100000 == 0) {
-                        long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
-                        double velocidad = totalGuardadas / (tiempoTranscurrido / 1000.0);
-                        log.info("Progreso: {} registros guardados ({} registros/seg)", 
-                                 totalGuardadas, String.format("%.0f", velocidad));
-                    }
-                    batch.clear();
-                }
-            }
-
-            // Insertar batch final si no está vacío
-            if (!batch.isEmpty()) {
-                int insertadas = guardarBatchVelas(batch);
-                totalGuardadas += insertadas;
-            }
+        if (!batch.isEmpty()) {
+            int insertadas = guardarBatchVelas(batch);
+            totalGuardadas += insertadas;
+            batch.clear();
         }
 
         long tiempoTotal = System.currentTimeMillis() - tiempoInicio;
         double velocidadMedia = totalGuardadas > 0 ? totalGuardadas / (tiempoTotal / 1000.0) : 0;
-        log.info("Lectura MessagePack completada: {} registros guardados en {} ms ({} registros/seg)", 
-                 totalGuardadas, tiempoTotal, String.format("%.0f", velocidadMedia));
+        log.info("Lectura MessagePack completada: {} registros guardados en {} ms ({} registros/seg)",
+                totalGuardadas, tiempoTotal, String.format("%.0f", velocidadMedia));
 
         return totalGuardadas;
+    }
+
+    private int procesarChunkVelas(List<VelaDTO> velasChunk,
+            String symbol,
+            String interval,
+            List<Object[]> batch,
+            int totalPrevio,
+            long tiempoInicio) {
+        int insertadasEnChunk = 0;
+        for (VelaDTO dto : velasChunk) {
+            Object[] datos = new Object[] {
+                dto.getOpenTime(),
+                new BigDecimal(dto.getOpen()),
+                new BigDecimal(dto.getHigh()),
+                new BigDecimal(dto.getLow()),
+                new BigDecimal(dto.getClose()),
+                new BigDecimal(dto.getVolume()),
+                dto.getCloseTime(),
+                new BigDecimal(dto.getQuoteVolume()),
+                dto.getTrades(),
+                new BigDecimal(dto.getTakerBaseVolume()),
+                new BigDecimal(dto.getTakerQuoteVolume()),
+                symbol,
+                interval
+            };
+
+            batch.add(datos);
+
+            if (batch.size() >= BATCH_INSERT_SIZE) {
+                int insertadas = guardarBatchVelas(batch);
+                insertadasEnChunk += insertadas;
+                int totalActual = totalPrevio + insertadasEnChunk;
+                if (totalActual % 100000 == 0) {
+                    long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
+                    double velocidad = totalActual / (tiempoTranscurrido / 1000.0);
+                    log.info("Progreso: {} registros guardados ({} registros/seg)",
+                            totalActual, String.format("%.0f", velocidad));
+                }
+                batch.clear();
+            }
+        }
+        return insertadasEnChunk;
+    }
+
+    private List<VelaDTO> extraerVelasChunk(Map<String, Object> envelope) {
+        Object payloadObj = envelope.get("payload");
+        if (!(payloadObj instanceof Map<?, ?> payloadMap)) {
+            return List.of();
+        }
+
+        Object velasObj = payloadMap.get("velas");
+        if (velasObj == null) {
+            return List.of();
+        }
+
+        String velasJson = gson.toJson(velasObj);
+        List<VelaDTO> velas = gson.fromJson(velasJson, VELA_DTO_LIST_TYPE);
+        return velas != null ? velas : List.of();
     }
 
     /**
@@ -373,18 +352,6 @@ public class FetchService {
 
     @PreDestroy
     public void shutdown() {
-        log.info("Iniciando shutdown de ExecutorService en FetchService");
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.warn("ExecutorService no terminó en tiempo. Forzando shutdown");
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            log.error("Interrupción durante shutdown graceful. Forzando shutdown");
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-        log.info("Shutdown de ExecutorService completado");
+        log.info("FetchService shutdown completo");
     }
 }

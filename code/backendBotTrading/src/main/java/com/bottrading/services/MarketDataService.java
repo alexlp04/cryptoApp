@@ -2,9 +2,11 @@ package com.bottrading.services;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,21 +52,39 @@ public class MarketDataService {
         
         log.info("Iniciando descargas paralelas para {} símbolos en {}", symbols.size(), interval);
 
-        List<CompletableFuture<Void>> tareas = new ArrayList<>(symbols.size());
+        List<Callable<String>> tareas = new ArrayList<>(symbols.size());
         for (String symbol : symbols) {
-            CompletableFuture<Void> tarea = CompletableFuture.runAsync(() -> {
-                try {
-                    fetchService.fetch(symbol, interval);
-                } catch (Exception e) {
-                    log.error("Error descargando {}: {}", symbol, e.getMessage(), e);
-                }
-            }, marketDataExecutor);
+            Callable<String> tarea = () -> {
+                fetchService.fetch(symbol, interval);
+                return symbol;
+            };
             tareas.add(tarea);
         }
 
-        CompletableFuture.allOf(tareas.toArray(new CompletableFuture[0])).join();
-        
-        log.info("Descargas completadas para todos los símbolos");
+        try {
+            // Sin timeout global: si Python sigue emitiendo progreso, dejamos completar el fetch.
+            List<Future<String>> resultados = marketDataExecutor.invokeAll(tareas);
+
+            verificarResultadosActualizacion(resultados);
+
+            log.info("Descargas completadas para todos los símbolos");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Proceso de actualización de mercado interrumpido. Tareas pendientes canceladas.", e);
+        }
+    }
+
+    private void verificarResultadosActualizacion(List<Future<String>> resultados) {
+        for (Future<String> resultado : resultados) {
+            try {
+                resultado.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Verificación de descarga interrumpida.", e);
+            } catch (ExecutionException e) {
+                log.error("Fallo en una descarga de mercado: {}", e.getMessage(), e);
+            }
+        }
     }
 
     /**

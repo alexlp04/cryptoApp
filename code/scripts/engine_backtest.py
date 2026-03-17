@@ -7,6 +7,7 @@ import csv
 from datetime import datetime, timezone
 import traceback
 import logging
+from ipc_protocol import read_request_payload, write_response, write_error
 
 # --- CONFIGURACIÓN DE LOGS ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,12 +17,19 @@ os.makedirs(log_dir, exist_ok=True)
 
 log_file = os.path.join(log_dir, "engine_backtest.log")
 
+# Logger a archivo (para debugging offline)
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Logger a stderr para no contaminar stdout, reservado al frame MessagePack IPC.
+stream_handler = logging.StreamHandler(sys.stderr)
+stream_handler.setLevel(logging.INFO)
+stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8')
-    ]
+    level=logging.DEBUG,
+    handlers=[file_handler, stream_handler]
 )
 
 # --- CONFIGURACIÓN DE DIRECTORIO DE RESULTADOS ---
@@ -233,12 +241,7 @@ def main():
         logging.info("Backtest engine started")
         
         # 1. Read input
-        input_data = sys.stdin.read()
-        if not input_data:
-            logging.info("No input data provided")
-            return
-
-        payload = json.loads(input_data)
+        payload = read_request_payload()
         strategy_path = payload.get("strategy_path")
         strategy_name = payload.get("strategy_name")
         timeframe = payload.get("timeframe")
@@ -279,16 +282,16 @@ def main():
             logging.info(f"Backtest for {symbol}: {trade_count} trades, result: {stats.get('resultado')}")
 
         logging.info(f"Backtest completed successfully. Total trades saved: {total_trades}")
-        print(json.dumps({
+        write_response("BACKTEST_RESPONSE", {
             "status": "success",
             "total_trades": total_trades,
             "stats": stats_list
-        }))
+        })
 
     except Exception as e:
         error_msg = f"Backtest engine error: {str(e)}\n{traceback.format_exc()}"
         logging.error(error_msg)
-        print(error_msg, file=sys.stderr)
+        write_error("ERROR", error_msg)
         sys.exit(1)
 
 if __name__ == "__main__":

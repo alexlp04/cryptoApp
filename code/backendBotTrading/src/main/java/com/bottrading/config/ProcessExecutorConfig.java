@@ -16,8 +16,20 @@ public final class ProcessExecutorConfig {
     // =========================================================================
     // RESILIENCIA
     // =========================================================================
-    /** Timeout para procesos Python en segundos. */
+    /** Timeout legacy para procesos Python en segundos. Usar solo cuando se quiera límite total explícito. */
     public static final int TIMEOUT_SECONDS = 30;
+
+    /** Tiempo máximo para que el proceso Python emita su primera señal de vida. */
+    public static final int STARTUP_TIMEOUT_SECONDS = 120;
+
+    /** Inactividad máxima tolerada en operaciones batch de sincronización/cálculo. */
+    public static final int BATCH_INACTIVITY_TIMEOUT_SECONDS = 300;
+
+    /** Inactividad máxima tolerada en backtesting. */
+    public static final int BACKTEST_INACTIVITY_TIMEOUT_SECONDS = 900;
+
+    /** Inactividad máxima tolerada en entrenamiento de modelos. */
+    public static final int TRAIN_INACTIVITY_TIMEOUT_SECONDS = 1800;
 
     /** Número máximo de reintentos automáticos en caso de fallo. */
     public static final int MAX_RETRIES = 3;

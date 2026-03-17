@@ -1,5 +1,6 @@
 package com.bottrading.repositories;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,7 +19,7 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
     // Sustituye sumCapitalActivoByWallet
     @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i " +
             "WHERE i.walletAsociada = :walletAsociada AND i.estado = 'ACTIVA'")
-    Double sumCapitalActivoByWallet(Long walletAsociada);
+        BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
 
     List<InstanciaEstrategia> findByEstado(String estado);
 

@@ -8,6 +8,7 @@ import os
 import types
 import logging # 1. Importar logging
 from datetime import datetime
+from ipc_protocol import read_request_payload
 
 # =========================
 # CONFIGURACIÓN DE LOGS
@@ -19,14 +20,23 @@ log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "engine_rt.log")
 
+# Logger a archivo (para debugging offline)
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Logger a stdout (para que Java vea el progreso)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(logging.INFO)
+stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        # NO usamos StreamHandler para no ensuciar la consola que lee Java
-    ]
+    level=logging.DEBUG,
+    handlers=[file_handler, stream_handler]
 )
+
+# Alias para logging.info → stdout
+log = logging.getLogger(__name__)
 
 # ==========================================
 # 1. PARCHE DE COMPATIBILIDAD (Windows + Py 3.13)
@@ -114,8 +124,8 @@ async def run_symbol(symbol, timeframe, strategy_path, capital, risk_per_trade, 
                             "timestamp": int(row["timestamp"]),
                             "is_real": is_real
                         }
-                        # El print sigue siendo necesario para Java
-                        print(json.dumps(signal), flush=True)
+                        # Formato único runtime para Java.
+                        print(f"SIGNAL\t{json.dumps(signal)}", flush=True)
                         logging.info(f"SEÑAL ENVIADA: {action} para {symbol} a precio {row['close']}")
 
         except Exception as e:
@@ -127,13 +137,8 @@ async def run_symbol(symbol, timeframe, strategy_path, capital, risk_per_trade, 
 # =========================
 def main():
     logging.info("Motor Python RT iniciado. Esperando configuración de Java...")
-    input_data = sys.stdin.read()
-    if not input_data:
-        logging.warning("No se recibió configuración de entrada. Cerrando.")
-        sys.exit(0)
-
     try:
-        payload = json.loads(input_data)
+        payload = read_request_payload()
         logging.info(f"Configuración recibida: {payload}")
         
         asyncio.run(run_all(

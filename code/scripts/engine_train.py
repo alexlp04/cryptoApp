@@ -21,6 +21,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 import xgboost as xgb
 import lightgbm as lgb
+from ipc_protocol import read_request_payload, write_response, write_error
 
 warnings.filterwarnings("ignore")
 
@@ -34,12 +35,18 @@ os.makedirs(log_dir, exist_ok=True)
 
 log_file = os.path.join(log_dir, "engine_train.log")
 
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+stream_handler = logging.StreamHandler(sys.stderr)
+stream_handler.setLevel(logging.INFO)
+stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8')
-    ]
+    handlers=[file_handler, stream_handler]
 )
 
 
@@ -186,6 +193,7 @@ def build_and_train_neural_network(X_train, y_train, X_test, hyperparams):
     """Construye, entrena y devuelve una Red Neuronal de Deep Learning."""
     logging.info("Importando TensorFlow/Keras para Deep Learning...")
     import tensorflow as tf
+    from tensorflow.keras.callbacks import Callback
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import Dense, Dropout, Normalization
     from tensorflow.keras.optimizers import Adam
@@ -195,6 +203,23 @@ def build_and_train_neural_network(X_train, y_train, X_test, hyperparams):
     batch_size = int(hyperparams.get('batch_size', 64))
     learning_rate = float(hyperparams.get('learning_rate', 0.001))
     dropout_rate = float(hyperparams.get('dropout_rate', 0.3))
+
+    class EpochProgressLogger(Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            logs = logs or {}
+            loss = float(logs.get('loss') or 0.0)
+            val_loss = float(logs.get('val_loss') or 0.0)
+            acc = float(logs.get('accuracy') or 0.0)
+            val_acc = float(logs.get('val_accuracy') or 0.0)
+            logging.info(
+                "Epoch %d/%d completada. loss=%.6f val_loss=%.6f acc=%.4f val_acc=%.4f",
+                epoch + 1,
+                epochs,
+                loss,
+                val_loss,
+                acc,
+                val_acc,
+            )
 
     # 2. Capa de Normalización (Aprende la escala del dataset automáticamente)
     norm_layer = Normalization()
@@ -216,7 +241,15 @@ def build_and_train_neural_network(X_train, y_train, X_test, hyperparams):
     
     # 4. Entrenar la Red
     logging.info(f"Iniciando entrenamiento de la Red Neuronal (Épocas: {epochs}, Batch Size: {batch_size}, LR: {learning_rate})...")
-    model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_split=0.1, verbose=0)
+    model.fit(
+        X_train,
+        y_train,
+        epochs=epochs,
+        batch_size=batch_size,
+        validation_split=0.1,
+        verbose=0,
+        callbacks=[EpochProgressLogger()],
+    )
     
     # 5. Predecir para evaluar
     y_pred_probs = model.predict(X_test, verbose=0)
@@ -229,9 +262,7 @@ def main():
     logging.info("=== Iniciando proceso de entrenamiento masivo (engine_train.py) ===")
     
     try:
-        input_data = sys.stdin.read()
-        if not input_data: raise ValueError("No se recibieron datos desde Java.")
-        payload = json.loads(input_data)
+        payload = read_request_payload()
         
         model_type = payload.get("model_type", "random_forest").lower().strip()
         symbol = payload.get("symbol", "UNKNOWN")
@@ -382,11 +413,11 @@ def main():
             }
         }
 
-        print(json.dumps(resultado, indent=4))
+        write_response("TRAIN_RESPONSE", resultado)
 
     except Exception as e:
         logging.error(f"Fallo durante el proceso: {str(e)}", exc_info=True)
-        print(json.dumps({"status": "error", "message": str(e)}))
+        write_error("ERROR", str(e))
         sys.exit(1)
 
 if __name__ == "__main__":

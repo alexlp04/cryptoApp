@@ -1,29 +1,24 @@
 package com.bottrading.services;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import com.bottrading.bridge.PythonBridgeExecutionException;
+import com.bottrading.bridge.PythonBridgeFacade;
+import com.bottrading.bridge.PythonBridgeRequest;
+import com.bottrading.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.bridge.protocol.IpcMessageType;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import com.bottrading.beans.Vela;
 import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.utils.ConsoleLoader;
-import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.PythonProcessSupport;
 import com.google.gson.Gson;
 
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -43,26 +38,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class BacktestingService {
 
-    private final ExecutorService executor = Executors.newFixedThreadPool(ProcessExecutorConfig.EXECUTOR_THREADS);
+    private final Gson gson = new Gson();
+    private final PythonBridgeFacade pythonBridgeFacade;
 
-    // =========================================================================
-    // LIFECYCLE MANAGEMENT
-    // =========================================================================
-
-    @PreDestroy
-    public void shutdown() {
-        log.info("Iniciando shutdown graceful de BacktestingService...");
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
-                log.warn("ExecutorService no terminó en 10s, forzando shutdown");
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Interrupción durante shutdown: {}", e.getMessage());
-            executor.shutdownNow();
-        }
+    public BacktestingService(PythonBridgeFacade pythonBridgeFacade) {
+        this.pythonBridgeFacade = pythonBridgeFacade;
     }
 
     // =========================================================================
@@ -72,41 +52,17 @@ public class BacktestingService {
             Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk,
             boolean guardarTrades)
             throws StrategyExecutionException {
+        // 1. Preparar datos
+        ConsoleLoader.getInstance().startDots("Transformando datos");
+        Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
+        ConsoleLoader.getInstance().stopClear();
 
-        for (int intento = 1; intento <= ProcessExecutorConfig.MAX_RETRIES; intento++) {
-            try {
-                log.info("Intento {} de {} para backtest '{}'", intento, ProcessExecutorConfig.MAX_RETRIES,
-                        nombreEstrategia);
+        // 2. Construir payload con opción de guardar trades definida por la capa de CLI
+        String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
+                nombreEstrategia, guardarTrades);
 
-                // 1. Preparar datos
-                ConsoleLoader.getInstance().startDots("Transformando datos");
-                Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
-                ConsoleLoader.getInstance().stopClear();
-
-                // 2. Construir payload con opción de guardar trades definida por la capa de CLI
-                String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
-                        nombreEstrategia, guardarTrades);
-
-                // 3. Ejecutar con resiliencia
-                return invocarMotorPythonConRetries(payload);
-
-            } catch (StrategyExecutionException e) {
-                if (intento == ProcessExecutorConfig.MAX_RETRIES) {
-                    log.error("Falló backtest después de {} intentos: {}", ProcessExecutorConfig.MAX_RETRIES,
-                            e.getMessage());
-                    throw e;
-                }
-                log.warn("Intento {} falló, reintentando en {}ms...", intento, ProcessExecutorConfig.RETRY_DELAY_MS);
-                try {
-                    Thread.sleep(ProcessExecutorConfig.RETRY_DELAY_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new StrategyExecutionException("Backtest interrumpido durante reintento", ie);
-                }
-            }
-        }
-
-        throw new StrategyExecutionException("Backtest falló tras " + ProcessExecutorConfig.MAX_RETRIES + " intentos");
+        // 3. Ejecutar con resiliencia centralizada en PythonBridgeFacade
+        return invocarMotorPythonConRetries(payload);
     }
 
     private Map<String, List<Map<String, Object>>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
@@ -146,7 +102,7 @@ public class BacktestingService {
 
         // Nota: Mantener JSON por compatibilidad hacia atrás
         // En próxima fase (Fase 4): Actualizar scripts Python para MessagePack
-        return new Gson().toJson(payload);
+        return gson.toJson(payload);
     }
 
     /**
@@ -154,88 +110,60 @@ public class BacktestingService {
      * Soporte para MessagePack (próxima fase) manteniendo compatibilidad JSON.
      */
     private String invocarMotorPythonConRetries(String jsonPayload) throws StrategyExecutionException {
-        Process process = null;
         try {
             long startTime = System.currentTimeMillis();
             log.debug("Iniciando backtest con payload de {} bytes", jsonPayload.length());
 
             ConsoleLoader.getInstance().startSpinner("Ejecutando backtest");
-            process = PythonProcessSupport.startPythonScript(PathConfig.ENGINE_BACKTEST_PATH, false);
+            PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_BACKTEST_PATH)
+                    .operationName("backtest")
+                    .noTimeout()
+                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
+                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
+                    .stdinWriter(os -> escribirEnvelopeBacktest(os, jsonPayload))
+                    .stdoutReader(this::parseResponseWithFallback)
+                    .onStderrLine(line -> log.info("PY [backtest]: {}", line))
+                    .build();
 
-            escribirPayloadBacktest(process, jsonPayload);
+            String stdout = pythonBridgeFacade.execute(request);
 
-            // Esperar con timeout
-            boolean finished = PythonProcessSupport.waitFor(process, ProcessExecutorConfig.TIMEOUT_SECONDS, TimeUnit.SECONDS);
             ConsoleLoader.getInstance().stopClear();
-
-            if (!finished) {
-                log.error("Backtest timeout después de {}s, destruyendo proceso", ProcessExecutorConfig.TIMEOUT_SECONDS);
-                destroyProcessForcibly(process);
-                throw new StrategyExecutionException(
-                        "Backtest excedió timeout de " + ProcessExecutorConfig.TIMEOUT_SECONDS + "s");
-            }
-
             long duration = System.currentTimeMillis() - startTime;
-
-            // Leer salida
-            String stdout = leerStream(process.getInputStream());
-            String stderr = leerStream(process.getErrorStream());
-            int exitCode = process.exitValue();
-
-            log.info("Backtest completado en {} ms (exit code: {})", duration, exitCode);
-
-            if (exitCode != 0) {
-                String errorMsg = !stderr.isBlank() ? stderr : stdout;
-                log.error("Motor de backtest falló con código {}: {}", exitCode, errorMsg);
-                throw new StrategyExecutionException("Backtest falló (Exit Code " + exitCode + "):\n" + errorMsg);
-            }
-
+            log.info("Backtest completado en {} ms", duration);
             return stdout;
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Proceso backtest interrumpido: {}", e.getMessage());
-            if (process != null) {
-                destroyProcessForcibly(process);
-            }
-            throw new StrategyExecutionException("Backtest interrumpido", e);
+        } catch (PythonBridgeExecutionException e) {
+            ConsoleLoader.getInstance().stopClear();
+            throw new StrategyExecutionException("Backtest falló: " + e.getMessage(), e);
         } catch (StrategyExecutionException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error inesperado en backtest: {}", e.getMessage(), e);
-            if (process != null) {
-                destroyProcessForcibly(process);
-            }
+            ConsoleLoader.getInstance().stopClear();
             throw new StrategyExecutionException("Error inesperado: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Destruye un proceso forzosamente y registra el evento.
-     */
-    private void destroyProcessForcibly(Process process) {
-        if (process != null && process.isAlive()) {
-            log.warn("Destruyendo proceso Python forzadamente");
-            PythonProcessSupport.destroyForcibly(process, 2, TimeUnit.SECONDS);
-        }
-    }
-
-    private void escribirPayloadBacktest(Process process, String payload) {
-        try (OutputStream os = process.getOutputStream()) {
-            PythonProcessSupport.writeUtf8(os, payload);
-        } catch (IOException e) {
-            log.error("Error escribiendo payload al proceso Python: {}", e.getMessage());
-            destroyProcessForcibly(process);
-            throw new StrategyExecutionException("No se pudo escribir datos al motor Python", e);
         }
     }
 
     /**
      * Lee un flujo de entrada completo y lo convierte a String.
      */
-    private String leerStream(java.io.InputStream is) throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            return reader.lines().collect(Collectors.joining("\n"));
+    private void escribirEnvelopeBacktest(java.io.OutputStream outputStream, String jsonPayload) throws IOException {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = gson.fromJson(jsonPayload, Map.class);
+        IpcMessagePackCodec.writeEnvelope(outputStream, IpcMessageType.BACKTEST_REQUEST, payload);
+    }
+
+    private String leerEnvelopeBacktest(InputStream inputStream) throws IOException {
+        Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
+        Object payload = envelope.get("payload");
+        return gson.toJson(payload == null ? Map.of() : payload);
+    }
+
+    private String parseResponseWithFallback(InputStream inputStream) throws IOException {
+        byte[] raw = inputStream.readAllBytes();
+        try {
+            return leerEnvelopeBacktest(new java.io.ByteArrayInputStream(raw));
+        } catch (Exception ignored) {
+            return IpcMessagePackCodec.readUtf8Fallback(new java.io.ByteArrayInputStream(raw));
         }
     }
 }
