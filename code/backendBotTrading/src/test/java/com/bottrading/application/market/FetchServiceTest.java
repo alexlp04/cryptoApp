@@ -97,10 +97,16 @@ class FetchServiceTest {
         void should_skip_download_when_data_is_up_to_date() throws Exception {
             // Given: Última vela hace 30 minutos (< 1 hora de intervalo)
             long lastTimestamp = NOW_MS - (30 * 60 * 1000);
+            long minTimestamp = NOW_MS - (24L * 60L * 60L * 1000L);
+            long intervalMillis = 60L * 60L * 1000L;
+            long expectedCount = ((lastTimestamp - minTimestamp) / intervalMillis) + 1;
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(lastTimestamp);
             when(velaRepository.findMinOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
-                    .thenReturn(NOW_MS - (24 * 60 * 60 * 1000));
+                    .thenReturn(minTimestamp);
+            when(velaRepository.countBySymbolAndIntervalAndOpenTimeBetween(
+                    eq(SYMBOL), eq(INTERVAL), eq(minTimestamp), eq(lastTimestamp)))
+                    .thenReturn(expectedCount);
 
             // When: Se invoca fetch() con datos al día
             fetchService.fetch(SYMBOL, INTERVAL);
@@ -191,7 +197,7 @@ class FetchServiceTest {
         void should_download_full_n_days_window_when_no_prior_data() throws Exception {
             // Given: No hay datos, queremos 30 días
             int dias = 30;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(null);
@@ -217,9 +223,9 @@ class FetchServiceTest {
         void should_cleanup_and_complete_when_gap_in_training_window() throws Exception {
             // Given: Tenemos datos incompletos
             int dias = 30;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
             long lastTimestamp = NOW_MS - (5 * 60 * 60 * 1000);
-            long gapStart = targetTimestamp + (10 * 24 * 60 * 60 * 1000);
+                        long gapStart = targetTimestamp + (10L * 24L * 60L * 60L * 1000L);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(lastTimestamp);
@@ -258,7 +264,7 @@ class FetchServiceTest {
         void should_skip_cleanup_when_training_window_complete_and_recent() throws Exception {
             // Given: Datos completos y recientes
             int dias = 30;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
             long lastTimestamp = NOW_MS - (5 * 60 * 60 * 1000);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
@@ -293,11 +299,20 @@ class FetchServiceTest {
         void should_resync_from_target_when_insufficient_historical_data() throws Exception {
             // Given: Queremos 30 días pero solo tenemos 5 días
             int dias = 30;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
-            long lastTimestamp = NOW_MS - (5 * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
+                        long lastTimestamp = NOW_MS - (5L * 24L * 60L * 60L * 1000L);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(lastTimestamp);
+            when(velaRepository.countBySymbolAndIntervalAndOpenTimeBetween(
+                    eq(SYMBOL), eq(INTERVAL), eq(targetTimestamp), eq(lastTimestamp)))
+                    .thenReturn(1L);
+            when(velaRepository.findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                    eq(SYMBOL), eq(INTERVAL), eq(targetTimestamp), eq(lastTimestamp)))
+                    .thenReturn(null);
+            when(velaRepository.findFirstInternalGapOpenTime(
+                    eq(SYMBOL), eq(INTERVAL), eq(targetTimestamp), eq(lastTimestamp), anyLong()))
+                    .thenReturn(null);
             doNothing().when(indicadorRepository)
                     .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(
                             SYMBOL, INTERVAL, targetTimestamp);
@@ -417,10 +432,10 @@ class FetchServiceTest {
 
                 // When: Se invoca con cada intervalo
                 fetchService.fetch(SYMBOL, interval);
-
-                // Then: No debe lanzar excepción
-                verify(pythonBridgeFacade).execute(any());
             }
+
+                        // Then: No debe lanzar excepción y ejecutar una vez por intervalo
+                        verify(pythonBridgeFacade, times(validIntervals.length)).execute(any());
         }
 
         @Test
@@ -496,7 +511,7 @@ class FetchServiceTest {
         void should_cleanup_indicadores_before_velas_in_incremental() throws Exception {
             // Given: fetchIncremental con limpiezas
             int dias = 30;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
 
             InOrder inOrder = inOrder(indicadorRepository, velaRepository);
 
@@ -549,7 +564,7 @@ class FetchServiceTest {
 
             // Then: No debió consultar ETHUSDT
             verify(velaRepository, never())
-                    .findMaxOpenTimeBySymbolAndInterval(symbol2, anyString());
+                    .findMaxOpenTimeBySymbolAndInterval(eq(symbol2), anyString());
         }
 
         @Test
@@ -557,7 +572,7 @@ class FetchServiceTest {
         void should_handle_single_day_incremental_fetch() throws Exception {
             // Given: Queremos solo 1 día
             int dias = 1;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(null);
@@ -582,7 +597,7 @@ class FetchServiceTest {
         void should_handle_large_days_incremental_fetch() throws Exception {
             // Given: 365 días completos
             int dias = 365;
-            long targetTimestamp = NOW_MS - (dias * 24 * 60 * 60 * 1000);
+                        long targetTimestamp = NOW_MS - (dias * 24L * 60L * 60L * 1000L);
 
             when(velaRepository.findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL))
                     .thenReturn(null);

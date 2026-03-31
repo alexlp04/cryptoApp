@@ -95,21 +95,21 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
             // Then
             verify(fileService, times(1))
-                .verificarYLimpiarCarpetaEstrategia("RSI_SMA", true);
+                .verificarYLimpiarCarpetaEstrategia("RSISMAStrategy", true);
             verify(velaRepository, atLeastOnce())
                 .findBySymbolAndIntervalOrderByOpenTimeAsc("BTCUSDT", "1h");
             verify(backtestingService, times(1))
                 .ejecutarBacktest(
-                    anyString(), eq("RSI_SMA"), eq("1h"),
+                    anyString(), eq("RSISMAStrategy"), eq("1h"),
                     any(Map.class), eq(new BigDecimal("10000")), eq(new BigDecimal("0.02")), eq(true));
             verify(fileService, times(1))
-                .guardarEstadisticasDelBacktest("RSI_SMA", "1h", "{\"winRate\": 0.65, \"pnl\": 1500.00}");
+                .guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", "{\"winRate\": 0.65, \"pnl\": 1500.00}");
         }
 
         @Test
@@ -126,7 +126,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT", "ETHUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT", "ETHUSDT"),
                 new BigDecimal("20000"), new BigDecimal("0.02"),
                 false, true);
 
@@ -138,20 +138,23 @@ class StrategyBacktestApplicationServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe omitir ejecución cuando no hay datos históricos")
+        @DisplayName("✓ Debe ejecutar motor con dataset vacío pero sin guardar resultados")
         void should_abort_when_no_historical_data_available() throws Exception {
             // Given
             when(velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc(anyString(), anyString()))
                 .thenReturn(Collections.emptyList());
+            when(backtestingService.ejecutarBacktest(anyString(), anyString(), anyString(),
+                    any(Map.class), any(BigDecimal.class), any(BigDecimal.class), anyBoolean()))
+                .thenReturn(null);
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("NONEXISTENTSYMBOL"),
+                "RSISMAStrategy", "1h", List.of("NONEXISTENTSYMBOL"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
-            // Then — BacktestingService NUNCA debe ser llamado
-            verify(backtestingService, never()).ejecutarBacktest(
+            // Then
+            verify(backtestingService, times(1)).ejecutarBacktest(
                 anyString(), anyString(), anyString(),
                 any(Map.class), any(BigDecimal.class), any(BigDecimal.class), anyBoolean());
             verify(fileService, never())
@@ -170,13 +173,13 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "4h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "4h", List.of("BTCUSDT"),
                 new BigDecimal("5000"), new BigDecimal("0.01"),
                 true, false);
 
             // Then — FileService debe ser llamado con limpiarBacktestsPrevios=true
             verify(fileService, times(1))
-                .verificarYLimpiarCarpetaEstrategia("RSI_SMA", true);
+                .verificarYLimpiarCarpetaEstrategia("RSISMAStrategy", true);
         }
 
         @Test
@@ -191,13 +194,13 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "4h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "4h", List.of("BTCUSDT"),
                 new BigDecimal("5000"), new BigDecimal("0.01"),
                 false, false);
 
             // Then — FileService debe ser llamado con limpiarBacktestsPrevios=false
             verify(fileService, times(1))
-                .verificarYLimpiarCarpetaEstrategia("RSI_SMA", false);
+                .verificarYLimpiarCarpetaEstrategia("RSISMAStrategy", false);
         }
 
         @Test
@@ -212,7 +215,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -234,7 +237,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, false);
 
@@ -260,7 +263,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -281,7 +284,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -302,7 +305,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("NONEXISTENTSYMBOL", "BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("NONEXISTENTSYMBOL", "BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -324,7 +327,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -349,7 +352,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertThrows(RuntimeException.class, () -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("10000"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -367,7 +370,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -388,7 +391,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -416,7 +419,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then — No debe lanzar excepción
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("10000"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -435,7 +438,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("10000"), new BigDecimal("0.05"),
                     true, true);
             });
@@ -455,7 +458,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", timeframe, List.of("BTCUSDT"),
+                    "RSISMAStrategy", timeframe, List.of("BTCUSDT"),
                     new BigDecimal("10000"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -479,13 +482,13 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
             // Then
             verify(fileService, atLeastOnce())
-                .verificarYLimpiarCarpetaEstrategia("RSI_SMA", true);
+                .verificarYLimpiarCarpetaEstrategia("RSISMAStrategy", true);
         }
 
         @Test
@@ -502,7 +505,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT", "ETHUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT", "ETHUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -525,7 +528,7 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
@@ -548,13 +551,13 @@ class StrategyBacktestApplicationServiceTest {
 
             // When
             service.ejecutarBacktest(
-                "RSI_SMA", "1h", List.of("BTCUSDT"),
+                "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                 new BigDecimal("10000"), new BigDecimal("0.02"),
                 true, true);
 
             // Then
             verify(fileService, times(1))
-                .guardarEstadisticasDelBacktest("RSI_SMA", "1h", resultadoJson);
+                .guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", resultadoJson);
         }
     }
 
@@ -576,7 +579,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("10000"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -595,7 +598,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("50000"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -614,7 +617,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", List.of("BTCUSDT"),
+                    "RSISMAStrategy", "1h", List.of("BTCUSDT"),
                     new BigDecimal("1"), new BigDecimal("0.02"),
                     true, true);
             });
@@ -626,7 +629,7 @@ class StrategyBacktestApplicationServiceTest {
             // When & Then
             assertDoesNotThrow(() -> {
                 service.ejecutarBacktest(
-                    "RSI_SMA", "1h", Collections.emptyList(),
+                    "RSISMAStrategy", "1h", Collections.emptyList(),
                     new BigDecimal("10000"), new BigDecimal("0.02"),
                     true, true);
             });

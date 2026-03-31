@@ -24,10 +24,12 @@ public class UsuarioMapper {
         if (jpaEntity == null) {
             return null;
         }
-        return new Usuario(
+        Usuario usuario = new Usuario(
             jpaEntity.getNombre(),
             jpaEntity.getPasswordHash()
         );
+        usuario.setId(jpaEntity.getId());
+        return usuario;
     }
 
     /**
@@ -39,9 +41,11 @@ public class UsuarioMapper {
         if (domain == null) {
             return null;
         }
-        return new UsuarioJpaEntity(
+        UsuarioJpaEntity entity = new UsuarioJpaEntity(
             domain.getNombre(),
             domain.getPasswordHash()
         );
+        entity.setId(domain.getId());
+        return entity;
     }
 }
