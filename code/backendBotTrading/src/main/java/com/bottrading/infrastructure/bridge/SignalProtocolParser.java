@@ -30,7 +30,6 @@ public class SignalProtocolParser {
         if (trimmedLine.startsWith(SIGNAL_PREFIX)) {
             return parseSignal(trimmedLine.substring(SIGNAL_PREFIX.length()), instanciaId);
         } else {
-            // Log normal de Python
             log.info("PYLOG [{}]: {}", instanciaId, line);
             return null;
         }

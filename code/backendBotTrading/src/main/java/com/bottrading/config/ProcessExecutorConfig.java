@@ -10,12 +10,9 @@ package com.bottrading.config;
 public final class ProcessExecutorConfig {
 
     private ProcessExecutorConfig() {
-        // Clase utilitaria, no instanciable
     }
 
-    // =========================================================================
     // RESILIENCIA
-    // =========================================================================
     /** Timeout legacy para procesos Python en segundos. Usar solo cuando se quiera límite total explícito. */
     public static final int TIMEOUT_SECONDS = 30;
 
@@ -37,9 +34,7 @@ public final class ProcessExecutorConfig {
     /** Delay entre reintentos en milisegundos. */
     public static final long RETRY_DELAY_MS = 1000;
 
-    // =========================================================================
     // SERIALIZACIÓN
-    // =========================================================================
     /** Tamaño de chunk para streaming en registros. */
     public static final int CHUNK_SIZE = 10000;
 
@@ -49,18 +44,14 @@ public final class ProcessExecutorConfig {
     /** Codificación de caracteres estándar. */
     public static final String CHARSET = "UTF-8";
 
-    // =========================================================================
     // PROCESOS PYTHON
-    // =========================================================================
     /** Número de threads para ExecutorService (BacktestingService, etc). */
     public static final int EXECUTOR_THREADS = 4;
 
     /** Esperar confirmación de lectura en stream. Delay en ms. */
     public static final long STREAM_READ_DELAY_MS = 50;
 
-    // =========================================================================
     // LOGGING Y DIAGNÓSTICO
-    // =========================================================================
     /** Log cada N registros procesados. */
     public static final int LOG_INTERVAL_RECORDS = 5000;
 

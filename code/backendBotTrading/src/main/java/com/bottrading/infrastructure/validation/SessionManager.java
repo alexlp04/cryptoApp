@@ -26,7 +26,6 @@ public class SessionManager {
         this.estrategiaService = estrategiaService;
     }
 
-    // --- Lógica de Sesión ---
 
     public void login(Usuario usuario) {
         this.currentUser = usuario;

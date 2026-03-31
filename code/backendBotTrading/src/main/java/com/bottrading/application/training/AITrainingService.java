@@ -81,7 +81,6 @@ public class AITrainingService {
                 daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
             }
 
-            // 1. Asegurar que los datos y los indicadores están actualizados
             marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, daysForPreparation, now);
 
             log.info("Extrayendo dataset {} de la base de datos...",
@@ -97,7 +96,6 @@ public class AITrainingService {
                 targetTimestamp = now - (dias * 24L * 60L * 60L * 1000L);
             }
 
-            // 2. Extraer Velas Históricas
             List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
                     symbol, timeframe, targetTimestamp);
 
@@ -105,7 +103,6 @@ public class AITrainingService {
                 return "Error: No hay datos suficientes de " + symbol + " para entrenar.";
             }
 
-            // 3. Montar dataset según el flujo (dinámico vs legacy)
             List<Map<String, Object>> dataset = new ArrayList<>();
             List<IndicadorTecnico> todosLosIndicadores = new ArrayList<>();
             Map<Long, List<IndicadorTecnico>> indicadoresPorVela = new HashMap<>();
@@ -146,7 +143,6 @@ public class AITrainingService {
 
             log.info("--- DATASET LISTO --- {} registros", dataset.size());
 
-            // 4. Construir el JSON para enviar a Python
             Map<String, Object> payload = new HashMap<>();
             payload.put("model_type", nombreModelo);
             payload.put("symbol", symbol);
@@ -168,7 +164,6 @@ public class AITrainingService {
             indicadoresPorVela.clear();
             dataset.clear();
 
-            // 5. Ejecutar script Python con timeouts
             return invocarMotorPythonConTimeouts(jsonPayload);
 
         } catch (Exception e) {

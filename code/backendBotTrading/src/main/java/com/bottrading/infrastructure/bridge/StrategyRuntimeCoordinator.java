@@ -42,10 +42,8 @@ public class StrategyRuntimeCoordinator {
     private final AccountingService accountingService;
     private final PythonBridgeFacade pythonBridgeFacade;
 
-    // Mapa de threads por estrategia para uso posterior
     private final Map<Long, Future<?>> runtimeThreads = new ConcurrentHashMap<>();
     
-    // Executor de Virtual Threads
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public StrategyRuntimeCoordinator(
@@ -82,19 +80,14 @@ public class StrategyRuntimeCoordinator {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 1. Iniciar proceso Python
             process = processSupervisor.iniciarProcesoPython(instancia);
 
-            // 2. Drenar stderr en paralelo
             stderrFuture = iniciarLecturaErroresPython(process, instancia);
 
-            // 3. Enviar configuración
             processSupervisor.enviarPayload(process, instancia, symbols);
 
-            // 4. Escuchar salida con timeout
             escucharSalidaPythonConTimeout(process, instancia, startTime);
 
-            // 5. Esperar cierre ordenado
             if (process.isAlive()) {
                 boolean finished = process.waitFor(5, TimeUnit.SECONDS);
                 if (!finished) {
@@ -240,7 +233,6 @@ public class StrategyRuntimeCoordinator {
             detenerEstrategia(instancia.getId());
         }
         
-        // Limpiar colas y estado
         retryQueueService.cleanup(instanciaId);
         runtimeThreads.remove(instanciaId);
     }
@@ -249,13 +241,11 @@ public class StrategyRuntimeCoordinator {
      * Detiene una estrategia específica.
      */
     public void detenerEstrategia(Long instanciaId) {
-        // Cancelar thread de Java
         Future<?> future = runtimeThreads.remove(instanciaId);
         if (future != null) {
             future.cancel(true);
         }
         
-        // Destruir proceso Python
         processSupervisor.destroyProcessForcibly(instanciaId);
         
         log.info("Recursos liberados para estrategia {}", instanciaId);

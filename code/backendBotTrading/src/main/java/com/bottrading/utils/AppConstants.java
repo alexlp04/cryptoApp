@@ -20,7 +20,6 @@ public final class AppConstants {
      */
     public static final String PYTHON_EXECUTABLE = ".venv/bin/python3"; 
 
-    // --- CLAVES JSON / CSV ---
     public static final String KEY_SYMBOL = "symbol";
     public static final String KEY_TIMEFRAME = "timeframe";
     public static final String KEY_SIDE = "side";
@@ -29,7 +28,6 @@ public final class AppConstants {
     public static final String KEY_PNL = "pnl";
     public static final String KEY_CAPITAL = "capital";
     
-    // --- ESTADÍSTICAS ---
     public static final String KEY_OP_GANADAS = "op_ganadas";
     public static final String KEY_OP_PERDIDAS = "op_perdidas";
     public static final String KEY_OP_TOTALES = "op_totales";
@@ -49,7 +47,6 @@ public final class AppConstants {
     public static final String KEY_CREADA = "CREADA";
 
 
-    // --- CSV HEADERS ---
     public static final String CSV_HEADER_TRADES = String.join(",", 
             KEY_SYMBOL, KEY_TIMEFRAME, KEY_SIDE, KEY_PRICE, KEY_TIMESTAMP, KEY_PNL, KEY_CAPITAL);
 
@@ -58,7 +55,6 @@ public final class AppConstants {
             KEY_MAX_DRAWDOWN, KEY_ABS_DRAWDOWN, KEY_RET_ACUMULADO, KEY_RET_TOTAL, 
             KEY_WIN_RATE, KEY_PROFIT_FACTOR, KEY_FECHA_INICIO, KEY_FECHA_FIN, KEY_RESULTADO);
 
-    // --- NOMBRES DE ARCHIVOS Y DIRECTORIOS ---
     public static final String DIR_BACKEND = "backendBotTrading";
     public static final String DIR_SCRIPTS = "scripts";
     public static final String DIR_STRATEGIES = "strategies";

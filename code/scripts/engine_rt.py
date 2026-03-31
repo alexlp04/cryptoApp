@@ -74,7 +74,16 @@ def load_strategy(path, capital=1000, risk_per_trade=0.02):
 # =========================
 # 3. LOOP POR SÍMBOLO
 # =========================
-async def run_symbol(symbol, timeframe, strategy_path, capital, risk_per_trade, is_real, max_candles=100):
+async def run_symbol(
+    symbol,
+    timeframe,
+    strategy_path,
+    capital,
+    risk_per_trade,
+    is_real,
+    max_candles=100,
+    only_closed_candles=False,
+):
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
@@ -90,7 +99,9 @@ async def run_symbol(symbol, timeframe, strategy_path, capital, risk_per_trade, 
                     data = json.loads(msg)
                     k = data["k"]
 
-                    if not k["x"]:
+                    # En runtime suele interesar reaccionar antes del cierre de vela.
+                    # Si se desea comportamiento clásico de cierre, activar only_closed_candles.
+                    if only_closed_candles and not k["x"]:
                         continue
 
                     new_row = pd.DataFrame([{
@@ -147,15 +158,24 @@ def main():
             strategy_path=payload["strategy_path"],
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),
-            is_real=payload.get("is_real", False)
+            is_real=payload.get("is_real", False),
+            only_closed_candles=payload.get("only_closed_candles", False),
         ))
     except Exception as e:
         logging.critical(f"Fallo catastrófico en el motor: {str(e)}", exc_info=True)
         sys.exit(1)
 
-async def run_all(symbols, timeframe, strategy_path, capital, risk_per_trade, is_real):
+async def run_all(symbols, timeframe, strategy_path, capital, risk_per_trade, is_real, only_closed_candles=False):
     tasks = [
-        run_symbol(sym, timeframe, strategy_path, capital, risk_per_trade, is_real)
+        run_symbol(
+            sym,
+            timeframe,
+            strategy_path,
+            capital,
+            risk_per_trade,
+            is_real,
+            only_closed_candles=only_closed_candles,
+        )
         for sym in symbols
     ]
     await asyncio.gather(*tasks)

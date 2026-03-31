@@ -7,7 +7,6 @@ import java.io.File;
 public class EnvironmentValidator {
 
     public static Dotenv loadAndValidateEnvironment() {
-    // 1. Configuramos Dotenv para que ignore si el archivo no existe inicialmente 
     // y lo cargamos manualmente para tener control total del error.
     Dotenv dotenv;
     try {
@@ -16,7 +15,6 @@ public class EnvironmentValidator {
                 .ignoreIfMissing() 
                 .load();
         
-        // 2. Verificación manual robusta
         // Si no detecta ninguna de las variables clave, asumimos que no leyó el archivo
         if (dotenv.get("DB_URL") == null) {
             File envFile = new File(".env");
@@ -27,7 +25,6 @@ public class EnvironmentValidator {
             );
         }
 
-        // 3. Validación de variables individuales
         checkVariable(dotenv, "DB_URL");
         checkVariable(dotenv, "DB_USER");
         checkVariable(dotenv, "DB_PASSWORD");

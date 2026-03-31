@@ -47,18 +47,14 @@ public class StrategyLifecycleApplicationService {
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
         
-        // 1. Inicializar la estrategia con patrón Factory
         InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
 
-        // 2. Guardar en BBDD para generar su ID
         instancia = instanciaRepo.save(instancia);
         log.info("Estrategia {} creada con ID {}", nombreEstra, instancia.getId());
 
-        // 3. Activar contablemente
         accountingService.activateStrategy(walletId, instancia.getId(), capital);
 
-        // 4. Lanzar ejecución en tiempo real
         runtimeCoordinator.ejecutarTradeEnTiempoReal(instancia, coins);
     }
 

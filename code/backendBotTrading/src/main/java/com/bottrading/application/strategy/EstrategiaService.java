@@ -41,11 +41,8 @@ public class EstrategiaService {
         this.catalogService = catalogService;
     }
 
-    // ========================================================================
     // INTERFAZ PÚBLICA - Delegación a servicios especializados
-    // ========================================================================
 
-    // -------- LIFECYCLE --------
 
     /**
      * @deprecated Delegado a {@link StrategyLifecycleApplicationService#iniciarTradeRT}
@@ -104,7 +101,6 @@ public class EstrategiaService {
         lifecycleService.detenerTodas();
     }
 
-    // -------- QUERIES --------
 
     /**
      * @deprecated Delegado a {@link StrategyQueryService#listarEstrategias}
@@ -138,7 +134,6 @@ public class EstrategiaService {
         return queryService.listarEstrategiasDetenidas();
     }
 
-    // -------- CATALOG --------
 
     /**
      * @deprecated Delegado a {@link StrategyCatalogService#listarFicherosDeEstrategias}
@@ -156,7 +151,6 @@ public class EstrategiaService {
         return catalogService.getCapitalComprometido(walletAsociada);
     }
 
-    // -------- BACKTESTING --------
 
     /**
      * @deprecated Delegado a {@link StrategyBacktestApplicationService#ejecutarBacktest}

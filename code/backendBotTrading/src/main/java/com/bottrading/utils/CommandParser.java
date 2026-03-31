@@ -50,7 +50,6 @@ public class CommandParser {
         }
     }
 
-    // --- Getters ---
     public boolean isReal() {
         return isReal;
     }

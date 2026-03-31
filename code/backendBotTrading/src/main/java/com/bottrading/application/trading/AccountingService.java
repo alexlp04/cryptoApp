@@ -183,14 +183,12 @@ public class AccountingService {
         Wallet w = walletRepo.findByIdWithLock(walletId).orElseThrow();
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId).orElseThrow();
 
-        // 1. Actualizar saldos internos de la estrategia
         e.setCapitalComprometido(e.getCapitalComprometido().subtract(margin));
         // El margen vuelve al reservado + la ganancia (o - la pérdida)
         e.setCapitalReservado(e.getCapitalReservado().add(margin).add(pnl));
         BigDecimal nuevoRiesgo = e.getRiesgoAbierto().subtract(risk);
         e.setRiesgoAbierto(nuevoRiesgo.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : nuevoRiesgo);
 
-        // 2. Actualizar patrimonio real de la wallet
         w.setBalanceReal(w.getBalanceReal().add(pnl));
 
         saveLedger(w, e, LedgerType.REALIZED_PNL, pnl);
@@ -212,9 +210,7 @@ public class AccountingService {
         walletRepo.save(w);
     }
 
-    // =========================
     // MÉTODOS PRIVADOS
-    // =========================
 
     private void saveLedger(Wallet w, InstanciaEstrategia e, LedgerType type, BigDecimal amount) {
         LedgerEntry le = new LedgerEntry();

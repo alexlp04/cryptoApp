@@ -27,7 +27,6 @@ public class PythonEnvironmentValidator {
      */
     public static void validatePythonEnvironment() {
         
-        // 1. Validar que el ejecutable existe
         String pythonExe = AppConstants.PYTHON_EXECUTABLE;
         File pythonFile = new File(pythonExe);
         
@@ -42,10 +41,8 @@ public class PythonEnvironmentValidator {
             );
         }
                 
-        // 2. Validar versión de Python (>=3.11)
         validatePythonVersion(pythonExe);
         
-        // 3. Validar librerías críticas
         validateRequiredModules(pythonExe);
         }
 

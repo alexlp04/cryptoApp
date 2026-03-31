@@ -33,7 +33,9 @@ import com.bottrading.utils.ConsoleLoader;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -49,6 +51,7 @@ public class AppBot implements CommandLineRunner {
     private final WalletService walletService;
     private final SessionManager sessionManager;
     private final AITrainingService aiTrainingService;
+    private final ConfigurableApplicationContext applicationContext;
 
     private final Scanner scanner = new Scanner(System.in);
     private final Map<String, CliCommand> commandRegistry = new HashMap<>();
@@ -115,9 +118,7 @@ public class AppBot implements CommandLineRunner {
         System.out.println(mensaje);
     }
 
-    // =========================================================================
     // LÓGICA DE CONTROL
-    // =========================================================================
 
     private void mostrarBienvenida() {
         ConsoleLoader.getInstance().stopClear();
@@ -167,7 +168,8 @@ public class AppBot implements CommandLineRunner {
         }
         log.info("Usuario solicito cierre (comando quit/exit).");
         uiPrintln("Bye!");
-        // Spring Boot cerrará los contextos tras esto
+        int exitCode = SpringApplication.exit(applicationContext, () -> 0);
+        System.exit(exitCode);
     }
 
 }

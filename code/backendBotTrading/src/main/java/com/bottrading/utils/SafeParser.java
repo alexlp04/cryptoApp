@@ -9,7 +9,6 @@ import java.util.Optional;
  */
 public class SafeParser {
     private SafeParser() {
-        // Clase utilitaria: No instanciar
     }
 
     /**

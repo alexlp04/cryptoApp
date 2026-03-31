@@ -45,23 +45,18 @@ public class BacktestingService {
         this.pythonBridgeFacade = pythonBridgeFacade;
     }
 
-    // =========================================================================
     // ORQUESTACIÓN
-    // =========================================================================
     public String ejecutarBacktest(String rutaEstrategia, String nombreEstrategia, String timeframe,
             Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk,
             boolean guardarTrades)
             throws StrategyExecutionException {
-        // 1. Preparar datos
         ConsoleLoader.getInstance().startDots("Transformando datos");
         Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
-        // 2. Construir payload con opción de guardar trades definida por la capa de CLI
         String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
                 nombreEstrategia, guardarTrades);
 
-        // 3. Ejecutar con resiliencia centralizada en PythonBridgeFacade
         return invocarMotorPythonConRetries(payload);
     }
 
