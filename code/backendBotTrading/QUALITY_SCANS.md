@@ -19,6 +19,20 @@ mvn clean verify
 mvn sonar:sonar
 ```
 
+## Pre-push quality gate (automatico)
+```bash
+cd /home/alejandro/Documentos/Informatica/cryptoapp
+bash scripts/install-git-hooks.sh
+```
+
+Despues de instalarlo, cada `git push` ejecuta automaticamente:
+```bash
+cd code/backendBotTrading
+mvn clean verify
+```
+
+Si falla algun test o regla de calidad, el push se bloquea.
+
 ## Que se ejecuta en `verify`
 - Checkstyle (estilo)
 - PMD (best practices/error-prone/security/performance)

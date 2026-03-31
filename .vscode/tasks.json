@@ -43,6 +43,27 @@
         "cwd": "${workspaceFolder}/code/backendBotTrading"
       },
       "problemMatcher": ["$maven"]
+    },
+    {
+      "label": "repo: install-git-hooks",
+      "type": "shell",
+      "command": "bash",
+      "args": ["scripts/install-git-hooks.sh"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: pre-push-gate",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["clean", "verify"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"],
+      "group": "build"
     }
   ]
 }
