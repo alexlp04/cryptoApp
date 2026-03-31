@@ -13,20 +13,23 @@ import com.bottrading.utils.PythonEnvironmentValidator;
 
 import io.github.cdimascio.dotenv.Dotenv;
 
+/**
+ * Entry point de la aplicacion Spring Boot.
+ */
 @SpringBootApplication
 @EntityScan(basePackages = "com.bottrading")
 @EnableJpaRepositories(basePackages = "com.bottrading")
 public class BotApplication {
+    /**
+     * Inicializa entorno, valida prerequisitos y arranca el contexto Spring.
+     */
     public static void main(String[] args) {
         try {
-            // Inicialización de efectos visuales (Opcional)
             ConsoleLoader.getInstance().startDots("Iniciando sistema");
 
             Dotenv dotenv = EnvironmentValidator.loadAndValidateEnvironment();
-            
-            // 1b. Validar que Python está disponible con todas las dependencias
             PythonEnvironmentValidator.validatePythonEnvironment();
-            
+
             limpiarDirectorioLogs();
             configurarPropiedadesSistema(dotenv);
 
@@ -49,6 +52,9 @@ public class BotApplication {
         }
     }
 
+    /**
+     * Imprime un bloque de error de arranque con formato uniforme.
+     */
     private static void imprimirErrorCritico(String mensaje) {
         System.err.println("\n" + "!".repeat(80));
         System.err.println(" FALLO EN EL ARRANQUE DEL SISTEMA");
@@ -56,12 +62,18 @@ public class BotApplication {
         System.err.println("!".repeat(80) + "\n");
     }
 
+    /**
+     * Carga en propiedades de sistema la configuracion minima de datasource.
+     */
     private static void configurarPropiedadesSistema(Dotenv dotenv) {
         System.setProperty("spring.datasource.url", dotenv.get("DB_URL"));
         System.setProperty("spring.datasource.username", dotenv.get("DB_USER"));
         System.setProperty("spring.datasource.password", dotenv.get("DB_PASSWORD"));
     }
 
+    /**
+     * Elimina logs previos para iniciar una sesion limpia.
+     */
     private static void limpiarDirectorioLogs() {
         File carpetaLogs = new File("logs");
         if (carpetaLogs.exists() && carpetaLogs.isDirectory()) {
