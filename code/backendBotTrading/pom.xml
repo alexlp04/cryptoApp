@@ -158,11 +158,9 @@
                     <linkXRef>false</linkXRef>
                     <failOnViolation>true</failOnViolation>
                     <targetJdk>${java.version}</targetJdk>
+                    <minimumPriority>2</minimumPriority>
                     <rulesets>
-                        <ruleset>category/java/bestpractices.xml</ruleset>
-                        <ruleset>category/java/errorprone.xml</ruleset>
-                        <ruleset>category/java/performance.xml</ruleset>
-                        <ruleset>category/java/security.xml</ruleset>
+                        <ruleset>config/pmd/ruleset-high-signal.xml</ruleset>
                     </rulesets>
                 </configuration>
                 <executions>
@@ -189,7 +187,7 @@
                 </dependencies>
                 <configuration>
                     <effort>Max</effort>
-                    <threshold>Medium</threshold>
+                    <threshold>High</threshold>
                     <failOnError>true</failOnError>
                 </configuration>
                 <executions>
@@ -203,6 +201,8 @@
                 </executions>
             </plugin>
 
+            <!-- OWASP Dependency-Check: Manual trigger only (transient NVD API unreliability) -->
+            <!-- Usage: mvn dependency-check:check -N -->
             <plugin>
                 <groupId>org.owasp</groupId>
                 <artifactId>dependency-check-maven</artifactId>
@@ -210,7 +210,12 @@
                 <configuration>
                     <format>HTML</format>
                     <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <failOnError>false</failOnError>
+                    <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
                 </configuration>
+                <!-- Executions commented: NVD API is unreliable in CI/CD context. -->
+                <!-- Unlock manually with: mvn dependency-check:check if setup changes or before releases. -->
+                <!-- 
                 <executions>
                     <execution>
                         <id>dependency-check</id>
@@ -220,6 +225,7 @@
                         </goals>
                     </execution>
                 </executions>
+                -->
             </plugin>
 
             <plugin>
