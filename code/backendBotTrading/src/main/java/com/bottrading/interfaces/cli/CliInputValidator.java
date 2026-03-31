@@ -19,6 +19,15 @@ public final class CliInputValidator {
         return true;
     }
 
+    public static boolean requireLoggedOut(CliCommandContext context) {
+        if (context.sessionManager().isLoggedIn()) {
+            String nombre = context.sessionManager().getCurrentUser().getNombre();
+            context.println().accept("Ya hay una sesion activa (" + nombre + "). Haz 'logout' antes.");
+            return false;
+        }
+        return true;
+    }
+
     public static boolean requireMinArgs(String[] parts, int minLength, String usage, CliCommandContext context) {
         if (parts.length < minLength) {
             context.println().accept(usage);

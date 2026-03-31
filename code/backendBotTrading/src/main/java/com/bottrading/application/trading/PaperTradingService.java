@@ -1,12 +1,10 @@
 package com.bottrading.application.trading;
 
 import com.bottrading.beans.*;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.PosicionRepository;
-import com.bottrading.domain.market.Vela;
-import com.bottrading.domain.market.VelaDTO;
-import com.bottrading.domain.trading.Posicion;
 import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.Posicion;
+import com.bottrading.domain.trading.PosicionRepository;
 import com.bottrading.infrastructure.persistence.FileService;
 import com.bottrading.infrastructure.cache.StatsCache;
 import com.bottrading.utils.SafeParser;
@@ -22,8 +20,6 @@ import java.math.RoundingMode;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
-
-
 
 /**
  * Servicio encargado de la ejecución simulada de órdenes (Paper Trading).
@@ -42,10 +38,10 @@ public class PaperTradingService {
 
     @Autowired
     public PaperTradingService(AccountingService accountingService,
-                               InstanciaEstrategiaRepository instanciaRepo,
-                               PosicionRepository posicionRepo,
-                               FileService fileService,
-                               StatsCache statsCache) {
+            InstanciaEstrategiaRepository instanciaRepo,
+            PosicionRepository posicionRepo,
+            FileService fileService,
+            StatsCache statsCache) {
         this.accountingService = accountingService;
         this.instanciaRepo = instanciaRepo;
         this.posicionRepo = posicionRepo;
@@ -54,11 +50,14 @@ public class PaperTradingService {
     }
 
     /**
-     * Procesa una señal de trading (BUY/SELL) recibida desde el motor de estrategia.
-     * Valida el estado de la estrategia y delega la lógica específica de compra o venta.
+     * Procesa una señal de trading (BUY/SELL) recibida desde el motor de
+     * estrategia.
+     * Valida el estado de la estrategia y delega la lógica específica de compra o
+     * venta.
      *
      * @param instanciaId ID de la estrategia que generó la señal.
-     * @param signal      DTO con los detalles de la señal (acción, precio, símbolo, etc.).
+     * @param signal      DTO con los detalles de la señal (acción, precio, símbolo,
+     *                    etc.).
      */
     @Transactional
     public void onSignal(Long instanciaId, SignalDTO signal) {
@@ -90,7 +89,7 @@ public class PaperTradingService {
 
         // Validaciones básicas de gestión de riesgo
         if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
-            montoAInvertir.compareTo(e.getCapitalReservado()) > 0) {
+                montoAInvertir.compareTo(e.getCapitalReservado()) > 0) {
             log.error("Orden BUY rechazada: Capital insuficiente o riesgo inválido.");
             return;
         }
@@ -120,7 +119,8 @@ public class PaperTradingService {
         Posicion pos = posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol())
                 .orElse(null);
 
-        if (pos == null) return; // No hay nada que vender
+        if (pos == null)
+            return; // No hay nada que vender
 
         BigDecimal precioSalida = signal.getPrice();
         BigDecimal multiplicador = precioSalida.divide(pos.getPrecioEntrada(), 8, RoundingMode.HALF_UP);
@@ -128,7 +128,8 @@ public class PaperTradingService {
         BigDecimal pnlNeto = montoFinal.subtract(pos.getMargenInvertido());
 
         // Liquidar contablemente: liberar el mismo riesgo que se comprometió al abrir
-        accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto, e.getRiskPerTrade());
+        accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto,
+                e.getRiskPerTrade());
 
         // Cerrar posición lógica
         pos.setAbierta(false);
@@ -144,7 +145,8 @@ public class PaperTradingService {
     }
 
     /**
-     * Recalcula las estadísticas acumuladas de la estrategia basándose en el caché en memoria.
+     * Recalcula las estadísticas acumuladas de la estrategia basándose en el caché
+     * en memoria.
      * Ya NO lee del CSV cada vez (lo hace StatsCache automáticamente cada 30s).
      */
     private Map<String, Object> calcularNuevasStats(InstanciaEstrategia e, String symbol, BigDecimal pnlActual) {
@@ -182,8 +184,8 @@ public class PaperTradingService {
         // Actualizar en caché (se guardará a disco automáticamente)
         statsCache.updateStats(e.getNombreEstrategia(), e.getTimeframe(), symbol, newStats);
 
-        log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {:.2f}%", 
-                  ganadas, perdidas, winRate);
+        log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {:.2f}%",
+                ganadas, perdidas, winRate);
         return newStats;
     }
 }

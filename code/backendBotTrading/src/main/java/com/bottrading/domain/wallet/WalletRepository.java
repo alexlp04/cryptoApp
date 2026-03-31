@@ -8,7 +8,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
-import com.bottrading.domain.user.Usuario;
 import com.bottrading.domain.wallet.Wallet;
 import com.bottrading.domain.wallet.WalletType;
 
@@ -23,13 +22,13 @@ public interface WalletRepository extends JpaRepository<Wallet, Long> {
     Optional<Wallet> findByIdWithLock(Long id);
 
     // Sustituye findByNombre
-    Optional<Wallet> findByUsuarioAndNombre(Usuario usuario, String nombre);
+    Optional<Wallet> findByUsuarioIdAndNombre(Long usuarioId, String nombre);
 
     // Sustituye findByUsuario
-    List<Wallet> findByUsuarioOrderByNombre(Usuario usuario);
+    List<Wallet> findByUsuarioIdOrderByNombre(Long usuarioId);
 
     // Sustituye findAvailableByType
-    List<Wallet> findByUsuarioAndTypeAndIsActiveFalseOrderByNombre(Usuario usuario, WalletType type);
+    List<Wallet> findByUsuarioIdAndTypeAndIsActiveFalseOrderByNombre(Long usuarioId, WalletType type);
 
-    boolean existsByUsuarioAndNombre(Usuario usuario, String nombre);
+    boolean existsByUsuarioIdAndNombre(Long usuarioId, String nombre);
 }

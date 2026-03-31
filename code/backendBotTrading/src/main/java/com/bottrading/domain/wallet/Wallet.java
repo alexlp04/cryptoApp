@@ -1,14 +1,12 @@
 package com.bottrading.domain.wallet;
 
 import com.bottrading.domain.BaseEntity;
-import com.bottrading.domain.user.Usuario;
 import java.math.BigDecimal;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 @Entity
@@ -18,8 +16,8 @@ public class Wallet extends BaseEntity {
     @Column(nullable = false)
     private String nombre;
 
-    @ManyToOne(optional = false)
-    private Usuario usuario;
+    @Column(name = "usuario_id", nullable = false)
+    private Long usuarioId;
 
     @Column(nullable = false)
     private BigDecimal balanceReal; // dinero real en broker
@@ -50,12 +48,12 @@ public class Wallet extends BaseEntity {
         this.balanceDisponible = balanceDisponible;
     }
 
-    public Usuario getUsuario() {
-        return usuario;
+    public Long getUsuarioId() {
+        return usuarioId;
     }
 
-    public void setUsuario(Usuario usuario) {
-        this.usuario = usuario;
+    public void setUsuarioId(Long usuarioId) {
+        this.usuarioId = usuarioId;
     }
 
     public WalletType getType() {

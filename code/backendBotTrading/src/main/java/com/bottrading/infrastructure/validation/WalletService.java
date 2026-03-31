@@ -42,8 +42,9 @@ public class WalletService {
     @Transactional
     public void crearWallet(String nombre, BigDecimal balanceInicial, boolean isReal) {
         Usuario usuario = sessionManager.getCurrentUser();
+        Long usuarioId = usuario.getId();
 
-        if (walletRepo.existsByUsuarioAndNombre(usuario, nombre)) {
+        if (walletRepo.existsByUsuarioIdAndNombre(usuarioId, nombre)) {
             throw new ValidationException("Ya existe una wallet con el nombre: " + nombre);
         }
 
@@ -53,7 +54,7 @@ public class WalletService {
 
         Wallet wallet = new Wallet();
         wallet.setNombre(nombre);
-        wallet.setUsuario(usuario);
+        wallet.setUsuarioId(usuarioId);
         wallet.setBalanceReal(balanceInicial);
         wallet.setBalanceDisponible(balanceInicial);
         wallet.setType(isReal ? WalletType.REAL : WalletType.PAPER);
@@ -90,7 +91,7 @@ public class WalletService {
     @Transactional
     public void cambiarEstadoActivo(String nombre, boolean activo) {
         Usuario usuario = sessionManager.getCurrentUser();
-        Wallet wallet = walletRepo.findByUsuarioAndNombre(usuario, nombre)
+        Wallet wallet = walletRepo.findByUsuarioIdAndNombre(usuario.getId(), nombre)
                 .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + nombre));
 
         wallet.setActive(activo);
@@ -105,7 +106,7 @@ public class WalletService {
      */
     public BigDecimal getBalance(String nombre) {
         Usuario usuario = sessionManager.getCurrentUser();
-        return walletRepo.findByUsuarioAndNombre(usuario, nombre)
+        return walletRepo.findByUsuarioIdAndNombre(usuario.getId(), nombre)
                 .map(Wallet::getBalanceReal)
                 .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + nombre));
     }
@@ -119,7 +120,7 @@ public class WalletService {
     public List<String> listarWallets() {
         Usuario usuario = sessionManager.getCurrentUser();
 
-        return walletRepo.findByUsuarioOrderByNombre(usuario).stream()
+        return walletRepo.findByUsuarioIdOrderByNombre(usuario.getId()).stream()
                 .map(w -> String.format("%s | Equity: %s | Disponible: %s | Tipo: %s %s",
                         w.getNombre(),
                         w.getBalanceReal().toPlainString(),
@@ -139,7 +140,7 @@ public class WalletService {
     public Long obtenerIdPorNombre(String nombreWallet) {
         Usuario usuario = sessionManager.getCurrentUser();
 
-        return walletRepo.findByUsuarioAndNombre(usuario, nombreWallet)
+        return walletRepo.findByUsuarioIdAndNombre(usuario.getId(), nombreWallet)
                 .map(Wallet::getId)
                 .orElseThrow(() -> new ValidationException(
                         "No se encontró la wallet '" + nombreWallet + "' para el usuario actual"));
