@@ -1,27 +1,36 @@
 package com.bottrading;
 
-import com.bottrading.application.strategy.EstrategiaService;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Scanner;
+
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.stereotype.Component;
+
 import com.bottrading.application.market.MarketDataService;
+import com.bottrading.application.strategy.EstrategiaService;
 import com.bottrading.application.training.AITrainingService;
-import com.bottrading.domain.user.Usuario;
+import com.bottrading.infrastructure.validation.SessionManager;
 import com.bottrading.infrastructure.validation.UsuarioService;
 import com.bottrading.infrastructure.validation.WalletService;
-import com.bottrading.infrastructure.validation.SessionManager;
 import com.bottrading.interfaces.cli.CliCommandContext;
-import com.bottrading.interfaces.cli.commands.CliCommand;
+import com.bottrading.interfaces.cli.commands.BacktestCommand;
 import com.bottrading.interfaces.cli.commands.CbiCommand;
+import com.bottrading.interfaces.cli.commands.CliCommand;
 import com.bottrading.interfaces.cli.commands.CreatePaperWalletCommand;
 import com.bottrading.interfaces.cli.commands.FetchCommand;
 import com.bottrading.interfaces.cli.commands.HelpCommand;
-import com.bottrading.interfaces.cli.commands.LoginCommand;
-import com.bottrading.interfaces.cli.commands.LogoutCommand;
-import com.bottrading.interfaces.cli.commands.BacktestCommand;
 import com.bottrading.interfaces.cli.commands.ListActiveStrategiesCommand;
-import com.bottrading.interfaces.cli.commands.ListStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListStoppedStrategiesCommand;
+import com.bottrading.interfaces.cli.commands.ListStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListStrategyFilesCommand;
 import com.bottrading.interfaces.cli.commands.ListTerminatedStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListWalletsCommand;
+import com.bottrading.interfaces.cli.commands.LoginCommand;
+import com.bottrading.interfaces.cli.commands.LogoutCommand;
 import com.bottrading.interfaces.cli.commands.ModelsCommand;
 import com.bottrading.interfaces.cli.commands.SignupCommand;
 import com.bottrading.interfaces.cli.commands.StartCommand;
@@ -30,15 +39,10 @@ import com.bottrading.interfaces.cli.commands.TermCommand;
 import com.bottrading.interfaces.cli.commands.TradeCommand;
 import com.bottrading.interfaces.cli.commands.TrainCommand;
 import com.bottrading.utils.ConsoleLoader;
+
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.stereotype.Component;
-
-import java.util.*;
 
 @Slf4j
 @Component
@@ -56,7 +60,7 @@ public class AppBot implements CommandLineRunner {
     private final AITrainingService aiTrainingService;
     private final ConfigurableApplicationContext applicationContext;
 
-    private final Scanner scanner = new Scanner(System.in);
+    private final Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8);
     private final Map<String, CliCommand> commandRegistry = new HashMap<>();
     private CliCommandContext commandContext;
 

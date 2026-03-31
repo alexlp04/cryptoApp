@@ -1,16 +1,5 @@
 package com.bottrading.infrastructure.bridge;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.beans.SignalDTO;
-import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
-import com.bottrading.application.trading.PaperTradingService;
-import com.bottrading.application.trading.AccountingService;
-import com.bottrading.exceptions.PythonProcessException;
-import com.bottrading.exceptions.SignalProcessingException;
-import jakarta.annotation.PreDestroy;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -24,6 +13,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+
+import org.springframework.stereotype.Service;
+
+import com.bottrading.application.trading.AccountingService;
+import com.bottrading.application.trading.PaperTradingService;
+import com.bottrading.beans.SignalDTO;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.exceptions.PythonProcessException;
+import com.bottrading.exceptions.SignalProcessingException;
+
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Orquestador principal de ejecución de estrategias en tiempo real.
@@ -195,7 +196,7 @@ public class StrategyRuntimeCoordinator {
             
             // Verificar si se ha alcanzado el límite de fallos
             if (retryQueueService.incrementAndCheckFailureLimit(instancia.getId())) {
-                throw new SignalProcessingException("Demasiados errores de señal. Estrategia detenida.");
+                throw new SignalProcessingException("Demasiados errores de señal. Estrategia detenida.", e);
             }
         }
     }
