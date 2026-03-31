@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.bottrading.services.SessionManager;
+import com.bottrading.infrastructure.validation.SessionManager;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.util.ArrayList;

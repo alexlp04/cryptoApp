@@ -1,6 +1,12 @@
 package com.bottrading;
 
-import com.bottrading.services.*;
+
+import com.bottrading.domain.user.Usuario;import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.application.market.MarketDataService;
+import com.bottrading.application.training.AITrainingService;
+import com.bottrading.infrastructure.validation.UsuarioService;
+import com.bottrading.infrastructure.validation.WalletService;
+import com.bottrading.infrastructure.validation.SessionManager;
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.commands.CliCommand;
 import com.bottrading.interfaces.cli.commands.CbiCommand;

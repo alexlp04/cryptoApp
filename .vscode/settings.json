@@ -6,5 +6,6 @@
       "path": "/home/alejandro/.local/share/mise/installs/java/temurin-21",
       "default": true
     }
-  ]
+  ],
+  "java.compile.nullAnalysis.mode": "automatic"
 }
