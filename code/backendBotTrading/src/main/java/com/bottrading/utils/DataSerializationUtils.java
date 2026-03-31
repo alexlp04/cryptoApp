@@ -1,7 +1,7 @@
 package com.bottrading.utils;
 
-import com.bottrading.beans.IndicadorTecnicoDTO;
-import com.bottrading.beans.VelaDTO;
+import com.bottrading.domain.market.IndicadorTecnicoDTO;
+import com.bottrading.domain.market.VelaDTO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.msgpack.jackson.dataformat.MessagePackFactory;
 import lombok.extern.slf4j.Slf4j;

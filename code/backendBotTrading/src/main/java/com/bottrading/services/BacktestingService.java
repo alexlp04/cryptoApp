@@ -1,10 +1,10 @@
 package com.bottrading.services;
 
-import com.bottrading.bridge.PythonBridgeExecutionException;
-import com.bottrading.bridge.PythonBridgeFacade;
-import com.bottrading.bridge.PythonBridgeRequest;
-import com.bottrading.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.bridge.protocol.IpcMessageType;
+import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
+import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -12,7 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.bottrading.beans.Vela;
+import com.bottrading.domain.market.Vela;
 import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.exceptions.StrategyExecutionException;
 import com.bottrading.utils.ConsoleLoader;

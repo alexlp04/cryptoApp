@@ -1,11 +1,11 @@
 package com.bottrading.interfaces.cli;
 
-import com.bottrading.services.SessionManager;
-import com.bottrading.services.UsuarioService;
-import com.bottrading.services.EstrategiaService;
-import com.bottrading.services.WalletService;
-import com.bottrading.services.AITrainingService;
-import com.bottrading.services.MarketDataService;
+import com.bottrading.infrastructure.validation.SessionManager;
+import com.bottrading.infrastructure.validation.UsuarioService;
+import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.infrastructure.validation.WalletService;
+import com.bottrading.application.training.AITrainingService;
+import com.bottrading.application.market.MarketDataService;
 import java.util.Scanner;
 import java.util.function.Consumer;
 

@@ -10,7 +10,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.bottrading.beans.Usuario;
+import com.bottrading.domain.user.Usuario;
+import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.infrastructure.validation.SessionManager;
 
 @ExtendWith(MockitoExtension.class)
 class SessionManagerTest {

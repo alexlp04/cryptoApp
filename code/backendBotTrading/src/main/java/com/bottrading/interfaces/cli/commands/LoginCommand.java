@@ -1,6 +1,6 @@
 package com.bottrading.interfaces.cli.commands;
 
-import com.bottrading.beans.Usuario;
+import com.bottrading.domain.user.Usuario;
 import com.bottrading.interfaces.cli.CliCommandContext;
 
 /**

@@ -7,8 +7,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.bottrading.interfaces.cli.CliCommandContext;
-import com.bottrading.services.EstrategiaService;
-import com.bottrading.services.SessionManager;
+import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.infrastructure.validation.SessionManager;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
