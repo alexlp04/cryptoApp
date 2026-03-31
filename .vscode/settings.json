@@ -7,5 +7,17 @@
       "default": true
     }
   ],
-  "java.compile.nullAnalysis.mode": "automatic"
+  "java.compile.nullAnalysis.mode": "automatic",
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "sonarlint.connectedMode.project": {
+    "projectKey": "backendBotTrading"
+  },
+  "sonarlint.rules": {
+    "java:S106": {
+      "level": "on"
+    }
+  }
 }
