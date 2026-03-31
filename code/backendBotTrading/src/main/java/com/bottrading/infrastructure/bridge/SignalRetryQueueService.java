@@ -26,7 +26,6 @@ public class SignalRetryQueueService {
     // Cola de señales fallidas por estrategia
     private final Map<Long, Queue<SignalDTO>> failedSignalsQueue = new ConcurrentHashMap<>();
     
-    // Contador de fallos consecutivos por estrategia
     private final Map<Long, Integer> consecutiveFailures = new ConcurrentHashMap<>();
 
     /**

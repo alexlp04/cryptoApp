@@ -87,7 +87,6 @@ public class InstanciaEstrategia extends BaseEntity {
         return instancia;
     }
 
-    // --- Getters y Setters ---
 
     public String getNombreEstrategia() {
         return nombreEstrategia;

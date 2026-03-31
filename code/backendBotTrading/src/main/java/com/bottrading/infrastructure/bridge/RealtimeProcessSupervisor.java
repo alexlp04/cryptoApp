@@ -27,7 +27,6 @@ public class RealtimeProcessSupervisor {
 
     private final PythonBridgeFacade pythonBridgeFacade;
     
-    // Registra procesos activos por ID de estrategia
     private final Map<Long, Process> activeProcesses = new ConcurrentHashMap<>();
 
     public RealtimeProcessSupervisor(PythonBridgeFacade pythonBridgeFacade) {
@@ -115,7 +114,6 @@ public class RealtimeProcessSupervisor {
         return p != null && p.isAlive();
     }
 
-    // ====== PRIVADOS ======
 
     private String resolverScriptPath(InstanciaEstrategia instancia) {
         if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {

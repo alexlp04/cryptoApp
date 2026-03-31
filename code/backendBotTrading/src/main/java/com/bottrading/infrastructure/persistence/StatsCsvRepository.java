@@ -117,7 +117,6 @@ public class StatsCsvRepository {
         return stats;
     }
 
-    // ====== PRIVADOS ======
 
     private void guardarOActualizarStats(Path filePath, Map<String, Object> stats, String currentSymbol,
             String timeframe) throws IOException {

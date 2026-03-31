@@ -55,7 +55,6 @@ public class StrategyQueryService {
         return listarPorEstado(AppConstants.KEY_TERMINADA, "No hay estrategias terminadas.");
     }
 
-    // ====== PRIVADOS ======
 
     private List<String> listarPorEstado(String estado, String mensajeVacio) {
         List<InstanciaEstrategia> lista = instanciaRepo.findByEstado(estado);

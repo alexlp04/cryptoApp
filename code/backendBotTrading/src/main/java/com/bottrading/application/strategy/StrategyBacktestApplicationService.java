@@ -49,10 +49,8 @@ public class StrategyBacktestApplicationService {
             BigDecimal capitalAsignado, BigDecimal risk, boolean limpiarBacktestsPrevios,
             boolean guardarTrades) throws Exception {
         
-        // 1. Preparar carpeta
         fileService.verificarYLimpiarCarpetaEstrategia(nombreEstra, limpiarBacktestsPrevios);
 
-        // 2. Cargar datos históricos
         ConsoleLoader.getInstance().startDots("Preparando datos para backtest");
         Map<String, List<Vela>> velasPorSimbolo = cargarDatosHistoricos(coins, tf);
 
@@ -61,7 +59,6 @@ public class StrategyBacktestApplicationService {
             return;
         }
 
-        // 3. Ejecutar motor Python
         String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
         ConsoleLoader.getInstance().stopClear();
         
@@ -74,7 +71,6 @@ public class StrategyBacktestApplicationService {
             risk,
             guardarTrades);
 
-        // 4. Guardar resultados
         if (jsonResultado != null && !jsonResultado.isEmpty()) {
             fileService.guardarEstadisticasDelBacktest(nombreEstra, tf, jsonResultado);
             ConsoleLoader.getInstance().stopClear();
@@ -84,7 +80,6 @@ public class StrategyBacktestApplicationService {
         }
     }
 
-    // ====== PRIVADOS ======
 
     private Map<String, List<Vela>> cargarDatosHistoricos(List<String> coins, String tf) {
         Map<String, List<Vela>> velasPorSimbolo = new HashMap<>();

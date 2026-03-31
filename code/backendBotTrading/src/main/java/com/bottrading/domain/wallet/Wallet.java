@@ -30,7 +30,6 @@ public class Wallet extends BaseEntity {
 
     private boolean isActive;
 
-    // ===== getters/setters =====
 
     public BigDecimal getBalanceReal() {
         return balanceReal;

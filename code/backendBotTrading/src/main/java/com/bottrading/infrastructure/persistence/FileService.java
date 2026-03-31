@@ -35,9 +35,7 @@ public class FileService {
     }
 
 
-    // ========================================================================
     // INTERFAZ PÚBLICA - Delegación a servicios especializados
-    // ========================================================================
 
     /**
      * @deprecated Delegado a {@link StatsCsvRepository#guardarEstadisticasDelBacktest}

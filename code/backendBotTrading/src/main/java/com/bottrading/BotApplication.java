@@ -22,7 +22,6 @@ public class BotApplication {
             // Inicialización de efectos visuales (Opcional)
             ConsoleLoader.getInstance().startDots("Iniciando sistema");
 
-            // 1. Carga y Validación estricta
             Dotenv dotenv = EnvironmentValidator.loadAndValidateEnvironment();
             
             // 1b. Validar que Python está disponible con todas las dependencias
@@ -31,7 +30,6 @@ public class BotApplication {
             limpiarDirectorioLogs();
             configurarPropiedadesSistema(dotenv);
 
-            // 2. Configuración de Spring (Banner y Logs internos reducidos)
             System.setProperty("spring.main.banner-mode", "off");
             System.setProperty("logging.level.root", "INFO");
 

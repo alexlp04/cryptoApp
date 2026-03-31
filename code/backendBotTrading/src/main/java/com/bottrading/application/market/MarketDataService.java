@@ -116,11 +116,9 @@ public class MarketDataService {
     public void prepararDatosParaEntrenamiento(String symbol, String interval, int dias, long now) {
         log.info("--- PREPARANDO DATASET PARA IA: {} [{}] ---", symbol, interval);
         
-        // 1. FetchService hace la magia de la BD y descarga los datos faltantes
         log.info("Sincronizando Velas (OHLCV)..."); 
         long fetchedFrom = fetchService.fetchIncremental(symbol, interval, dias, now);
         
-        // 2. Calculamos los indicadores con margen de seguridad (Warmup)
         // Restamos 50 velas al timestamp para que el RSI y EMA tengan datos para arrancar
         long margenWarmup = 50L * FetchService.getIntervalMillis(interval);
         long calcFromTimestamp = fetchedFrom - margenWarmup;

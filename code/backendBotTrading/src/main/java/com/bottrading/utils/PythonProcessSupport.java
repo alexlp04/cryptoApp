@@ -40,13 +40,10 @@ public final class PythonProcessSupport {
     public static Process startPythonScript(String scriptPath, boolean redirectErrorStream, String... args)
             throws IOException {
         
-        // 1. Resolver ruta absoluta del ejecutable Python (del venv)
         String pythonExeAbsolute = resolvePythonExecutable();
         
-        // 2. Resolver ruta absoluta del script
         String scriptPathAbsolute = resolveScriptPath(scriptPath);
         
-        // 3. Construir comando
         List<String> command = new ArrayList<>();
         command.add(pythonExeAbsolute);
         command.add(scriptPathAbsolute);
@@ -58,7 +55,6 @@ public final class PythonProcessSupport {
             }
         }
 
-        // 4. Configurar ProcessBuilder
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(redirectErrorStream);
         

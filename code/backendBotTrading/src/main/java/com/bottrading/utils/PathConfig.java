@@ -48,7 +48,6 @@ public final class PathConfig {
             path = path.getParent();
         }
         
-        // Fallback: usar user.dir como está
         return userDir;
     }
 
@@ -74,7 +73,6 @@ public final class PathConfig {
     }
 
     public static String getValidModelPath(String nombreModelo, String timeframe, String symbol) {
-        // Ejemplo de nombre de archivo esperado: "random_forest_1h_BTCUSDT.pkl"
         String nombreArchivo = String.format("%s_%s_%s.pkl", nombreModelo, timeframe, symbol);
 
         if (nombreArchivo.contains("..") || nombreArchivo.contains("/") || nombreArchivo.contains("\\")) {

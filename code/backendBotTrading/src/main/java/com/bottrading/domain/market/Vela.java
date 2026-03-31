@@ -53,7 +53,6 @@ public class Vela extends BaseEntity {
     @Column(name = "taker_quote_volume", precision = 20, scale = 8)
     private BigDecimal takerQuoteVolume;
 
-    // --- Getters y Setters ---
 
     public Vela() {
     }

@@ -45,7 +45,6 @@ public class Usuario extends BaseEntity {
         this.passwordHash = null;
     }
 
-    // GETTERS (sin setters - inmutabilidad en dominio)
     public String getNombre() {
         return nombre;
     }

@@ -22,7 +22,6 @@ public class VelaDTO implements Serializable {
     private String takerBaseVolume;
     private String takerQuoteVolume;
     
-    // Getters y Setters
     public Long getId() {
         return id;
     }
