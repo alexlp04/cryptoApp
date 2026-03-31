@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@DataJpaTest
+@DataJpaTest(properties = "spring.main.allow-bean-definition-overriding=true")
 @EntityScan(basePackageClasses = Vela.class)
 @EnableJpaRepositories(basePackageClasses = VelaRepository.class)
 @ActiveProfiles("test")
