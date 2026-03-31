@@ -1,6 +1,7 @@
 package com.bottrading.interfaces.cli.commands;
 
 import com.bottrading.domain.user.Usuario;
+import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.interfaces.cli.CliCommandContext;
 
 /**
@@ -15,6 +16,10 @@ public final class LoginCommand implements CliCommand {
 
     @Override
     public void execute(String[] parts, CliCommandContext context) {
+        if (!CliInputValidator.requireLoggedOut(context)) {
+            return;
+        }
+
         context.print().accept("Usuario: ");
         String nombre = context.scanner().nextLine().trim();
         context.print().accept("Password: ");

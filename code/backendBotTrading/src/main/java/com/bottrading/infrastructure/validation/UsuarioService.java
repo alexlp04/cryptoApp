@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import com.bottrading.domain.user.Usuario;
 import com.bottrading.exceptions.ValidationException;
 import com.bottrading.domain.user.UsuarioRepository;
+import com.bottrading.infrastructure.persistence.entity.UsuarioJpaEntity;
 import com.bottrading.utils.HashUtils;
 
 import jakarta.transaction.Transactional;
@@ -37,9 +38,10 @@ public class UsuarioService {
         if (usuarioRepo.existsByNombre(nombre)) {
             throw new ValidationException("El nombre de usuario ya está en uso");
         }
-        Usuario u = new Usuario(nombre, HashUtils.hashPassword(password));
-        u.setEliminado(false);
-        return usuarioRepo.save(u);
+        UsuarioJpaEntity entity = new UsuarioJpaEntity(nombre, HashUtils.hashPassword(password));
+        entity.setEliminado(false);
+        UsuarioJpaEntity persisted = usuarioRepo.save(entity);
+        return toDomain(persisted);
     }
 
     
@@ -54,7 +56,7 @@ public class UsuarioService {
      */
     public boolean validarCredenciales(String nombre, String password) {
         return usuarioRepo.findByNombreAndEliminadoFalse(nombre)
-                .map(u -> HashUtils.verificarPassword(password, u.getPasswordHash()))
+                .map(entity -> HashUtils.verificarPassword(password, entity.getPasswordHash()))
                 .orElse(false);
     }
 
@@ -66,9 +68,9 @@ public class UsuarioService {
      */
     @Transactional
     public void darDeBaja(long id) {
-        usuarioRepo.findById(id).ifPresent(u -> {
-            u.setEliminado(true);
-            usuarioRepo.save(u);
+        usuarioRepo.findById(id).ifPresent(entity -> {
+            entity.setEliminado(true);
+            usuarioRepo.save(entity);
         });
     }
 
@@ -82,6 +84,14 @@ public class UsuarioService {
     @Transactional
     public Usuario obtenerPorNombre(String nombre) {
         return usuarioRepo.findByNombreAndEliminadoFalse(nombre)
+                .map(this::toDomain)
                 .orElseThrow(() -> new ValidationException("Usuario no encontrado o dado de baja"));
+    }
+
+    private Usuario toDomain(UsuarioJpaEntity entity) {
+        Usuario usuario = new Usuario(entity.getNombre(), entity.getPasswordHash());
+        usuario.setId(entity.getId());
+        usuario.setEliminado(entity.isEliminado());
+        return usuario;
     }
 }

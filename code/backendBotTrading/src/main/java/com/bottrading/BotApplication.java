@@ -14,8 +14,8 @@ import com.bottrading.utils.PythonEnvironmentValidator;
 import io.github.cdimascio.dotenv.Dotenv;
 
 @SpringBootApplication
-@EntityScan(basePackages = "com.bottrading.beans")
-@EnableJpaRepositories(basePackages = "com.bottrading.repositories")
+@EntityScan(basePackages = "com.bottrading")
+@EnableJpaRepositories(basePackages = "com.bottrading")
 public class BotApplication {
     public static void main(String[] args) {
         try {
@@ -36,8 +36,7 @@ public class BotApplication {
             System.setProperty("logging.level.root", "INFO");
 
             SpringApplication app = new SpringApplication(BotApplication.class);
-            //FIXME: El banner se desactiva con la propiedad, no es necesario el método. Dejar solo una forma de hacerlo.
-            //app.setBannerMode(Banner.Mode.OFF);
+
             app.setLogStartupInfo(false);
             
             app.run(args);

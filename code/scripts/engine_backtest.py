@@ -118,10 +118,12 @@ def run_backtest(strategy, df: pd.DataFrame, symbol: str, carpeta_estrategia: st
     neg_pnl = 0.0
 
     for row in df.itertuples(index=False):
-        price = float(row.close)
-        timestamp = int(row.timestamp)
+        # Strategies consumen acceso por clave (row["campo"]), no por atributo.
+        row_data = row._asdict()
+        price = float(row_data["close"])
+        timestamp = int(row_data["timestamp"])
 
-        if not in_position and strategy.should_buy(row):
+        if not in_position and strategy.should_buy(row_data):
             in_position = True
             entry_price = price
             current_position_size = (capital * strategy.risk_per_trade) / price
@@ -135,7 +137,7 @@ def run_backtest(strategy, df: pd.DataFrame, symbol: str, carpeta_estrategia: st
             
             trade_count += 1
 
-        elif in_position and strategy.should_sell(row):
+        elif in_position and strategy.should_sell(row_data):
             in_position = False
             
             pnl = current_position_size * (price - entry_price)
