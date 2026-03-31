@@ -6,26 +6,21 @@ import pandas as pd
 import websockets
 import os
 import types
-import logging # 1. Importar logging
+import logging
 from datetime import datetime
 from ipc_protocol import read_request_payload
 
-# =========================
-# CONFIGURACIÓN DE LOGS
-# =========================
-# Creamos una carpeta para logs si no existe
+# Logging dual: archivo para diagnostico y stdout para que Java consuma eventos.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "engine_rt.log")
 
-# Logger a archivo (para debugging offline)
 file_handler = logging.FileHandler(log_file, encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-# Logger a stdout (para que Java vea el progreso)
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setLevel(logging.INFO)
 stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
@@ -35,17 +30,13 @@ logging.basicConfig(
     handlers=[file_handler, stream_handler]
 )
 
-# Alias para logging.info → stdout
 log = logging.getLogger(__name__)
 
-# ==========================================
-# 1. PARCHE DE COMPATIBILIDAD (Windows + Py 3.13)
-# ==========================================
+# Compatibilidad minima para entornos Windows donde falta modulo posix.
 if sys.platform == "win32":
     if "posix" not in sys.modules:
         sys.modules["posix"] = types.ModuleType("posix")
 
-# Configuración de rutas para encontrar BaseStrategy
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
@@ -53,10 +44,8 @@ if project_root not in sys.path:
 
 from strategies.BaseStrategy import BaseStrategy
 
-# =========================
-# 2. CARGA DE ESTRATEGIA
-# =========================
 def load_strategy(path, capital=1000, risk_per_trade=0.02):
+    """Carga dinamicamente una estrategia Python y devuelve su instancia."""
     try:
         logging.info(f"Cargando estrategia desde: {path}")
         spec = importlib.util.spec_from_file_location("user_strategy", path)
@@ -71,9 +60,6 @@ def load_strategy(path, capital=1000, risk_per_trade=0.02):
         logging.error(f"Error crítico cargando estrategia: {str(e)}", exc_info=True)
         sys.exit(1)
 
-# =========================
-# 3. LOOP POR SÍMBOLO
-# =========================
 async def run_symbol(
     symbol,
     timeframe,
@@ -84,6 +70,7 @@ async def run_symbol(
     max_candles=100,
     only_closed_candles=False,
 ):
+    """Procesa stream kline de un simbolo y emite senales al runtime Java."""
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
@@ -135,7 +122,7 @@ async def run_symbol(
                             "timestamp": int(row["timestamp"]),
                             "is_real": is_real
                         }
-                        # Formato único runtime para Java.
+                        # Formato unico de intercambio con el runtime Java.
                         print(f"SIGNAL\t{json.dumps(signal)}", flush=True)
                         logging.info(f"SEÑAL ENVIADA: {action} para {symbol} a precio {row['close']}")
 
@@ -143,10 +130,8 @@ async def run_symbol(
             logging.error(f"Error en loop de {symbol}: {str(e)}", exc_info=True)
             await asyncio.sleep(5) 
 
-# =========================
-# 5. MAIN
-# =========================
 def main():
+    """Punto de entrada: recibe configuracion IPC y arranca tareas async."""
     logging.info("Motor Python RT iniciado. Esperando configuración de Java...")
     try:
         payload = read_request_payload()
@@ -166,6 +151,7 @@ def main():
         sys.exit(1)
 
 async def run_all(symbols, timeframe, strategy_path, capital, risk_per_trade, is_real, only_closed_candles=False):
+    """Lanza un task por simbolo y mantiene el proceso vivo mientras haya streams."""
     tasks = [
         run_symbol(
             sym,

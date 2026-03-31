@@ -1,9 +1,9 @@
 package com.bottrading;
 
-
-import com.bottrading.domain.user.Usuario;import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.application.strategy.EstrategiaService;
 import com.bottrading.application.market.MarketDataService;
 import com.bottrading.application.training.AITrainingService;
+import com.bottrading.domain.user.Usuario;
 import com.bottrading.infrastructure.validation.UsuarioService;
 import com.bottrading.infrastructure.validation.WalletService;
 import com.bottrading.infrastructure.validation.SessionManager;
@@ -43,6 +43,9 @@ import java.util.*;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+/**
+ * Shell CLI principal: registra comandos y enruta entradas del usuario.
+ */
 public class AppBot implements CommandLineRunner {
 
     private final EstrategiaService estrategiaService;
@@ -57,6 +60,9 @@ public class AppBot implements CommandLineRunner {
     private final Map<String, CliCommand> commandRegistry = new HashMap<>();
     private CliCommandContext commandContext;
 
+    /**
+     * Crea el contexto de comandos y registra el catalogo disponible.
+     */
     @PostConstruct
     void initializeCommandRegistry() {
         this.commandContext = new CliCommandContext(
@@ -96,6 +102,9 @@ public class AppBot implements CommandLineRunner {
         commandRegistry.put(command.name(), command);
     }
 
+    /**
+     * Bucle interactivo principal de la consola.
+     */
     @Override
     public void run(String... args) {
         mostrarBienvenida();
@@ -118,8 +127,9 @@ public class AppBot implements CommandLineRunner {
         System.out.println(mensaje);
     }
 
-    // LÓGICA DE CONTROL
-
+    /**
+     * Muestra banner de bienvenida al iniciar la CLI.
+     */
     private void mostrarBienvenida() {
         ConsoleLoader.getInstance().stopClear();
         uiPrintln("=================================================");
@@ -141,6 +151,9 @@ public class AppBot implements CommandLineRunner {
         return true;
     }
 
+    /**
+     * Resuelve y ejecuta un comando registrado.
+     */
     private void procesarComando(String comando) {
         String[] parts = comando.split(" ");
         String cmd = parts[0].toLowerCase();
@@ -161,6 +174,9 @@ public class AppBot implements CommandLineRunner {
         }
     }
 
+    /**
+     * Ejecuta un apagado ordenado del contexto Spring y termina la JVM.
+     */
     private void ejecutarSalidaOrdenada() {
         uiPrintln("Cerrando sistema...");
         if (sessionManager.isLoggedIn()) {
