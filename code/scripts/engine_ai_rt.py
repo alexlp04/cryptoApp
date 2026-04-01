@@ -150,7 +150,9 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
     # 🔥 AHORA RECIBIMOS TAMBIÉN EL TIPO DE MODELO
     model, model_type = load_model(model_name, timeframe, symbol)
     
-    df = pd.DataFrame(columns=["timestamp", "close", "open", "high", "low", "volume"])
+    # ✅ MEJORA: Usar deque con maxlen para evitar memory leak
+    from collections import deque
+    df_buffer = deque(maxlen=max_candles)
     last_processed_event_id = 0
 
     while True:
@@ -171,21 +173,22 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                         continue
                     last_processed_event_id = event_id
 
-                    new_row = pd.DataFrame([{
+                    new_row = {
                         "timestamp": int(k["t"]),
                         "open": float(k["o"]),
                         "high": float(k["h"]),
                         "low": float(k["l"]),
                         "close": float(k["c"]),
                         "volume": float(k["v"])
-                    }])
+                    }
                     
-                    df = pd.concat([df, new_row], ignore_index=True)
-                    if len(df) > max_candles:
-                        df = df.iloc[-max_candles:]
-
-                    if len(df) < 50:
+                    df_buffer.append(new_row)
+                    
+                    # Convertir deque a DataFrame cuando tenemos suficientes datos
+                    if len(df_buffer) < 50:
                         continue
+                    
+                    df = pd.DataFrame(list(df_buffer))
                         
                     df_con_indicadores = strategy.populate_indicators(df.copy())
                     feature_cols = strategy.get_feature_columns(df_con_indicadores)
@@ -200,6 +203,27 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
 
                     # Debe replicar el mismo schema usado en entrenamiento (mismo orden y columnas).
                     ultima_fila = df_con_indicadores[feature_cols].iloc[[-1]].copy()
+                    
+                    # ✅ VALIDACIÓN CRÍTICA: Verificar que las columnas coincidan exactamente
+                    missing_cols = [col for col in feature_cols if col not in df_con_indicadores.columns]
+                    if missing_cols:
+                        logging.error(
+                            f"[{symbol}] ❌ CRÍTICO: Feature columns faltantes para {model_name}. "
+                            f"Esperadas: {feature_cols}. Faltantes: {missing_cols}. "
+                            f"Modelo entrenado con diferentes features. Predicción descartada."
+                        )
+                        continue
+                    
+                    # Verificar orden de columnas (algunos modelos son sensibles al orden)
+                    expected_order = feature_cols
+                    actual_cols = list(ultima_fila.columns)
+                    if actual_cols != expected_order:
+                        logging.warning(
+                            f"[{symbol}] Orden de columnas diferente. "
+                            f"Esperado: {expected_order}. Actual: {actual_cols}. "
+                            f"Reordenando automáticamente..."
+                        )
+                        ultima_fila = ultima_fila[expected_order]
 
                     # Keras no acepta dtype=object: normalizamos entrada a float32 defensivamente.
                     ultima_fila = (

@@ -6,6 +6,7 @@ import pandas as pd
 import joblib
 import logging
 import warnings
+import gc
 from datetime import datetime
 from typing import TYPE_CHECKING
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -290,10 +291,32 @@ def main():
         else:
             # Flujo legacy intacto: Target binario por siguiente vela.
             df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
+            
+            # ⚠️ VALIDAR ANTES DE DROPNA - Problema crítico detectado
+            rows_before_dropna = len(df)
+            logging.info(f"Dataset antes de dropna(): {rows_before_dropna} filas")
+            
             df.dropna(inplace=True)
+            rows_after_dropna = len(df)
+            rows_lost = rows_before_dropna - rows_after_dropna
+            
+            if rows_lost > 0:
+                loss_percentage = (rows_lost / rows_before_dropna) * 100
+                if loss_percentage > 50:
+                    logging.warning(
+                        f"⚠️ ADVERTENCIA: Se perderán {rows_lost} filas ({loss_percentage:.1f}%) "
+                        f"por NaN/Inf. Dataset final: {rows_after_dropna} filas. "
+                        f"Considera aumentar el número de días de entrenamiento."
+                    )
+                else:
+                    logging.info(f"Filas descartadas por NaN/Inf: {rows_lost} ({loss_percentage:.1f}%)")
 
             if len(df) < 50:
-                raise ValueError("No hay suficientes datos limpios.")
+                raise ValueError(
+                    f"Insuficientes datos limpios tras dropna(): {len(df)} < 50 (requerido mínimo). "
+                    f"Se perdieron {rows_lost} filas. "
+                    f"Solución: ejecutar con más días de histórico o verificar calidad de datos."
+                )
 
             X = df.drop(columns=['Target'])
             y = df['Target']
@@ -306,6 +329,12 @@ def main():
         split_idx = int(len(X_array) * 0.8)
         X_train, X_test = X_array[:split_idx], X_array[split_idx:]
         y_train, y_test = y_array[:split_idx], y_array[split_idx:]
+        
+        # 🧹 CLEANUP CRÍTICO: Liberar memoria antes de entrenar modelos grandes
+        del X, y, X_array, y_array
+        del df, strategy if strategy_name else None  # Libera DataFrames grandes
+        gc.collect()
+        logging.info("Memoria liberada antes del entrenamiento")
         
         models_dir = os.path.join(project_root, 'models')
         os.makedirs(models_dir, exist_ok=True)

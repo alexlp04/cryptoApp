@@ -1,11 +1,20 @@
 package com.bottrading.utils;
 
+// Importamos las constantes estáticas
+import static com.bottrading.utils.AppConstants.DIR_RESULTS;
+import static com.bottrading.utils.AppConstants.DIR_SCRIPTS;
+import static com.bottrading.utils.AppConstants.DIR_STRATEGIES;
+import static com.bottrading.utils.AppConstants.EXTENSION_PYTHON;
+import static com.bottrading.utils.AppConstants.FILE_ENGINE_AI_RT;
+import static com.bottrading.utils.AppConstants.FILE_ENGINE_BACKTEST;
+import static com.bottrading.utils.AppConstants.FILE_ENGINE_RT;
+import static com.bottrading.utils.AppConstants.FILE_ENGINE_TRAIN;
+import static com.bottrading.utils.AppConstants.FILE_FETCHER;
+import static com.bottrading.utils.AppConstants.FILE_INDICATORS;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
-// Importamos las constantes estáticas
-import static com.bottrading.utils.AppConstants.*;
 
 public final class PathConfig {
 
@@ -73,19 +82,57 @@ public final class PathConfig {
     }
 
     public static String getValidModelPath(String nombreModelo, String timeframe, String symbol) {
-        String nombreArchivo = String.format("%s_%s_%s.pkl", nombreModelo, timeframe, symbol);
-
-        if (nombreArchivo.contains("..") || nombreArchivo.contains("/") || nombreArchivo.contains("\\")) {
+        // Validación de seguridad
+        if (nombreModelo.contains("..") || nombreModelo.contains("/") || nombreModelo.contains("\\") ||
+            timeframe.contains("..") || timeframe.contains("/") || timeframe.contains("\\") ||
+            symbol.contains("..") || symbol.contains("/") || symbol.contains("\\")) {
             throw new IllegalArgumentException("Nombre de modelo inválido por seguridad.");
         }
 
-        Path rutaFinal = Paths.get(MODELS_DIR, nombreArchivo);
-
-        if (!Files.exists(rutaFinal)) {
-            throw new IllegalArgumentException("No existe el modelo de IA '" + nombreArchivo + "' en la carpeta: " + MODELS_DIR + ". ¿Has ejecutado el comando 'train'?");
+        Path modelDir = Paths.get(MODELS_DIR);
+        
+        // 1. Buscar por nombre libre (usuario ha renombrado el archivo)
+        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
+            Path candidate = modelDir.resolve(nombreModelo + ext);
+            if (Files.exists(candidate)) {
+                return candidate.toAbsolutePath().toString();
+            }
         }
         
-        return rutaFinal.toAbsolutePath().toString();
+        // 2. Buscar con formato estándar {modelo}_{timeframe}_{symbol}
+        String baseName = String.format("%s_%s_%s", nombreModelo, timeframe, symbol);
+        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
+            Path candidate = modelDir.resolve(baseName + ext);
+            if (Files.exists(candidate)) {
+                return candidate.toAbsolutePath().toString();
+            }
+        }
+        
+        // 3. Buscar variantes con sufijo de estrategia: {baseName}_{strategy}.ext
+        try (var stream = Files.list(modelDir)) {
+            var optionalPath = stream
+                .filter(p -> {
+                    String name = p.getFileName().toString();
+                    return name.startsWith(baseName + "_") &&
+                           (name.endsWith(".pkl") || name.endsWith(".keras") || name.endsWith(".h5"));
+                })
+                .findFirst();
+            
+            if (optionalPath.isPresent()) {
+                return optionalPath.get().toAbsolutePath().toString();
+            }
+        } catch (Exception e) {
+            // Ignorar error de listado, continuar con mensaje de no encontrado
+        }
+        
+        throw new IllegalArgumentException(
+            "No existe el modelo '" + nombreModelo + "' para " + timeframe + ":" + symbol + 
+            " en la carpeta: " + MODELS_DIR + "\n" +
+            "Buscado como: 1) nombre libre (.pkl/.keras/.h5), " +
+            "2) formato estándar ({modelo}_{timeframe}_{symbol}), " +
+            "3) variantes con sufijo de estrategia. " +
+            "¿Has ejecutado el comando 'train'?"
+        );
     }
 
     /**

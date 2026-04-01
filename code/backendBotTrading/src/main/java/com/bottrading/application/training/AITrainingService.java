@@ -1,30 +1,33 @@
 package com.bottrading.application.training;
 
-import com.bottrading.application.market.MarketDataService;
-import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
-import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
-import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
-import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
-import com.bottrading.domain.market.IndicadorTecnico;
-import com.bottrading.domain.market.Vela;
-import com.bottrading.config.ProcessExecutorConfig;
-import com.bottrading.exceptions.StrategyExecutionException;
-import com.bottrading.domain.market.IndicadorRepository;
-import com.bottrading.domain.market.VelaRepository;
-import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.StrategyInspector;
-import com.google.gson.Gson;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
+import com.bottrading.application.market.MarketDataService;
+import com.bottrading.config.ProcessExecutorConfig;
+import com.bottrading.domain.market.IndicadorRepository;
+import com.bottrading.domain.market.IndicadorTecnico;
+import com.bottrading.domain.market.Vela;
+import com.bottrading.domain.market.VelaRepository;
+import com.bottrading.exceptions.StrategyExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
+import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
+import com.bottrading.utils.PathConfig;
+import com.bottrading.utils.StrategyInspector;
+import com.google.gson.Gson;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio encargado de orquestar el entrenamiento de modelos de Inteligencia
@@ -74,9 +77,26 @@ public class AITrainingService {
             Integer warmupCandles = null;
             Integer totalCandles = null;
             int daysForPreparation = dias;
+            
             if (useDynamicStrategy) {
-                warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
-                totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
+                try {
+                    warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+                    totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
+                } catch (Exception e) {
+                    throw new StrategyExecutionException(
+                        "Error al inspeccionar estrategia '" + strategyName + "': " +
+                        e.getMessage() + ". ¿Exists el archivo " + strategyName + ".py en la carpeta de estrategias?",
+                        e
+                    );
+                }
+                
+                if (warmupCandles == null || totalCandles == null) {
+                    throw new StrategyExecutionException(
+                        "La estrategia '" + strategyName + "' no devolvió warmup_period o candles_required. " +
+                        "Verifica que implemente estos métodos correctamente."
+                    );
+                }
+                
                 int candlesPerDay = resolveCandlesPerDay(timeframe);
                 daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
             }
@@ -173,7 +193,9 @@ public class AITrainingService {
     }
 
     /**
-     * Invoca el motor Python con timeout de 30s y destrucción forzada en caso de error.
+     * Invoca el motor Python con timeout configurado y destrucción forzada en caso de error.
+     * El timeout se basa en TRAIN_INACTIVITY_TIMEOUT_SECONDS (1800 segundos = 30 minutos)
+     * suficiente para entrenamientos de Deep Learning con 100+ épocas.
      */
     private String invocarMotorPythonConTimeouts(String jsonPayload) throws StrategyExecutionException {
         try {
@@ -182,7 +204,7 @@ public class AITrainingService {
 
             PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_TRAIN_PATH)
                     .operationName("train-model")
-                    .noTimeout()
+                    .inactivityTimeout(ProcessExecutorConfig.TRAIN_INACTIVITY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
                     .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
                     .stdinWriter(os -> escribirEnvelopeTrain(os, jsonPayload))
