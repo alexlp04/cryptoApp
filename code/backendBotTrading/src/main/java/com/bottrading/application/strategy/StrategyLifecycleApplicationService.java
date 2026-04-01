@@ -1,18 +1,21 @@
 package com.bottrading.application.strategy;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.application.trading.AccountingService;
-import com.bottrading.infrastructure.bridge.StrategyRuntimeCoordinator;
-import com.bottrading.utils.AppConstants;
-import lombok.extern.slf4j.Slf4j;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import com.bottrading.application.trading.AccountingService;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.infrastructure.bridge.StrategyRuntimeCoordinator;
+import com.bottrading.utils.AppConstants;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio de aplicación para gestión del ciclo de vida de estrategias.
@@ -23,6 +26,8 @@ import java.util.Set;
 @Slf4j
 @Service
 public class StrategyLifecycleApplicationService {
+
+    private static final String INSTANCIA_ID_NULL_MSG = "instanciaId no puede ser null";
 
     private final InstanciaEstrategiaRepository instanciaRepo;
     private final AccountingService accountingService;
@@ -44,13 +49,14 @@ public class StrategyLifecycleApplicationService {
      * 3. Lanza el proceso de Python.
      */
     @Transactional
+    @SuppressWarnings("java:S107")
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
         
         InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
 
-        instancia = instanciaRepo.save(instancia);
+        instancia = instanciaRepo.save(Objects.requireNonNull(instancia, "Instancia no puede ser null"));
         log.info("Estrategia {} creada con ID {}", nombreEstra, instancia.getId());
 
         accountingService.activateStrategy(walletId, instancia.getId(), capital);
@@ -62,7 +68,7 @@ public class StrategyLifecycleApplicationService {
      * Reanuda una estrategia detenida (PAUSA -> ACTIVA).
      */
     public void iniciarEstrategiaDetenida(Long instanciaId) {
-        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(instanciaId);
+        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
         if (opt.isEmpty()) {
             log.error("Estrategia no encontrada: {}", instanciaId);
             return;
@@ -103,7 +109,7 @@ public class StrategyLifecycleApplicationService {
         runtimeCoordinator.detenerEstrategia(instanciaId);
 
         // Actualizar estado a DETENIDA
-        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(instanciaId);
+        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
         if (opt.isPresent() && AppConstants.KEY_ACTIVA.equals(opt.get().getEstado())) {
             InstanciaEstrategia instancia = opt.get();
             instancia.setEstado(AppConstants.KEY_DETENIDA);
@@ -134,7 +140,7 @@ public class StrategyLifecycleApplicationService {
         runtimeCoordinator.detenerEstrategia(instanciaId);
 
         // Liquidación financiera
-        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(instanciaId);
+        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
         if (opt.isPresent()) {
             InstanciaEstrategia instancia = opt.get();
             if (!AppConstants.KEY_TERMINADA.equals(instancia.getEstado())) {

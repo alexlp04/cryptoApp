@@ -1,19 +1,23 @@
 package com.bottrading.infrastructure.bridge;
 
-import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
-import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.springframework.stereotype.Service;
+
 import com.bottrading.domain.strategy.InstanciaEstrategia;
 import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.utils.PathConfig;
 import com.bottrading.utils.PythonProcessSupport;
 import com.google.gson.Gson;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Supervisor de bajo nivel para el ciclo de vida de procesos Python.

@@ -244,19 +244,51 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                         # Para Random Forest, XGBoost, SVM, LightGBM...
                         # Muchos modelos modernos prefieren numpy arrays puros para evitar warnings de feature names
                         prediccion = model.predict(x_pred)[0]
+                        clases_modelo = list(getattr(model, "classes_", []))
                         try:
                             probabilidades = model.predict_proba(x_pred)[0]
-                            prob_baja, prob_sube = probabilidades[0], probabilidades[1]
-                            logging.info(f"[{symbol}] {model_name.upper()} Predice: {prediccion} (Sube: {prob_sube*100:.1f}%, Baja: {prob_baja*100:.1f}%)")
-                            
-                            if prediccion == 1 and prob_sube >= 0.52: action = "BUY"
-                            elif prediccion == 0 and prob_baja >= 0.52: action = "SELL"
+                            prob_por_clase = {
+                                clase: float(probabilidad)
+                                for clase, probabilidad in zip(clases_modelo, probabilidades)
+                            } if clases_modelo and len(clases_modelo) == len(probabilidades) else {
+                                idx: float(probabilidad)
+                                for idx, probabilidad in enumerate(probabilidades)
+                            }
+
+                            # Modelos dinámicos: -1 = SELL, 0 = HOLD, 1 = BUY.
+                            # Modelos legacy binarios: 0 = SELL, 1 = BUY.
+                            if -1 in prob_por_clase or len(prob_por_clase) > 2:
+                                prob_sell = prob_por_clase.get(-1, 0.0)
+                                prob_hold = prob_por_clase.get(0, 0.0)
+                                prob_buy = prob_por_clase.get(1, 0.0)
+                                logging.info(
+                                    f"[{symbol}] {model_name.upper()} Predice: {prediccion} "
+                                    f"(BUY: {prob_buy*100:.1f}%, HOLD: {prob_hold*100:.1f}%, SELL: {prob_sell*100:.1f}%)"
+                                )
+
+                                if int(prediccion) == 1:
+                                    action = "BUY"
+                                elif int(prediccion) == -1:
+                                    action = "SELL"
+                            else:
+                                prob_baja = prob_por_clase.get(0, probabilidades[0])
+                                prob_sube = prob_por_clase.get(1, probabilidades[1] if len(probabilidades) > 1 else 0.0)
+                                logging.info(f"[{symbol}] {model_name.upper()} Predice: {prediccion} (Sube: {prob_sube*100:.1f}%, Baja: {prob_baja*100:.1f}%)")
+
+                                if int(prediccion) == 1 and prob_sube >= 0.52:
+                                    action = "BUY"
+                                elif int(prediccion) == 0 and prob_baja >= 0.52:
+                                    action = "SELL"
                                 
                         except AttributeError:
                             # SVM lineales u otros modelos sin probabilidades
                             logging.info(f"[{symbol}] {model_name.upper()} Predice: {prediccion} (Binario)")
-                            if prediccion == 1: action = "BUY"
-                            elif prediccion == 0: action = "SELL"
+                            if int(prediccion) == 1:
+                                action = "BUY"
+                            elif int(prediccion) == -1:
+                                action = "SELL"
+                            elif int(prediccion) == 0 and len(clases_modelo) <= 2:
+                                action = "SELL"
                             
                     elif model_type == "deep_learning":
                         # Para Redes Neuronales (TensorFlow / Keras)
@@ -273,8 +305,8 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                             "symbol": symbol,
                             "action": action,
                             "timeframe": timeframe,
-                            "price": float(new_row.iloc[0]["close"]),
-                            "timestamp": int(new_row.iloc[0]["timestamp"]),
+                            "price": float(new_row["close"]),
+                            "timestamp": int(new_row["timestamp"]),
                             "is_real": is_real,
                             "source": f"AI_{model_name.upper()}"
                         }

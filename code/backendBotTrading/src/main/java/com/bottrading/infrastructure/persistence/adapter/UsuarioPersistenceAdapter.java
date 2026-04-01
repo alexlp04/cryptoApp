@@ -1,15 +1,17 @@
 package com.bottrading.infrastructure.persistence.adapter;
 
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+import org.springframework.stereotype.Component;
+
 import com.bottrading.application.user.port.out.UsuarioRepositoryPort;
 import com.bottrading.domain.user.Usuario;
 import com.bottrading.infrastructure.persistence.jpa.UsuarioJpaRepository;
 import com.bottrading.infrastructure.persistence.mapper.UsuarioMapper;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 
 /**
  * ADAPTER O PUERTO DE SALIDA — Implementación de persistencia para Usuario.
@@ -40,7 +42,7 @@ public class UsuarioPersistenceAdapter implements UsuarioRepositoryPort {
 
     @Override
     public Optional<Usuario> findById(Long id) {
-        return jpaRepository.findById(id)
+        return jpaRepository.findById(Objects.requireNonNull(id, "id no puede ser null"))
             .map(mapper::toDomain);
     }
 
@@ -53,13 +55,13 @@ public class UsuarioPersistenceAdapter implements UsuarioRepositoryPort {
     @Override
     public Usuario save(Usuario usuario) {
         var jpaEntity = mapper.toJpa(usuario);
-        var savedJpaEntity = jpaRepository.save(jpaEntity);
+        var savedJpaEntity = jpaRepository.save(Objects.requireNonNull(jpaEntity, "UsuarioJpaEntity no puede ser null"));
         return mapper.toDomain(savedJpaEntity);
     }
 
     @Override
     public void deleteById(Long id) {
-        jpaRepository.deleteById(id);
+        jpaRepository.deleteById(Objects.requireNonNull(id, "id no puede ser null"));
     }
 
     @Override
@@ -67,6 +69,6 @@ public class UsuarioPersistenceAdapter implements UsuarioRepositoryPort {
         return jpaRepository.findAll()
             .stream()
             .map(mapper::toDomain)
-            .collect(Collectors.toList());
+            .toList();
     }
 }

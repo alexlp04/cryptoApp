@@ -1,12 +1,13 @@
 package com.bottrading.infrastructure.persistence;
 
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
+import org.springframework.stereotype.Service;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Gestor de limpieza de artefactos de backtesting.
@@ -17,12 +18,6 @@ import java.nio.file.Paths;
 @Slf4j
 @Service
 public class BacktestArtifactsCleaner {
-
-    private final CsvUtilities csvUtils;
-
-    public BacktestArtifactsCleaner(CsvUtilities csvUtils) {
-        this.csvUtils = csvUtils;
-    }
 
     /**
      * Verifica y limpia la carpeta de una estrategia.

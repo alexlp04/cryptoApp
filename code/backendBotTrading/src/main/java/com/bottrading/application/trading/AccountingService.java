@@ -1,23 +1,24 @@
 package com.bottrading.application.trading;
 
-import com.bottrading.exceptions.ValidationException;
-
 import java.math.BigDecimal;
 import java.time.Instant;
-
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.trading.LedgerEntry;
-import com.bottrading.domain.trading.LedgerType;
-import com.bottrading.domain.wallet.Wallet;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.LedgerRepository;
-import com.bottrading.domain.wallet.WalletRepository;
-import com.bottrading.utils.AppConstants;
+import java.util.Objects;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.LedgerEntry;
+import com.bottrading.domain.trading.LedgerRepository;
+import com.bottrading.domain.trading.LedgerType;
+import com.bottrading.domain.wallet.Wallet;
+import com.bottrading.domain.wallet.WalletRepository;
+import com.bottrading.exceptions.ValidationException;
+import com.bottrading.utils.AppConstants;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio transaccional encargado de todos los movimientos monetarios y contables.
@@ -131,7 +132,7 @@ public class AccountingService {
 
         e.setEstado(AppConstants.KEY_TERMINADA);
         
-        walletRepo.save(w);
+        walletRepo.save(Objects.requireNonNull(w, "Wallet no puede ser null"));
         estrategiaRepo.save(e);
     }
 

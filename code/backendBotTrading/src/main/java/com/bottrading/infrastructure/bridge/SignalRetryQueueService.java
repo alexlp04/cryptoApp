@@ -1,15 +1,16 @@
 package com.bottrading.infrastructure.bridge;
 
-import com.bottrading.beans.SignalDTO;
-import com.bottrading.application.trading.PaperTradingService;
-import com.bottrading.exceptions.SignalProcessingException;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import org.springframework.stereotype.Service;
+
+import com.bottrading.application.trading.PaperTradingService;
+import com.bottrading.beans.SignalDTO;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Gestor de colas de reintentos para señales fallidas.

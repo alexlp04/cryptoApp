@@ -1,15 +1,19 @@
 package com.bottrading.interfaces.cli.commands;
 
+import java.math.BigDecimal;
+
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.utils.CommandParser;
 import com.bottrading.utils.PathConfig;
-import java.math.BigDecimal;
 
 /**
  * Handles trade command orchestration from CLI.
  */
 public final class TradeCommand implements CliCommand {
+
+    private record WalletSelection(Long walletId, BigDecimal disponible) {
+    }
 
     @Override
     public String name() {
@@ -28,27 +32,58 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
+        if (!validarArgumentos(args, context)) {
+            return;
+        }
+
+        if (!validarEstrategiaYModelo(args, context)) {
+            return;
+        }
+
+        WalletSelection walletSelection = seleccionarWallet(context);
+        BigDecimal capitalAsignado = leerCapitalAsignado(context, walletSelection.disponible());
+        if (capitalAsignado == null) {
+            return;
+        }
+
+        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
+        if (risk == null) {
+            return;
+        }
+
+        context.estrategiaService().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
+                args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado);
+        context.println().accept("Bot lanzado en segundo plano con exito.");
+    }
+
+    private boolean validarArgumentos(CommandParser args, CliCommandContext context) {
+
         if ((!args.isReal() && !args.isVirtual()) || (args.isReal() && args.isVirtual())
                 || args.getTimeframe() == null || args.getCoins().isEmpty()
                 || (args.getEstrategia() == null && args.getModelo() == null)) {
             context.println().accept(
                     "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]");
-            return;
+            return false;
         }
 
         if (args.isReal()) {
             context.println().accept("ADVERTENCIA: Has seleccionado MODO REAL. Asegurate de tener fondos y entender los riesgos.");
         }
 
+        return true;
+    }
+
+    private boolean validarEstrategiaYModelo(CommandParser args, CliCommandContext context) {
+
         if (args.getModelo() != null && args.getEstrategia() == null) {
             context.println().accept("Error: -model requiere tambien -strategy para calcular indicadores.");
             context.println().accept("Uso: trade -v -model <nombre> -strategy <estrategia> -tf <tf> -coins <coin1> [coin2...]");
-            return;
+            return false;
         }
 
         if (args.getEstrategia() != null && !PathConfig.existeEstrategia(args.getEstrategia())) {
             context.println().accept("Error: No se encuentra el script de estrategia '" + args.getEstrategia() + ".py'.");
-            return;
+            return false;
         }
 
         if (args.getModelo() != null) {
@@ -59,10 +94,15 @@ public final class TradeCommand implements CliCommand {
                     context.println().accept("Pista: Ejecuta primero -> train -model " + args.getModelo()
                             + " -strategy " + args.getEstrategia()
                             + " -tf " + args.getTimeframe() + " -coins " + coin);
-                    return;
+                    return false;
                 }
             }
         }
+
+        return true;
+    }
+
+    private WalletSelection seleccionarWallet(CliCommandContext context) {
 
         context.println().accept("\nSelecciona una wallet:");
         context.walletService().listarWallets().forEach(context.println());
@@ -78,23 +118,21 @@ public final class TradeCommand implements CliCommand {
         context.println().accept(String.format("Saldo Total: %s | En Silos: %s | DISPONIBLE: %s",
                 balanceTotal, comprometido, disponible));
 
+        return new WalletSelection(walletId, disponible);
+    }
+
+    private BigDecimal leerCapitalAsignado(CliCommandContext context, BigDecimal disponible) {
+
         BigDecimal capitalAsignado = CliInputValidator.readBigDecimal(context,
             "Capital a asignar a este bot: ", "capital asignado");
         if (capitalAsignado == null) {
-            return;
+            return null;
         }
 
         if (capitalAsignado.compareTo(disponible) > 0) {
             throw new IllegalArgumentException("Saldo insuficiente en la wallet.");
         }
 
-        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
-        if (risk == null) {
-            return;
-        }
-
-        context.estrategiaService().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
-                args.getCoins(), args.isReal(), walletId, risk, capitalAsignado);
-        context.println().accept("Bot lanzado en segundo plano con exito.");
+        return capitalAsignado;
     }
 }

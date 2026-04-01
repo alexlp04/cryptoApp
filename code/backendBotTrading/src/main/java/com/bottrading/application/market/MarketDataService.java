@@ -1,5 +1,7 @@
 package com.bottrading.application.market;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -140,6 +142,24 @@ public class MarketDataService {
         indicatorsService.calculateBasicIndicators(symbol, velas, esDescargaCompleta);
         
         log.info("--- DATASET LISTO ---");
+    }
+
+    public void fullRefresh(String symbol, String interval, Integer days) {
+        fetchService.fullRefresh(symbol, interval, days);
+    }
+
+    public LocalDateTime findOldestTimestamp(String symbol, String interval) {
+        Long oldest = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
+        if (oldest == null) {
+            return null;
+        }
+        return LocalDateTime.ofEpochSecond(oldest / 1000L, (int) ((oldest % 1000L) * 1_000_000), ZoneOffset.UTC);
+    }
+
+    public void fillGapRange(String symbol, String interval, LocalDateTime from, LocalDateTime to) {
+        long fromMs = from.toInstant(ZoneOffset.UTC).toEpochMilli();
+        long toMs = to.toInstant(ZoneOffset.UTC).toEpochMilli();
+        fetchService.fillGapRange(symbol, interval, fromMs, toMs);
     }
 
     @PreDestroy

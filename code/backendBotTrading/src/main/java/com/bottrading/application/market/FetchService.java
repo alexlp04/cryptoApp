@@ -1,29 +1,45 @@
 package com.bottrading.application.market;
 
-import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
-import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
-import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
-import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.exceptions.DataFetchException;
-import com.bottrading.domain.market.IndicadorRepository;
-import com.bottrading.domain.market.VelaRepository;
-import com.bottrading.utils.ConsoleLoader;
-import com.bottrading.utils.PathConfig;
-import com.bottrading.domain.market.VelaDTO;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-import jakarta.annotation.PreDestroy;
-import java.io.*;
-import java.math.BigDecimal;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.bottrading.domain.market.IndicadorRepository;
+import com.bottrading.domain.market.VelaDTO;
+import com.bottrading.domain.market.VelaRepository;
+import com.bottrading.exceptions.DataFetchException;
+import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
+import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.utils.ConsoleLoader;
+import com.bottrading.utils.PathConfig;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+import com.google.gson.reflect.TypeToken;
+
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio encargado de la sincronización de datos de mercado
@@ -47,6 +63,15 @@ public class FetchService {
 
     private static final int BATCH_INSERT_SIZE = 50000;
     private static final int MAX_RETRIES = 3;
+        private static final int BINANCE_PAGE_LIMIT = 1000;
+        private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines";
+        private static final Duration BINANCE_HTTP_TIMEOUT = Duration.ofSeconds(30);
+        private static final String SQL_INSERT_VELA_PLAIN =
+            "INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, "
+                + "taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+            private record PageProcessResult(long lastOpenTime, int inserted) {
+            }
 
     public FetchService(VelaRepository velaRepo,
             IndicadorRepository indicadorRepo,
@@ -96,6 +121,128 @@ public class FetchService {
             ConsoleLoader.getInstance().stop("✅ Historial de " + symbol + " ya está actualizado.");
             log.info("Los datos ya están al día.");
         }
+    }
+
+    /**
+     * Modo full refresh: elimina histórico del símbolo/intervalo y vuelve a descargar
+     * desde el inicio o desde una ventana de días.
+     */
+    public void fullRefresh(String symbol, String interval, Integer days) {
+        Long fromTimestamp = null;
+        if (days != null) {
+            long millisPerDay = 24L * 60L * 60L * 1000L;
+            fromTimestamp = System.currentTimeMillis() - days * millisPerDay;
+        }
+
+        Long deletionAnchor = Optional.ofNullable(fromTimestamp)
+                .orElseGet(() -> velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval));
+
+        if (deletionAnchor != null) {
+            indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
+            velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
+        }
+
+        callPythonAndSave(symbol, interval, fromTimestamp);
+    }
+
+    /**
+     * Modo gap fill: activa descarga desde el inicio de un hueco detectado.
+     * Nota: el downloader actual opera desde fromTimestamp hasta "now".
+     */
+    public void fillGapRange(String symbol, String interval, long fromTimestamp, long toTimestamp) {
+        LocalDateTime from = LocalDateTime.ofEpochSecond(
+                fromTimestamp / 1000L,
+                (int) ((fromTimestamp % 1000L) * 1_000_000),
+                ZoneOffset.UTC);
+        LocalDateTime to = LocalDateTime.ofEpochSecond(
+                toTimestamp / 1000L,
+                (int) ((toTimestamp % 1000L) * 1_000_000),
+                ZoneOffset.UTC);
+        fetchRange(symbol, interval, from, to);
+    }
+
+    /**
+     * Descarga velas en el rango exacto [from, to] y las inserta en BD con INSERT plano.
+     */
+    public int fetchRange(String symbol, String timeframe, LocalDateTime from, LocalDateTime to) {
+        validateFetchRangeInputs(symbol, timeframe, from, to);
+
+        if (to.isBefore(from)) {
+            return 0;
+        }
+
+        long intervalMs = resolveIntervalMillisStrict(timeframe);
+        long fromMs = from.toInstant(ZoneOffset.UTC).toEpochMilli();
+        long toMs = to.toInstant(ZoneOffset.UTC).toEpochMilli();
+
+        HttpClient client = HttpClient.newHttpClient();
+        List<Object[]> insertBatch = new ArrayList<>(BATCH_INSERT_SIZE);
+        int totalInserted = 0;
+
+        long cursor = fromMs;
+        boolean hasMore = true;
+        while (cursor <= toMs && hasMore) {
+            long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
+
+            JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
+            hasMore = !klines.isEmpty();
+            if (hasMore) {
+                PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
+                totalInserted += pageResult.inserted();
+
+                hasMore = pageResult.lastOpenTime() >= cursor;
+                if (hasMore) {
+                    cursor = pageResult.lastOpenTime() + intervalMs;
+                }
+            }
+        }
+
+        if (!insertBatch.isEmpty()) {
+            totalInserted += executePlainInsertBatch(insertBatch);
+            insertBatch.clear();
+        }
+
+        log.info("Filled gap [{}][{}]: {} -> {} ({} candles inserted)", symbol, timeframe, from, to, totalInserted);
+        return totalInserted;
+    }
+
+    private void validateFetchRangeInputs(String symbol, String timeframe, LocalDateTime from, LocalDateTime to) {
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("symbol no puede ser nulo o vacío");
+        }
+        if (timeframe == null || timeframe.isBlank()) {
+            throw new IllegalArgumentException("timeframe no puede ser nulo o vacío");
+        }
+        if (from == null || to == null) {
+            throw new IllegalArgumentException("from/to no pueden ser nulos");
+        }
+    }
+
+    private PageProcessResult processPage(
+            JsonArray klines,
+            String symbol,
+            String timeframe,
+            long fromMs,
+            long toMs,
+            List<Object[]> insertBatch) {
+        long lastOpenTimeInPage = -1L;
+        int inserted = 0;
+
+        for (JsonElement element : klines) {
+            JsonArray candle = element.getAsJsonArray();
+            long openTime = candle.get(0).getAsLong();
+            if (openTime >= fromMs && openTime <= toMs) {
+                lastOpenTimeInPage = openTime;
+                insertBatch.add(mapCandleToInsertArgs(candle, symbol, timeframe));
+
+                if (insertBatch.size() >= BATCH_INSERT_SIZE) {
+                    inserted += executePlainInsertBatch(insertBatch);
+                    insertBatch.clear();
+                }
+            }
+        }
+
+        return new PageProcessResult(lastOpenTimeInPage, inserted);
     }
 
     /**
@@ -220,7 +367,9 @@ public class FetchService {
             log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
         } catch (PythonBridgeExecutionException e) {
             ConsoleLoader.getInstance().stopClear();
-            log.error("Error crítico en FetchService para {}: {}", symbol, e.getMessage(), e);
+            String rootCause = e.getCause() != null ? e.getCause().getMessage() : "sin causa interna";
+            log.error("Error crítico en FetchService para {}: {} | causa raíz: {}", symbol, e.getMessage(), rootCause,
+                    e);
             throw e;
         }
     }
@@ -336,6 +485,78 @@ public class FetchService {
             log.error("Error inserting batch of {} records: {}", batch.size(), e.getMessage());
             throw new DataFetchException("Batch insert failed", e);
         }
+    }
+
+    private int executePlainInsertBatch(@org.springframework.lang.NonNull List<Object[]> batch) {
+        try {
+            int[] results = jdbcTemplate.batchUpdate(SQL_INSERT_VELA_PLAIN, batch);
+            return (int) Arrays.stream(results).filter(r -> r > 0).count();
+        } catch (Exception e) {
+            throw new DataFetchException("Plain batch insert failed", e);
+        }
+    }
+
+    private Object[] mapCandleToInsertArgs(JsonArray candle, String symbol, String timeframe) {
+        return new Object[] {
+            candle.get(0).getAsLong(),
+            new BigDecimal(candle.get(1).getAsString()),
+            new BigDecimal(candle.get(2).getAsString()),
+            new BigDecimal(candle.get(3).getAsString()),
+            new BigDecimal(candle.get(4).getAsString()),
+            new BigDecimal(candle.get(5).getAsString()),
+            candle.get(6).getAsLong(),
+            new BigDecimal(candle.get(7).getAsString()),
+            candle.get(8).getAsInt(),
+            new BigDecimal(candle.get(9).getAsString()),
+            new BigDecimal(candle.get(10).getAsString()),
+            symbol,
+            timeframe
+        };
+    }
+
+    private JsonArray requestKlines(HttpClient client,
+            String symbol,
+            String timeframe,
+            long startTime,
+            long endTime) {
+        try {
+            URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .GET()
+                    .timeout(BINANCE_HTTP_TIMEOUT)
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new DataFetchException("Binance returned HTTP " + response.statusCode());
+            }
+
+            return JsonParser.parseString(response.body()).getAsJsonArray();
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DataFetchException("Error requesting klines for range", e);
+        }
+    }
+
+    private URI buildKlinesUri(String symbol, String timeframe, long startTime, long endTime) {
+        String query = "symbol=" + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
+                + "&interval=" + URLEncoder.encode(timeframe, StandardCharsets.UTF_8)
+                + "&startTime=" + startTime
+                + "&endTime=" + endTime
+                + "&limit=" + BINANCE_PAGE_LIMIT;
+        return URI.create(BINANCE_KLINES_URL + "?" + query);
+    }
+
+    private long resolveIntervalMillisStrict(String interval) {
+        return switch (interval) {
+            case "1m" -> 60_000L;
+            case "5m" -> 300_000L;
+            case "15m" -> 900_000L;
+            case "1h" -> 3_600_000L;
+            case "4h" -> 14_400_000L;
+            case "1d" -> 86_400_000L;
+            default -> throw new IllegalArgumentException("Timeframe no soportado para fetchRange: " + interval);
+        };
     }
 
     public static long getIntervalMillis(String interval) {

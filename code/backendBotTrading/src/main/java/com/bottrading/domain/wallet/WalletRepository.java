@@ -8,9 +8,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
-import com.bottrading.domain.wallet.Wallet;
-import com.bottrading.domain.wallet.WalletType;
-
 import jakarta.persistence.LockModeType;
 
 @Repository

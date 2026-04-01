@@ -330,9 +330,14 @@ def main():
         X_train, X_test = X_array[:split_idx], X_array[split_idx:]
         y_train, y_test = y_array[:split_idx], y_array[split_idx:]
         
-        # 🧹 CLEANUP CRÍTICO: Liberar memoria antes de entrenar modelos grandes
-        del X, y, X_array, y_array
-        del df, strategy if strategy_name else None  # Libera DataFrames grandes
+        vars_to_delete = ['X', 'y', 'X_array', 'y_array', 'df', 'strategy']
+
+        for var in vars_to_delete:
+            if var in globals():
+                del globals()[var]
+        if 'strategy_name' in globals():
+            del strategy_name
+
         gc.collect()
         logging.info("Memoria liberada antes del entrenamiento")
         
