@@ -1,37 +1,36 @@
 package com.bottrading.application.market;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Type;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import com.bottrading.domain.market.IndicadorTecnicoDTO;
+import com.bottrading.domain.market.Vela;
+import com.bottrading.domain.market.VelaDTO;
+import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
 import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
 import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
 import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
 import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
-import com.bottrading.domain.market.Vela;
-import com.bottrading.domain.market.VelaDTO;
-import com.bottrading.domain.market.IndicadorTecnico;
-import com.bottrading.domain.market.IndicadorTecnicoDTO;
-import com.bottrading.domain.market.IndicadorRepository;
-import com.bottrading.domain.market.VelaRepository;
-import com.bottrading.exceptions.PythonProcessException;
 import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.BatchPreparedStatementSetter;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
-import java.io.*;
-import java.lang.reflect.Type;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio encargado del cálculo de indicadores técnicos sobre los datos de
@@ -54,6 +53,7 @@ public class IndicatorsService {
     private static final int BATCH_SIZE = 100000;
     private static final int OVERLAP = 50;
     private static final int MAX_RETRIES = 3;
+    private static final int JDBC_INSERT_BATCH_SIZE = 5000;
 
     public IndicatorsService(JdbcTemplate jdbcTemplate, PythonBridgeFacade pythonBridgeFacade) {
         this.jdbcTemplate = jdbcTemplate;
@@ -147,17 +147,16 @@ public class IndicatorsService {
 
         Set<Long> idsValidos = obtenerIdsValidosDelLote(loteVelas, esPrimerLote);
 
-        List<IndicadorTecnico> resultados = dtos.stream()
+        List<IndicadorTecnicoDTO> resultadosFiltrados = dtos.stream()
                 .filter(dto -> dto.getId() != null)
                 .filter(dto -> idsValidos.contains(dto.getId()))
-                .map(this::mapToEntity)
                 .toList();
 
-        if (!resultados.isEmpty()) {
-            guardarIndicadoresMasivo(resultados);
-            log.debug("Guardados {} indicadores del lote", resultados.size());
+        if (!resultadosFiltrados.isEmpty()) {
+            guardarIndicadoresMasivo(resultadosFiltrados);
+            log.debug("Guardados {} indicadores del lote", resultadosFiltrados.size());
         }
-        return resultados.size();
+        return resultadosFiltrados.size();
     }
 
     private List<IndicadorTecnicoDTO> leerIndicadoresDesdeRespuestaIpc(InputStream inputStream) throws IOException {
@@ -188,32 +187,43 @@ public class IndicatorsService {
      * Inserción en base de datos de alta velocidad saltándose la caché de
      * Hibernate.
      */
-    private void guardarIndicadoresMasivo(List<IndicadorTecnico> indicadores) {
-        // ATENCIÓN: Asegúrate de que los nombres de tabla y columnas coinciden con tu
-        // DB real.
+    private void guardarIndicadoresMasivo(List<IndicadorTecnicoDTO> indicadores) {
+        if (indicadores.isEmpty()) {
+            return;
+        }
+
         String sql = "INSERT INTO indicador_tecnico (vela_id, tipo, parametros, valor, fecha_creacion, eliminado) " +
-                "VALUES (?, ?, ?, ?, ?, ?)";
+            "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, FALSE)";
 
-        final Timestamp now = Timestamp.from(Instant.now());
+        int total = indicadores.size();
+        int guardados = 0;
 
-        jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
-            @Override
-            public void setValues(@org.springframework.lang.NonNull PreparedStatement ps, int i) throws SQLException {
-                IndicadorTecnico ind = indicadores.get(i);
+        for (int start = 0; start < total; start += JDBC_INSERT_BATCH_SIZE) {
+            int end = Math.min(total, start + JDBC_INSERT_BATCH_SIZE);
+            List<IndicadorTecnicoDTO> chunk = indicadores.subList(start, end);
 
-                ps.setLong(1, ind.getVela().getId());
-                ps.setString(2, ind.getTipo());
-                ps.setString(3, ind.getParametros());
-                ps.setBigDecimal(4, ind.getValor());
-                ps.setTimestamp(5, now);
-                ps.setBoolean(6, false);
+            jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
+                @Override
+                public void setValues(@org.springframework.lang.NonNull PreparedStatement ps, int i) throws SQLException {
+                    IndicadorTecnicoDTO dto = chunk.get(i);
+
+                    ps.setLong(1, dto.getId());
+                    ps.setString(2, dto.getTipo());
+                    ps.setString(3, dto.getParametros());
+                    ps.setBigDecimal(4, dto.getValor());
+                }
+
+                @Override
+                public int getBatchSize() {
+                    return chunk.size();
+                }
+            });
+
+            guardados += chunk.size();
+            if (guardados % 25000 == 0 || guardados == total) {
+                log.info("Persistencia de indicadores: {}/{}", guardados, total);
             }
-
-            @Override
-            public int getBatchSize() {
-                return indicadores.size();
-            }
-        });
+        }
     }
 
     /**
@@ -225,20 +235,6 @@ public class IndicatorsService {
         return loteVelas.subList(inicioReal, loteVelas.size()).stream()
                 .map(Vela::getId)
                 .collect(Collectors.toSet());
-    }
-
-    private IndicadorTecnico mapToEntity(IndicadorTecnicoDTO dto) {
-        IndicadorTecnico ind = new IndicadorTecnico();
-
-        // Truco de memoria: Evita que Hibernate haga un SELECT previo
-        Vela v = new Vela();
-        v.setId(dto.getId());
-
-        ind.setVela(v);
-        ind.setTipo(dto.getTipo());
-        ind.setValor(dto.getValor());
-        ind.setParametros(dto.getParametros());
-        return ind;
     }
 
     private VelaDTO mapToDTO(Vela v) {

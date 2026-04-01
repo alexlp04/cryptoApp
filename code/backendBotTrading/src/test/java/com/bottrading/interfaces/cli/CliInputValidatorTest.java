@@ -5,14 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.bottrading.infrastructure.validation.SessionManager;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+
+import com.bottrading.infrastructure.validation.SessionManager;
 
 class CliInputValidatorTest {
 
@@ -26,6 +28,7 @@ class CliInputValidatorTest {
                 new Scanner(new StringReader("")),
                 null,
                 sessionManager,
+                null,
                 null,
                 null,
                 null,
@@ -52,6 +55,7 @@ class CliInputValidatorTest {
                 null,
                 null,
                 null,
+                null,
                 s -> {
                 },
                 printed::add);
@@ -70,6 +74,7 @@ class CliInputValidatorTest {
                 new Scanner(new StringReader("")),
                 null,
                 Mockito.mock(SessionManager.class),
+                null,
                 null,
                 null,
                 null,
@@ -97,6 +102,7 @@ class CliInputValidatorTest {
                 null,
                 null,
                 null,
+                null,
                 prompts::add,
                 printed::add);
 
@@ -120,6 +126,7 @@ class CliInputValidatorTest {
                 null,
                 null,
                 null,
+                null,
                 prompts::add,
                 printed::add);
 
@@ -137,6 +144,7 @@ class CliInputValidatorTest {
                 new Scanner(new StringReader("si\n")),
                 null,
                 Mockito.mock(SessionManager.class),
+                null,
                 null,
                 null,
                 null,

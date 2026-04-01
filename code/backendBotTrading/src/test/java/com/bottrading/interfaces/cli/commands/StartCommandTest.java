@@ -6,18 +6,20 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.bottrading.interfaces.cli.CliCommandContext;
-import com.bottrading.application.strategy.EstrategiaService;
-import com.bottrading.infrastructure.validation.SessionManager;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.junit.jupiter.api.extension.ExtendWith;
+
+import com.bottrading.application.strategy.EstrategiaService;
+import com.bottrading.infrastructure.validation.SessionManager;
+import com.bottrading.interfaces.cli.CliCommandContext;
 
 @ExtendWith(MockitoExtension.class)
 class StartCommandTest {
@@ -39,6 +41,7 @@ class StartCommandTest {
                 null,
                 sessionManager,
                 estrategiaService,
+                null,
                 null,
                 null,
                 null,

@@ -17,7 +17,9 @@ public class CommandParser {
     private String modelo = null;
     private String timeframe = null;
     private Integer days = null;
+    private boolean detectGaps = false;
     private final List<String> coins = new ArrayList<>();
+    private final List<String> positionalArgs = new ArrayList<>();
     private Map<String, Object> hyperparams = new HashMap<>();
 
     // Variables de control de errores
@@ -29,24 +31,52 @@ public class CommandParser {
     }
 
     private void parse(String[] parts) {
-        try {
-            // Empezamos en i = 1 porque parts[0] es el nombre del comando (ej: "trade")
-            for (int i = 1; i < parts.length; i++) {
-                String arg = parts[i].toLowerCase();
-                switch (arg) {
-                    case "-r" -> isReal = true;
-                    case "-v" -> isVirtual = true;
-                    case "-strategy", "-s" -> estrategia = parts[++i];
-                    case "-model", "-m" -> modelo = parts[++i];
-                    case "-tf", "-t" -> timeframe = parts[++i];
-                    case "-days", "-d" -> i = getDaysFromArgs(parts, i);
-                    case "-coins", "-c" -> i = getCoinsFromArgs(parts, i);
-                    case "-params", "-p" -> i = getParamsFromArgs(parts, i);
+        int index = 1; // parts[0] es el nombre del comando (ej: "trade")
+
+        while (index < parts.length && !errorSintaxis) {
+            String arg = parts[index].toLowerCase();
+
+            switch (arg) {
+                case "-r" -> {
+                    isReal = true;
+                    index++;
+                }
+                case "-v" -> {
+                    isVirtual = true;
+                    index++;
+                }
+                case "--detect-gaps" -> {
+                    detectGaps = true;
+                    index++;
+                }
+                case "-strategy", "-s" -> {
+                    estrategia = requireValue(parts, index);
+                    index += 2;
+                }
+                case "-model", "-m" -> {
+                    modelo = requireValue(parts, index);
+                    index += 2;
+                }
+                case "-tf", "-t" -> {
+                    timeframe = requireValue(parts, index);
+                    index += 2;
+                }
+                case "-days", "--days", "-d" -> {
+                    parseDays(requireValue(parts, index));
+                    index += 2;
+                }
+                case "-coins", "-c" -> index = parseCoins(parts, index + 1);
+                case "-params", "-p" -> {
+                    parseParams(requireValue(parts, index));
+                    index += 2;
+                }
+                default -> {
+                    if (!arg.startsWith("-")) {
+                        positionalArgs.add(parts[index]);
+                    }
+                    index++;
                 }
             }
-        } catch (ArrayIndexOutOfBoundsException e) {
-            this.errorSintaxis = true;
-            this.mensajeError = "Error de sintaxis: Te ha faltado indicar un valor después de una bandera.";
         }
     }
 
@@ -70,12 +100,24 @@ public class CommandParser {
         return timeframe;
     }
 
+    public void setTimeframe(String timeframe) {
+        this.timeframe = timeframe;
+    }
+
     public List<String> getCoins() {
         return coins;
     }
 
     public Integer getDays() {
         return days;
+    }
+
+    public boolean isDetectGaps() {
+        return detectGaps;
+    }
+
+    public List<String> getPositionalArgs() {
+        return positionalArgs;
     }
 
     public boolean hasErrorSintaxis() {
@@ -89,52 +131,60 @@ public class CommandParser {
     public Map<String, Object> getHyperparams() { return hyperparams; }
 
 
-    private int getCoinsFromArgs(String[] parts, int i) {
-        // Recogemos todas las monedas hasta encontrar el final u otra bandera
-        while (i + 1 < parts.length && !parts[i + 1].startsWith("-")) {
-            coins.add(parts[++i].toUpperCase());
+    private int parseCoins(String[] parts, int startIndex) {
+        int index = startIndex;
+        while (index < parts.length && !parts[index].startsWith("-")) {
+            coins.add(parts[index].toUpperCase());
+            index++;
         }
-        return i;
+        return index;
     }
 
-    private int getDaysFromArgs(String[] parts, int i) {
+    private void parseDays(String value) {
         try {
-            days = Integer.parseInt(parts[++i]);
+            days = Integer.parseInt(value);
         } catch (NumberFormatException e) {
             this.errorSintaxis = true;
             this.mensajeError = "Error de sintaxis: El valor para -days debe ser un número entero.";
         }
-        return i;
     }
 
-    private int getParamsFromArgs(String[] parts, int i) {
-        if (i + 1 < parts.length && !parts[i + 1].startsWith("-")) {
-            String rawParams = parts[++i];
-            String[] pairs = rawParams.split(","); // Separamos por comas
-            
-            for (String pair : pairs) {
-                String[] kv = pair.split("="); // Separamos clave=valor
-                if (kv.length == 2) {
-                    String key = kv[0].trim();
-                    String value = kv[1].trim();
-                    
-                    // Truco vital: Intentar convertir a número para que Python no falle
-                    try {
-                        if (value.contains(".")) {
-                            hyperparams.put(key, Double.parseDouble(value)); // Decimales
-                        } else {
-                            hyperparams.put(key, Integer.parseInt(value)); // Enteros
-                        }
-                    } catch (NumberFormatException e) {
-                        hyperparams.put(key, value); // Si no es número, se guarda como texto (ej: rbf)
-                    }
-                }
-            }
-        } else {
-            this.errorSintaxis = true;
-            this.mensajeError = "Error: Faltan valores para -params (ej: -params n_estimators=300,max_depth=5)";
+    private void parseParams(String rawParams) {
+        for (String pair : rawParams.split(",")) {
+            parseSingleParam(pair);
         }
-        return i;
+    }
+
+    private void parseSingleParam(String pair) {
+        String[] kv = pair.split("=");
+        if (kv.length != 2) {
+            return;
+        }
+
+        String key = kv[0].trim();
+        String value = kv[1].trim();
+        hyperparams.put(key, parseTypedValue(value));
+    }
+
+    private Object parseTypedValue(String value) {
+        try {
+            if (value.contains(".")) {
+                return Double.parseDouble(value);
+            }
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return value;
+        }
+    }
+
+    private String requireValue(String[] parts, int flagIndex) {
+        int valueIndex = flagIndex + 1;
+        if (valueIndex >= parts.length || parts[valueIndex].startsWith("-")) {
+            this.errorSintaxis = true;
+            this.mensajeError = "Error de sintaxis: Te ha faltado indicar un valor después de una bandera.";
+            return "";
+        }
+        return parts[valueIndex];
     }
 
 

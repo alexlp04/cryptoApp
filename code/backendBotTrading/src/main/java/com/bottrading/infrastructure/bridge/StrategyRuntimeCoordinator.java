@@ -131,8 +131,6 @@ public class StrategyRuntimeCoordinator {
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
 
             final long INIT_TIMEOUT_MS = 90_000;        // 90s para inicialización
-            final long INACTIVITY_TIMEOUT_MS = 300_000;  // 5m sin output
-            long lastActivityTime = System.currentTimeMillis();
             boolean primeraActividad = true;
 
             String line;
@@ -143,9 +141,6 @@ public class StrategyRuntimeCoordinator {
                 
                 long now = System.currentTimeMillis();
                 long elapsedTotal = now - startTime;
-                long elapsedInactivity = now - lastActivityTime;
-                lastActivityTime = now;  // Resetear inactividad
-                
                 // Verificar timeout de inicialización
                 if (primeraActividad && elapsedTotal > INIT_TIMEOUT_MS) {
                     log.warn("Estrategia {} excedió timeout de inicialización (90s), terminando", 

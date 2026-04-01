@@ -1,11 +1,11 @@
 package com.bottrading.application.strategy;
 
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Set;
+
+import org.springframework.stereotype.Service;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * ⚠️ DEPRECATED - Facade de compatibilidad hacia servicios especializados.
@@ -45,117 +45,104 @@ public class EstrategiaService {
 
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#iniciarTradeRT}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#iniciarTradeRT}.
      */
-    @Deprecated(forRemoval = true)
+    @SuppressWarnings("java:S107")
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
         lifecycleService.iniciarTradeRT(nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#iniciarEstrategiaDetenida}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#iniciarEstrategiaDetenida}.
      */
-    @Deprecated(forRemoval = true)
     public void iniciarEstrategiaDetenida(Long instanciaId) {
         lifecycleService.iniciarEstrategiaDetenida(instanciaId);
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#iniciarTodasDetenidas}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#iniciarTodasDetenidas}.
      */
-    @Deprecated(forRemoval = true)
     public void iniciarTodasDetenidas() {
         lifecycleService.iniciarTodasDetenidas();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#terminarEstrategia}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#terminarEstrategia}.
      */
-    @Deprecated(forRemoval = true)
     public void terminarEstrategia(long instanciaId) {
         lifecycleService.terminarEstrategia(instanciaId);
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#terminarTodas}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#terminarTodas}.
      */
-    @Deprecated(forRemoval = true)
     public void terminarTodas() {
         lifecycleService.terminarTodas();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#detenerEstrategia}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#detenerEstrategia}.
      */
-    @Deprecated(forRemoval = true)
     public void detenerEstrategia(long instanciaId) {
         lifecycleService.detenerEstrategia(instanciaId);
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyLifecycleApplicationService#detenerTodas}
+     * Método de compatibilidad delegado a {@link StrategyLifecycleApplicationService#detenerTodas}.
      */
-    @Deprecated(forRemoval = true)
     public void detenerTodas() {
         lifecycleService.detenerTodas();
     }
 
 
     /**
-     * @deprecated Delegado a {@link StrategyQueryService#listarEstrategias}
+     * Método de compatibilidad delegado a {@link StrategyQueryService#listarEstrategias}.
      */
-    @Deprecated(forRemoval = true)
     public List<String> listarEstrategias() {
         return queryService.listarEstrategias();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyQueryService#listarEstrategiasActivas}
+     * Método de compatibilidad delegado a {@link StrategyQueryService#listarEstrategiasActivas}.
      */
-    @Deprecated(forRemoval = true)
     public List<String> listarEstrategiasActivas() {
         return queryService.listarEstrategiasActivas();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyQueryService#listarEstrategiasTerminadas}
+     * Método de compatibilidad delegado a {@link StrategyQueryService#listarEstrategiasTerminadas}.
      */
-    @Deprecated(forRemoval = true)
     public List<String> listarEstrategiasTerminadas() {
         return queryService.listarEstrategiasTerminadas();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyQueryService#listarEstrategiasDetenidas}
+     * Método de compatibilidad delegado a {@link StrategyQueryService#listarEstrategiasDetenidas}.
      */
-    @Deprecated(forRemoval = true)
     public List<String> listarEstrategiasDetenidas() {
         return queryService.listarEstrategiasDetenidas();
     }
 
 
     /**
-     * @deprecated Delegado a {@link StrategyCatalogService#listarFicherosDeEstrategias}
+     * Método de compatibilidad delegado a {@link StrategyCatalogService#listarFicherosDeEstrategias}.
      */
-    @Deprecated(forRemoval = true)
     public List<String> listarFicherosDeEstrategias() {
         return catalogService.listarFicherosDeEstrategias();
     }
 
     /**
-     * @deprecated Delegado a {@link StrategyCatalogService#getCapitalComprometido}
+     * Método de compatibilidad delegado a {@link StrategyCatalogService#getCapitalComprometido}.
      */
-    @Deprecated(forRemoval = true)
     public BigDecimal getCapitalComprometido(Long walletAsociada) {
         return catalogService.getCapitalComprometido(walletAsociada);
     }
 
 
     /**
-     * @deprecated Delegado a {@link StrategyBacktestApplicationService#ejecutarBacktest}
+     * Método de compatibilidad delegado a {@link StrategyBacktestApplicationService#ejecutarBacktest}.
      */
-    @Deprecated(forRemoval = true)
     public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins,
             BigDecimal capitalAsignado, BigDecimal risk, boolean limpiarBacktestsPrevios,
             boolean guardarTrades) throws Exception {

@@ -13,7 +13,8 @@
     "source.organizeImports": "explicit"
   },
   "sonarlint.connectedMode.project": {
-    "projectKey": "backendBotTrading"
+    "connectionId": "alexlp04",
+    "projectKey": "alexlp04_cryptoApp"
   },
   "sonarlint.rules": {
     "java:S106": {

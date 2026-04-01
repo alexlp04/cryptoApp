@@ -1,20 +1,22 @@
 package com.bottrading.utils;
 
-import com.bottrading.domain.market.IndicadorTecnicoDTO;
-import com.bottrading.domain.market.VelaDTO;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.msgpack.jackson.dataformat.MessagePackFactory;
-import lombok.extern.slf4j.Slf4j;
-
-import java.io.IOException;
 import java.io.FilterInputStream;
 import java.io.FilterOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+
+import org.msgpack.jackson.dataformat.MessagePackFactory;
+
+import com.bottrading.domain.market.IndicadorTecnicoDTO;
+import com.bottrading.domain.market.VelaDTO;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Utilitario centralizado para serialización/deserialización con MessagePack.
@@ -25,7 +27,10 @@ import java.util.zip.GZIPOutputStream;
 public class DataSerializationUtils {
 
     private static final ObjectMapper messagePackMapper = new ObjectMapper(new MessagePackFactory());
-    private static final int CHUNK_SIZE = 10000;
+
+    private DataSerializationUtils() {
+        throw new UnsupportedOperationException("Utility class");
+    }
 
     /**
      * Evita que Jackson cierre el stream subyacente cuando cierra su generador/parsers.
@@ -40,6 +45,11 @@ public class DataSerializationUtils {
             // Jackson llama a close() al terminar writeValue; solo flush para mantener el pipe abierto.
             flush();
         }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+        }
     }
 
     /**
@@ -53,6 +63,11 @@ public class DataSerializationUtils {
         @Override
         public void close() {
             // No-op: el dueño del stream decide cuándo cerrarlo.
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            return in.read(b, off, len);
         }
     }
 
@@ -139,7 +154,7 @@ public class DataSerializationUtils {
 
     /**
      * Streaming en chunks de tamaño variable.
-     * Útil para procesar datos grandes sin cargar todo en memoria.
+    * Útil para procesar datos grandes sin cargar el conjunto completo en memoria.
      */
     public static void streamVelasInChunks(List<VelaDTO> velas, OutputStream out, int chunkSize, boolean compress) throws IOException {
         int totalChunks = (int) Math.ceil((double) velas.size() / chunkSize);

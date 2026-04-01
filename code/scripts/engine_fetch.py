@@ -37,7 +37,8 @@ BINANCE_MAX_LIMIT = 1500
 MAX_PARALLEL_WORKERS = 5
 DEFAULT_RATE_LIMIT_WAIT = 60
 MAX_BACKOFF_SEC = 300
-EMIT_CHUNK_SIZE = 10_000
+# Evita frames IPC excesivamente grandes que pueden cerrar el pipe en el consumidor.
+EMIT_CHUNK_SIZE = 2_000
 
 INTERVAL_MS = {
     "1m": 60_000,
@@ -304,7 +305,18 @@ def obtener_datos_binance(
     total_emitidas = 0
     for i in range(0, len(velas_unicas), EMIT_CHUNK_SIZE):
         chunk_ipc = velas_unicas[i: i + EMIT_CHUNK_SIZE]
-        write_response("FETCH_CHUNK", {"velas": chunk_ipc})
+        try:
+            write_response("FETCH_CHUNK", {"velas": chunk_ipc})
+        except BrokenPipeError:
+            logging.error(
+                "Broken pipe emitiendo chunk IPC (offset=%s, size=%s, emitidas=%s/%s). "
+                "El consumidor Java cerró stdout antes de finalizar.",
+                i,
+                len(chunk_ipc),
+                total_emitidas,
+                len(velas_unicas),
+            )
+            raise
         total_emitidas += len(chunk_ipc)
 
         if total_emitidas % 50_000 == 0:

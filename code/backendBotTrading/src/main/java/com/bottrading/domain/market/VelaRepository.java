@@ -10,8 +10,6 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.bottrading.domain.market.Vela;
-
 @Repository
 public interface VelaRepository extends JpaRepository<Vela, Long> {
 
@@ -48,6 +46,14 @@ public interface VelaRepository extends JpaRepository<Vela, Long> {
             @Param("interval") String interval, 
             @Param("openTime") Long openTime
     );
+
+    @Query("SELECT v.openTime FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval "
+            + "AND v.openTime BETWEEN :from AND :to ORDER BY v.openTime ASC")
+    List<Long> findOpenTimesBySymbolAndIntervalBetweenOrderByOpenTimeAsc(
+            @Param("symbol") String symbol,
+            @Param("interval") String interval,
+            @Param("from") Long from,
+            @Param("to") Long to);
 
     /**
      * Cuenta velas en un rango de openTime para detección de huecos de integridad.

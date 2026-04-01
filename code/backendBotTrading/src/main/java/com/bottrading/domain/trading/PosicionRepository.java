@@ -1,10 +1,11 @@
 package com.bottrading.domain.trading;
 
-import com.bottrading.domain.trading.Posicion;
-import com.bottrading.domain.strategy.InstanciaEstrategia;
+import java.util.Optional;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import java.util.Optional;
+
+import com.bottrading.domain.strategy.InstanciaEstrategia;
 
 @Repository
 public interface PosicionRepository extends JpaRepository<Posicion, Long> {

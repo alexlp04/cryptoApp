@@ -9,9 +9,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import com.bottrading.domain.market.IndicadorTecnico;
-import com.bottrading.domain.market.Vela;
-
 import jakarta.transaction.Transactional;
 
 @Repository

@@ -22,6 +22,7 @@ import com.bottrading.interfaces.cli.commands.CbiCommand;
 import com.bottrading.interfaces.cli.commands.CliCommand;
 import com.bottrading.interfaces.cli.commands.CreatePaperWalletCommand;
 import com.bottrading.interfaces.cli.commands.FetchCommand;
+import com.bottrading.interfaces.cli.commands.FetchGapDetector;
 import com.bottrading.interfaces.cli.commands.HelpCommand;
 import com.bottrading.interfaces.cli.commands.ListActiveStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListStoppedStrategiesCommand;
@@ -58,6 +59,7 @@ public class AppBot implements CommandLineRunner {
     private final WalletService walletService;
     private final SessionManager sessionManager;
     private final AITrainingService aiTrainingService;
+    private final FetchGapDetector fetchGapDetector;
     private final ConfigurableApplicationContext applicationContext;
 
     private final Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8);
@@ -77,6 +79,7 @@ public class AppBot implements CommandLineRunner {
                 walletService,
                 aiTrainingService,
                 marketDataService,
+                fetchGapDetector,
                 this::uiPrint,
                 this::uiPrintln);
 
@@ -169,9 +172,7 @@ public class AppBot implements CommandLineRunner {
                 return;
             }
 
-            switch (cmd) {
-                default -> uiPrintln("Comando desconocido. Escribe 'ayuda'.");
-            }
+            uiPrintln("Comando desconocido. Escribe 'ayuda'.");
         } catch (Exception e) {
             log.error("Error ejecutando comando '{}': {}", cmd, e.getMessage());
             uiPrintln("Error: " + e.getMessage());

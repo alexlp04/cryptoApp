@@ -9,8 +9,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-
 import jakarta.persistence.LockModeType;
 
 @Repository
