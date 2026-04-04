@@ -1,12 +1,14 @@
 package com.bottrading.application.strategy;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.utils.AppConstants;
-import lombok.extern.slf4j.Slf4j;
+import java.util.List;
+
 import org.springframework.stereotype.Service;
 
-import java.util.List;
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio de consulta para estrategias.
@@ -38,25 +40,25 @@ public class StrategyQueryService {
      * Lista estrategias activas.
      */
     public List<String> listarEstrategiasActivas() {
-        return listarPorEstado(AppConstants.KEY_ACTIVA, "No hay estrategias activas.");
+        return listarPorEstado(EstadoEstrategia.ACTIVA, "No hay estrategias activas.");
     }
 
     /**
      * Lista estrategias en pausa.
      */
     public List<String> listarEstrategiasDetenidas() {
-        return listarPorEstado(AppConstants.KEY_DETENIDA, "No hay estrategias en pausa.");
+        return listarPorEstado(EstadoEstrategia.DETENIDA, "No hay estrategias en pausa.");
     }
 
     /**
      * Lista estrategias terminadas.
      */
     public List<String> listarEstrategiasTerminadas() {
-        return listarPorEstado(AppConstants.KEY_TERMINADA, "No hay estrategias terminadas.");
+        return listarPorEstado(EstadoEstrategia.TERMINADA, "No hay estrategias terminadas.");
     }
 
 
-    private List<String> listarPorEstado(String estado, String mensajeVacio) {
+    private List<String> listarPorEstado(EstadoEstrategia estado, String mensajeVacio) {
         List<InstanciaEstrategia> lista = instanciaRepo.findByEstado(estado);
         if (lista.isEmpty()) {
             return List.of(mensajeVacio);

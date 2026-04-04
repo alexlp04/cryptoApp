@@ -10,10 +10,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.bottrading.application.trading.AccountingService;
+import com.bottrading.domain.strategy.EstadoEstrategia;
 import com.bottrading.domain.strategy.InstanciaEstrategia;
 import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
 import com.bottrading.infrastructure.bridge.StrategyRuntimeCoordinator;
-import com.bottrading.utils.AppConstants;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -43,16 +43,16 @@ public class StrategyLifecycleApplicationService {
     }
 
     /**
-     * Inicia una nueva instancia de estrategia en Tiempo Real.
-     * 1. Crea el registro en BBDD.
-     * 2. Reserva el capital.
-     * 3. Lanza el proceso de Python.
+     * Crea, persiste y activa financieramente una estrategia dentro de una transacción.
+     * Método separado deliberadamente para que el lanzamiento del proceso Python
+     * ocurra FUERA de la transacción y evitar resource leaks si el commit falla.
      */
     @Transactional
     @SuppressWarnings("java:S107")
-    public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
+    public InstanciaEstrategia crearYActivarEstrategia(
+            String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
-        
+
         InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
 
@@ -60,6 +60,20 @@ public class StrategyLifecycleApplicationService {
         log.info("Estrategia {} creada con ID {}", nombreEstra, instancia.getId());
 
         accountingService.activateStrategy(walletId, instancia.getId(), capital);
+        return instancia;
+    }
+
+    /**
+     * Inicia una nueva instancia de estrategia en Tiempo Real.
+     * 1. Crea el registro en BBDD y reserva el capital (dentro de TX).
+     * 2. Lanza el proceso Python FUERA de la TX para evitar resource leaks.
+     */
+    @SuppressWarnings("java:S107")
+    public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
+
+        InstanciaEstrategia instancia = crearYActivarEstrategia(
+                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
 
         runtimeCoordinator.ejecutarTradeEnTiempoReal(instancia, coins);
     }
@@ -75,13 +89,13 @@ public class StrategyLifecycleApplicationService {
         }
         
         InstanciaEstrategia instancia = opt.get();
-        if (!AppConstants.KEY_DETENIDA.equals(instancia.getEstado())) {
-            log.error("Solo puedo iniciar estrategias en estado DETENIDA. Estado actual: {}", 
+        if (EstadoEstrategia.DETENIDA != instancia.getEstado()) {
+            log.error("Solo puedo iniciar estrategias en estado DETENIDA. Estado actual: {}",
                      instancia.getEstado());
             return;
         }
 
-        instancia.setEstado(AppConstants.KEY_ACTIVA);
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
         instanciaRepo.save(instancia);
         runtimeCoordinator.ejecutarTradeEnTiempoReal(instancia, instancia.getSimbolos());
         log.info("Estrategia {} reanudada", instanciaId);
@@ -91,7 +105,7 @@ public class StrategyLifecycleApplicationService {
      * Reanuda todas las estrategias detenidas.
      */
     public void iniciarTodasDetenidas() {
-        List<InstanciaEstrategia> detenidas = instanciaRepo.findByEstado(AppConstants.KEY_DETENIDA);
+        List<InstanciaEstrategia> detenidas = instanciaRepo.findByEstado(EstadoEstrategia.DETENIDA);
         if (detenidas.isEmpty()) {
             log.info("No hay estrategias detenidas.");
             return;
@@ -104,18 +118,19 @@ public class StrategyLifecycleApplicationService {
      * Pausa una estrategia (ACTIVA -> DETENIDA).
      * Los fondos se mantienen en reserva.
      */
+    @Transactional
     public void detenerEstrategia(Long instanciaId) {
         // Detener el proceso Python
         runtimeCoordinator.detenerEstrategia(instanciaId);
 
-        // Actualizar estado a DETENIDA
-        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
-        if (opt.isPresent() && AppConstants.KEY_ACTIVA.equals(opt.get().getEstado())) {
-            InstanciaEstrategia instancia = opt.get();
-            instancia.setEstado(AppConstants.KEY_DETENIDA);
-            instanciaRepo.save(instancia);
-            log.info("Estrategia {} PAUSADA (fondos en reserva)", instanciaId);
-        }
+        // Actualizar estado a DETENIDA con lock pesimista para evitar estado inconsistente
+        instanciaRepo.findByIdWithLock(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG))
+                .filter(e -> EstadoEstrategia.ACTIVA == e.getEstado())
+                .ifPresent(instancia -> {
+                    instancia.setEstado(EstadoEstrategia.DETENIDA);
+                    instanciaRepo.save(instancia);
+                    log.info("Estrategia {} PAUSADA (fondos en reserva)", instanciaId);
+                });
     }
 
     /**
@@ -135,19 +150,18 @@ public class StrategyLifecycleApplicationService {
      * Termina y liquida una estrategia (cualquier estado -> TERMINADA).
      * Devuelve los fondos a la billetera.
      */
+    @Transactional
     public void terminarEstrategia(Long instanciaId) {
         // Detener proceso
         runtimeCoordinator.detenerEstrategia(instanciaId);
 
-        // Liquidación financiera
-        Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
-        if (opt.isPresent()) {
-            InstanciaEstrategia instancia = opt.get();
-            if (!AppConstants.KEY_TERMINADA.equals(instancia.getEstado())) {
-                accountingService.closeStrategy(instancia.getWalletAsociada(), instancia.getId());
-                log.info("Estrategia {} TERMINADA (fondos retornados)", instanciaId);
-            }
-        }
+        // Liquidación financiera con lock pesimista para garantizar atomicidad
+        instanciaRepo.findByIdWithLock(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG))
+                .filter(e -> EstadoEstrategia.TERMINADA != e.getEstado())
+                .ifPresent(instancia -> {
+                    accountingService.closeStrategy(instancia.getWalletAsociada(), instancia.getId());
+                    log.info("Estrategia {} TERMINADA (fondos retornados)", instanciaId);
+                });
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.bottrading.utils;
 
 // Importamos las constantes estáticas
+import static com.bottrading.utils.AppConstants.DIR_MODELS;
 import static com.bottrading.utils.AppConstants.DIR_RESULTS;
 import static com.bottrading.utils.AppConstants.DIR_SCRIPTS;
 import static com.bottrading.utils.AppConstants.DIR_STRATEGIES;
@@ -28,10 +29,12 @@ public final class PathConfig {
     // El código Python está en la carpeta "code/" dentro de PROJECT_ROOT
     public static final String CODE_DIR = resolvePath("code");
 
-    // Definición de carpetas (dentro de code/)
+    // Definición de carpetas
     public static final String PYTHON_SCRIPTS_DIR = resolvePath("code", DIR_SCRIPTS);
     public static final String STRATEGIES_DIR = resolvePath("code", DIR_STRATEGIES);
-    public static final String RESULTS_DIR = resolvePath("code", DIR_RESULTS);
+    // results/ y models/ viven en la raíz del proyecto (mismo nivel que code/)
+    public static final String RESULTS_DIR = resolvePath(DIR_RESULTS);
+    public static final String MODELS_DIR = resolvePath(DIR_MODELS);
 
     // Definición de motores (dentro de code/scripts/)
     public static final String ENGINE_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_RT);
@@ -39,7 +42,6 @@ public final class PathConfig {
     public static final String FETCHER_PATH = resolvePath("code", DIR_SCRIPTS, FILE_FETCHER);
     public static final String INDICATORS_PATH = resolvePath("code", DIR_SCRIPTS, FILE_INDICATORS);
     public static final String ENGINE_TRAIN_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_TRAIN);
-    public static final String MODELS_DIR = resolvePath("code", "models");
     public static final String ENGINE_AI_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_AI_RT);
 
     private static String calculateProjectRoot() {

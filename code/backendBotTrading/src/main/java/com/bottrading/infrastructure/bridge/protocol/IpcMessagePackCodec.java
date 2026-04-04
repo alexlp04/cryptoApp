@@ -1,14 +1,17 @@
 package com.bottrading.infrastructure.bridge.protocol;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Optional;
+
 import org.msgpack.jackson.dataformat.MessagePackFactory;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Codec IPC basado en MessagePack con framing length-prefixed (4 bytes big-endian).
@@ -37,17 +40,14 @@ public final class IpcMessagePackCodec {
     }
 
     public static Map<String, Object> readEnvelope(InputStream inputStream) throws IOException {
-        Map<String, Object> envelope = readEnvelopeOrNull(inputStream);
-        if (envelope.isEmpty()) {
-            throw new IOException("No se pudo leer header de framing MessagePack");
-        }
-        return envelope;
+        return readEnvelopeOrEmpty(inputStream)
+                .orElseThrow(() -> new IOException("No se pudo leer header de framing MessagePack"));
     }
 
-    public static Map<String, Object> readEnvelopeOrNull(InputStream inputStream) throws IOException {
+    public static Optional<Map<String, Object>> readEnvelopeOrEmpty(InputStream inputStream) throws IOException {
         int firstByte = inputStream.read();
         if (firstByte == -1) {
-            return Map.of();
+            return Optional.empty();
         }
 
         byte[] remainingHeader = inputStream.readNBytes(HEADER_BYTES - 1);
@@ -69,7 +69,7 @@ public final class IpcMessagePackCodec {
             throw new IOException("Frame truncado: esperados " + length + " bytes, recibidos " + body.length);
         }
 
-        return MAPPER.readValue(body, MAP_TYPE);
+        return Optional.of(MAPPER.readValue(body, MAP_TYPE));
     }
 
     public static String readUtf8Fallback(InputStream inputStream) throws IOException {

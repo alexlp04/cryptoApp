@@ -1,14 +1,23 @@
 package com.bottrading.domain.strategy;
 
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * TEST DOMINIO - InstanciaEstrategia (strategy instance)
@@ -34,7 +43,7 @@ class InstanciaEstrategiaTest {
 
         // Then
         assertThat(instancia, is(notNullValue()));
-        assertThat(instancia.getEstado(), is(equalTo("CREADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.CREADA)));
         assertThat(instancia.isEliminado(), is(false));
     }
 
@@ -223,7 +232,7 @@ class InstanciaEstrategiaTest {
         InstanciaEstrategia instancia = new InstanciaEstrategia();
 
         // Then
-        assertThat(instancia.getEstado(), is(equalTo("CREADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.CREADA)));
     }
 
     @Test
@@ -231,13 +240,13 @@ class InstanciaEstrategiaTest {
     void should_transition_from_CREADA_to_ACTIVA() {
         // Given
         InstanciaEstrategia instancia = new InstanciaEstrategia();
-        assertThat(instancia.getEstado(), is(equalTo("CREADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.CREADA)));
 
         // When
-        instancia.setEstado("ACTIVA");
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
 
         // Then
-        assertThat(instancia.getEstado(), is(equalTo("ACTIVA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.ACTIVA)));
     }
 
     @Test
@@ -245,13 +254,13 @@ class InstanciaEstrategiaTest {
     void should_transition_from_ACTIVA_to_PAUSADA() {
         // Given
         InstanciaEstrategia instancia = new InstanciaEstrategia();
-        instancia.setEstado("ACTIVA");
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
 
         // When
-        instancia.setEstado("PAUSADA");
+        instancia.setEstado(EstadoEstrategia.DETENIDA);
 
         // Then
-        assertThat(instancia.getEstado(), is(equalTo("PAUSADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.DETENIDA)));
     }
 
     @Test
@@ -259,13 +268,13 @@ class InstanciaEstrategiaTest {
     void should_transition_from_PAUSADA_to_TERMINADA() {
         // Given
         InstanciaEstrategia instancia = new InstanciaEstrategia();
-        instancia.setEstado("PAUSADA");
+        instancia.setEstado(EstadoEstrategia.DETENIDA);
 
         // When
-        instancia.setEstado("TERMINADA");
+        instancia.setEstado(EstadoEstrategia.TERMINADA);
 
         // Then
-        assertThat(instancia.getEstado(), is(equalTo("TERMINADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.TERMINADA)));
     }
 
     @Test
@@ -273,10 +282,10 @@ class InstanciaEstrategiaTest {
     void should_remain_TERMINADA_as_final_state() {
         // Given
         InstanciaEstrategia instancia = new InstanciaEstrategia();
-        instancia.setEstado("TERMINADA");
+        instancia.setEstado(EstadoEstrategia.TERMINADA);
 
         // When & Then
-        assertThat(instancia.getEstado(), is(equalTo("TERMINADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.TERMINADA)));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -403,19 +412,19 @@ class InstanciaEstrategiaTest {
                 new BigDecimal("1000.00"));
 
         // Initial state
-        assertThat(instancia.getEstado(), is(equalTo("CREADA")));
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.CREADA)));
 
         // Activate
-        instancia.setEstado("ACTIVA");
-        assertThat(instancia.getEstado(), is(equalTo("ACTIVA")));
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.ACTIVA)));
 
         // Pause
-        instancia.setEstado("PAUSADA");
-        assertThat(instancia.getEstado(), is(equalTo("PAUSADA")));
+        instancia.setEstado(EstadoEstrategia.DETENIDA);
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.DETENIDA)));
 
         // Terminate
-        instancia.setEstado("TERMINADA");
-        assertThat(instancia.getEstado(), is(equalTo("TERMINADA")));
+        instancia.setEstado(EstadoEstrategia.TERMINADA);
+        assertThat(instancia.getEstado(), is(equalTo(EstadoEstrategia.TERMINADA)));
 
         // Verify all properties survived
         assertThat(instancia.getNombreEstrategia(), is(equalTo("RSI_SMA")));

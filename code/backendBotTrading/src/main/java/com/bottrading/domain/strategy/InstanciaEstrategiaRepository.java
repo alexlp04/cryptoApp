@@ -16,13 +16,14 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
 
     // Sustituye sumCapitalActivoByWallet
     @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i " +
-            "WHERE i.walletAsociada = :walletAsociada AND i.estado = 'ACTIVA'")
+            "WHERE i.walletAsociada = :walletAsociada " +
+            "AND i.estado = com.bottrading.domain.strategy.EstadoEstrategia.ACTIVA")
         BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
 
-    List<InstanciaEstrategia> findByEstado(String estado);
+    List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
 
     // Sustituye findActivasByWallet
-    List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, String estado);
+    List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, EstadoEstrategia estado);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT i FROM InstanciaEstrategia i WHERE i.id = :id")

@@ -1,6 +1,5 @@
 package com.bottrading.application.market;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Type;
@@ -24,7 +23,6 @@ import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
 import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
 import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
 import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
-import com.bottrading.utils.DataSerializationUtils;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -160,27 +158,17 @@ public class IndicatorsService {
     }
 
     private List<IndicadorTecnicoDTO> leerIndicadoresDesdeRespuestaIpc(InputStream inputStream) throws IOException {
-        byte[] raw = inputStream.readAllBytes();
-        if (raw.length == 0) {
-            return List.of();
-        }
-
-        try {
-            Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(new ByteArrayInputStream(raw));
-            Object payloadObj = envelope.get("payload");
-            if (payloadObj instanceof Map<?, ?> payloadMap) {
-                Object indicadoresObj = payloadMap.get("indicadores");
-                if (indicadoresObj != null) {
-                    String indicadoresJson = gson.toJson(indicadoresObj);
-                    List<IndicadorTecnicoDTO> parsed = gson.fromJson(indicadoresJson, INDICADOR_DTO_LIST_TYPE);
-                    return parsed != null ? parsed : List.of();
-                }
+        Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
+        Object payloadObj = envelope.get("payload");
+        if (payloadObj instanceof Map<?, ?> payloadMap) {
+            Object indicadoresObj = payloadMap.get("indicadores");
+            if (indicadoresObj != null) {
+                String indicadoresJson = gson.toJson(indicadoresObj);
+                List<IndicadorTecnicoDTO> parsed = gson.fromJson(indicadoresJson, INDICADOR_DTO_LIST_TYPE);
+                return parsed != null ? parsed : List.of();
             }
-            return List.of();
-        } catch (Exception ex) {
-            // Compatibilidad temporal: engine_indicators antiguo enviaba lista MessagePack cruda.
-            return DataSerializationUtils.deserializeIndicadoresFromStream(new ByteArrayInputStream(raw), false);
         }
+        return List.of();
     }
 
     /**

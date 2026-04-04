@@ -382,8 +382,9 @@ public class FetchService {
         long tiempoInicio = System.currentTimeMillis();
         List<Object[]> batch = new ArrayList<>(BATCH_INSERT_SIZE);
 
-        Map<String, Object> envelope;
-        while (!(envelope = IpcMessagePackCodec.readEnvelopeOrNull(in)).isEmpty()) {
+        Optional<Map<String, Object>> maybeEnvelope;
+        while ((maybeEnvelope = IpcMessagePackCodec.readEnvelopeOrEmpty(in)).isPresent()) {
+            Map<String, Object> envelope = maybeEnvelope.get();
             List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
             if (!velasChunk.isEmpty()) {
                 totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
