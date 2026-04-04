@@ -15,7 +15,11 @@ from ipc_protocol import write_response
 # =========================
 # CONFIGURACIÓN DE LOGS
 # =========================
-log_dir = os.path.join(os.getcwd(), "logs")
+# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_code_dir = os.path.dirname(_current_dir)
+_project_root = os.path.dirname(_code_dir)
+log_dir = os.path.join(_project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "engine_fetch.log")
 

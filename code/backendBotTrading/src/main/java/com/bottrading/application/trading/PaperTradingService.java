@@ -1,25 +1,27 @@
 package com.bottrading.application.trading;
 
-import com.bottrading.beans.*;
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.Posicion;
-import com.bottrading.domain.trading.PosicionRepository;
-import com.bottrading.infrastructure.persistence.FileService;
-import com.bottrading.infrastructure.cache.StatsCache;
-import com.bottrading.utils.SafeParser;
-
-import lombok.extern.slf4j.Slf4j;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
+import com.bottrading.beans.SignalDTO;
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.Posicion;
+import com.bottrading.domain.trading.PosicionRepository;
+import com.bottrading.infrastructure.cache.StatsCache;
+import com.bottrading.infrastructure.persistence.FileService;
+import com.bottrading.utils.SafeParser;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio encargado de la ejecución simulada de órdenes (Paper Trading).
@@ -64,7 +66,7 @@ public class PaperTradingService {
         InstanciaEstrategia instancia = instanciaRepo.findByIdWithLock(instanciaId)
                 .orElseThrow(() -> new RuntimeException("Instancia no encontrada: " + instanciaId));
 
-        if (!"ACTIVA".equals(instancia.getEstado())) {
+        if (EstadoEstrategia.ACTIVA != instancia.getEstado()) {
             return; // Ignorar señales de estrategias pausadas o detenidas
         }
 
@@ -133,6 +135,9 @@ public class PaperTradingService {
 
         // Cerrar posición lógica
         pos.setAbierta(false);
+        pos.setPrecioSalida(precioSalida);
+        pos.setPnl(pnlNeto);
+        pos.setFechaCierre(Instant.now());
         posicionRepo.save(pos);
 
         // Registro en archivo CSV
@@ -184,8 +189,8 @@ public class PaperTradingService {
         // Actualizar en caché (se guardará a disco automáticamente)
         statsCache.updateStats(e.getNombreEstrategia(), e.getTimeframe(), symbol, newStats);
 
-        log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {:.2f}%",
-                ganadas, perdidas, winRate);
+        log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {}%",
+                ganadas, perdidas, String.format("%.2f", winRate));
         return newStats;
     }
 }

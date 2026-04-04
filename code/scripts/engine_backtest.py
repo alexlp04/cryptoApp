@@ -10,8 +10,12 @@ import logging
 from ipc_protocol import read_request_payload, write_response, write_error
 
 # --- CONFIGURACIÓN DE LOGS ---
+# current_dir  = .../code/scripts/
+# code_dir     = .../code/
+# project_root = .../ (raíz del proyecto, donde están logs/, results/, models/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+code_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(code_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
@@ -37,8 +41,8 @@ results_root = os.path.join(project_root, "results")
 os.makedirs(results_root, exist_ok=True)
 
 # --- CONFIGURACIÓN DE RUTAS ---
-if project_root not in sys.path:
-    sys.path.append(project_root)
+if code_dir not in sys.path:
+    sys.path.append(code_dir)
 
 from strategies.BaseStrategy import BaseStrategy
 
@@ -101,7 +105,8 @@ def run_backtest(strategy, df: pd.DataFrame, symbol: str, carpeta_estrategia: st
     df = strategy.populate_indicators(df)
 
     trade_count = 0
-    capital = strategy.capital
+    capital = float(strategy.capital)
+    risk_per_trade = float(strategy.risk_per_trade)
     capital_history = [capital]
     
     in_position = False
@@ -126,7 +131,7 @@ def run_backtest(strategy, df: pd.DataFrame, symbol: str, carpeta_estrategia: st
         if not in_position and strategy.should_buy(row_data):
             in_position = True
             entry_price = price
-            current_position_size = (capital * strategy.risk_per_trade) / price
+            current_position_size = (capital * risk_per_trade) / price
 
             trade = {
                 "symbol": symbol, "side": "BUY", "price": price, "timestamp": timestamp
@@ -174,9 +179,10 @@ def _calculate_backtest_stats(strategy, final_capital: float, capital_history: l
     Procesa las métricas de rendimiento utilizando los acumuladores calculados en caliente.
     """
     op_totales = max(trade_count // 2, 0)
-    
-    retorno_total = final_capital - strategy.capital
-    retorno_acumulado = (retorno_total / strategy.capital * 100) if strategy.capital > 0 else 0.0
+    initial_capital = float(strategy.capital)
+
+    retorno_total = final_capital - initial_capital
+    retorno_acumulado = (retorno_total / initial_capital * 100) if initial_capital > 0 else 0.0
     
     abs_drawdown = max(capital_history) - min(capital_history) if capital_history else 0.0
 

@@ -1,10 +1,5 @@
 package com.bottrading.services;
 
-import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
-import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
-import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
-import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -12,15 +7,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.bottrading.domain.market.Vela;
+import org.springframework.stereotype.Service;
+
 import com.bottrading.config.ProcessExecutorConfig;
+import com.bottrading.domain.market.Vela;
 import com.bottrading.exceptions.StrategyExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeExecutionException;
+import com.bottrading.infrastructure.bridge.PythonBridgeFacade;
+import com.bottrading.infrastructure.bridge.PythonBridgeRequest;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
 import com.bottrading.utils.ConsoleLoader;
 import com.bottrading.utils.PathConfig;
 import com.google.gson.Gson;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 
 /**
  * Service orchestrating backtesting simulations.
@@ -154,11 +155,6 @@ public class BacktestingService {
     }
 
     private String parseResponseWithFallback(InputStream inputStream) throws IOException {
-        byte[] raw = inputStream.readAllBytes();
-        try {
-            return leerEnvelopeBacktest(new java.io.ByteArrayInputStream(raw));
-        } catch (Exception ignored) {
-            return IpcMessagePackCodec.readUtf8Fallback(new java.io.ByteArrayInputStream(raw));
-        }
+        return leerEnvelopeBacktest(inputStream);
     }
 }

@@ -1,13 +1,5 @@
 package com.bottrading.infrastructure.persistence;
 
-import com.bottrading.exceptions.FileOperationException;
-import com.bottrading.utils.AppConstants;
-import com.bottrading.utils.SafeParser;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -20,6 +12,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.stereotype.Service;
+
+import com.bottrading.exceptions.FileOperationException;
+import com.bottrading.utils.AppConstants;
+import com.bottrading.utils.SafeParser;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Repositorio para persistencia y lectura de estadísticas de estrategias.
@@ -96,7 +98,7 @@ public class StatsCsvRepository {
      */
     public Map<String, Object> leerStatsActuales(String nombreEstrategia, String timeframe, String symbol) {
         Map<String, Object> stats = new HashMap<>();
-        Path filePath = Paths.get(AppConstants.DIR_RESULTS, nombreEstrategia, "results.csv");
+        Path filePath = Paths.get(com.bottrading.utils.PathConfig.RESULTS_DIR, nombreEstrategia, "results.csv");
 
         if (!Files.exists(filePath)) {
             return stats;

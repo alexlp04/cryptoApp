@@ -1,7 +1,11 @@
 package com.bottrading.domain.trading;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,11 +14,9 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ActiveProfiles;
 
-import java.math.BigDecimal;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
 
 @DataJpaTest(properties = "spring.main.allow-bean-definition-overriding=true")
 @EntityScan(basePackageClasses = {Posicion.class, InstanciaEstrategia.class})
@@ -76,7 +78,7 @@ class PosicionRepositoryIntegrationTest {
         e.setCapitalAsignado(new BigDecimal("1000"));
         e.setCapitalReservado(new BigDecimal("1000"));
         e.setRiskPerTrade(new BigDecimal("0.02"));
-        e.setEstado("ACTIVA");
+        e.setEstado(EstadoEstrategia.ACTIVA);
         return e;
     }
 }

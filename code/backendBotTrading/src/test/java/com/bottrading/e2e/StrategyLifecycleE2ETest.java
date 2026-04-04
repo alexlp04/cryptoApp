@@ -1,38 +1,5 @@
 package com.bottrading.e2e;
 
-import com.bottrading.application.strategy.StrategyLifecycleApplicationService;
-import com.bottrading.application.trading.AccountingService;
-import com.bottrading.application.trading.PaperTradingService;
-import com.bottrading.beans.SignalDTO;
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.LedgerEntry;
-import com.bottrading.domain.trading.LedgerRepository;
-import com.bottrading.domain.trading.LedgerType;
-import com.bottrading.domain.trading.Posicion;
-import com.bottrading.domain.trading.PosicionRepository;
-import com.bottrading.domain.wallet.Wallet;
-import com.bottrading.domain.wallet.WalletRepository;
-import com.bottrading.infrastructure.bridge.StrategyRuntimeCoordinator;
-import com.bottrading.infrastructure.cache.StatsCache;
-import com.bottrading.infrastructure.persistence.FileService;
-import com.bottrading.utils.AppConstants;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,6 +12,39 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import com.bottrading.application.strategy.StrategyLifecycleApplicationService;
+import com.bottrading.application.trading.AccountingService;
+import com.bottrading.application.trading.PaperTradingService;
+import com.bottrading.beans.SignalDTO;
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.LedgerEntry;
+import com.bottrading.domain.trading.LedgerRepository;
+import com.bottrading.domain.trading.Posicion;
+import com.bottrading.domain.trading.PosicionRepository;
+import com.bottrading.domain.wallet.Wallet;
+import com.bottrading.domain.wallet.WalletRepository;
+import com.bottrading.infrastructure.bridge.StrategyRuntimeCoordinator;
+import com.bottrading.infrastructure.cache.StatsCache;
+import com.bottrading.infrastructure.persistence.FileService;
 
 /**
  * BLOQUE 3 - E2E de ciclo de vida de estrategia en Java.
@@ -108,7 +108,7 @@ class StrategyLifecycleE2ETest {
                 return saved;
             });
             when(walletRepo.findByIdWithLock(walletId)).thenReturn(Optional.of(wallet));
-            when(instanciaRepo.findById(101L)).thenAnswer(invocation -> Optional.of(instanciaCaptor.getValue()));
+            when(instanciaRepo.findByIdWithLock(101L)).thenAnswer(invocation -> Optional.of(instanciaCaptor.getValue()));
 
             lifecycleService.iniciarTradeRT(
                 "RSISMAStrategy",
@@ -123,7 +123,7 @@ class StrategyLifecycleE2ETest {
 
             InstanciaEstrategia creada = instanciaCaptor.getValue();
             assertNotNull(creada);
-            assertEquals("ACTIVA", creada.getEstado());
+            assertEquals(EstadoEstrategia.ACTIVA, creada.getEstado());
             assertEquals(0, wallet.getBalanceDisponible().compareTo(new BigDecimal("8000.00")));
 
             verify(runtimeCoordinator, times(1))
@@ -189,16 +189,15 @@ class StrategyLifecycleE2ETest {
             Wallet wallet = wallet(walletId, "10000.00", "5000.00");
             InstanciaEstrategia instancia = instanciaActiva(instanciaId, walletId, "1500.00", "0.05");
 
-            when(instanciaRepo.findById(instanciaId)).thenReturn(Optional.of(instancia));
             when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
             when(walletRepo.findByIdWithLock(walletId)).thenReturn(Optional.of(wallet));
 
             lifecycleService.detenerEstrategia(instanciaId);
-            assertEquals(AppConstants.KEY_DETENIDA, instancia.getEstado());
+            assertEquals(EstadoEstrategia.DETENIDA, instancia.getEstado());
 
             lifecycleService.terminarEstrategia(instanciaId);
 
-            assertEquals(AppConstants.KEY_TERMINADA, instancia.getEstado());
+            assertEquals(EstadoEstrategia.TERMINADA, instancia.getEstado());
             assertEquals(0, instancia.getCapitalReservado().compareTo(BigDecimal.ZERO));
             assertEquals(0, instancia.getCapitalAsignado().compareTo(BigDecimal.ZERO));
             assertEquals(0, wallet.getBalanceDisponible().compareTo(new BigDecimal("6500.00")));
@@ -212,7 +211,7 @@ class StrategyLifecycleE2ETest {
         void should_ignore_signal_when_strategy_is_not_active() {
             Long instanciaId = 401L;
             InstanciaEstrategia instancia = instanciaActiva(instanciaId, 40L, "1000.00", "0.10");
-            instancia.setEstado(AppConstants.KEY_DETENIDA);
+            instancia.setEstado(EstadoEstrategia.DETENIDA);
 
             when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
 
@@ -229,13 +228,13 @@ class StrategyLifecycleE2ETest {
         void should_resume_stopped_strategy_and_relaunch_runtime() {
             Long instanciaId = 501L;
             InstanciaEstrategia instancia = instanciaActiva(instanciaId, 50L, "1200.00", "0.08");
-            instancia.setEstado(AppConstants.KEY_DETENIDA);
+            instancia.setEstado(EstadoEstrategia.DETENIDA);
 
             when(instanciaRepo.findById(instanciaId)).thenReturn(Optional.of(instancia));
 
             lifecycleService.iniciarEstrategiaDetenida(instanciaId);
 
-            assertEquals(AppConstants.KEY_ACTIVA, instancia.getEstado());
+            assertEquals(EstadoEstrategia.ACTIVA, instancia.getEstado());
             verify(instanciaRepo, times(1)).save(instancia);
             verify(runtimeCoordinator, times(1)).ejecutarTradeEnTiempoReal(instancia, instancia.getSimbolos());
         }
@@ -250,7 +249,7 @@ class StrategyLifecycleE2ETest {
 
             lifecycleService.iniciarEstrategiaDetenida(instanciaId);
 
-            assertEquals(AppConstants.KEY_ACTIVA, instancia.getEstado());
+            assertEquals(EstadoEstrategia.ACTIVA, instancia.getEstado());
             verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(InstanciaEstrategia.class), any(List.class));
         }
 
@@ -263,13 +262,13 @@ class StrategyLifecycleE2ETest {
             InstanciaEstrategia inst2 = instanciaActiva(id2, 61L, "1000.00", "0.05");
 
             when(runtimeCoordinator.getIdsEstrategiasActivas()).thenReturn(Set.of(id1, id2));
-            when(instanciaRepo.findById(id1)).thenReturn(Optional.of(inst1));
-            when(instanciaRepo.findById(id2)).thenReturn(Optional.of(inst2));
+            when(instanciaRepo.findByIdWithLock(id1)).thenReturn(Optional.of(inst1));
+            when(instanciaRepo.findByIdWithLock(id2)).thenReturn(Optional.of(inst2));
 
             lifecycleService.detenerTodas();
 
-            assertEquals(AppConstants.KEY_DETENIDA, inst1.getEstado());
-            assertEquals(AppConstants.KEY_DETENIDA, inst2.getEstado());
+            assertEquals(EstadoEstrategia.DETENIDA, inst1.getEstado());
+            assertEquals(EstadoEstrategia.DETENIDA, inst2.getEstado());
             verify(runtimeCoordinator, times(1)).detenerEstrategia(id1);
             verify(runtimeCoordinator, times(1)).detenerEstrategia(id2);
         }
@@ -285,8 +284,6 @@ class StrategyLifecycleE2ETest {
             InstanciaEstrategia inst2 = instanciaActiva(id2, 72L, "900.00", "0.05");
 
             when(runtimeCoordinator.getIdsEstrategiasActivas()).thenReturn(Set.of(id1, id2));
-            when(instanciaRepo.findById(id1)).thenReturn(Optional.of(inst1));
-            when(instanciaRepo.findById(id2)).thenReturn(Optional.of(inst2));
             when(instanciaRepo.findByIdWithLock(id1)).thenReturn(Optional.of(inst1));
             when(instanciaRepo.findByIdWithLock(id2)).thenReturn(Optional.of(inst2));
             when(walletRepo.findByIdWithLock(71L)).thenReturn(Optional.of(wallet1));
@@ -294,8 +291,8 @@ class StrategyLifecycleE2ETest {
 
             lifecycleService.terminarTodas();
 
-            assertEquals(AppConstants.KEY_TERMINADA, inst1.getEstado());
-            assertEquals(AppConstants.KEY_TERMINADA, inst2.getEstado());
+            assertEquals(EstadoEstrategia.TERMINADA, inst1.getEstado());
+            assertEquals(EstadoEstrategia.TERMINADA, inst2.getEstado());
             assertEquals(0, wallet1.getBalanceDisponible().compareTo(new BigDecimal("1800.00")));
             assertEquals(0, wallet2.getBalanceDisponible().compareTo(new BigDecimal("2900.00")));
             assertEquals(0, inst1.getCapitalReservado().compareTo(BigDecimal.ZERO));
@@ -304,6 +301,93 @@ class StrategyLifecycleE2ETest {
             verify(runtimeCoordinator, times(1)).detenerEstrategia(id1);
             verify(runtimeCoordinator, times(1)).detenerEstrategia(id2);
             verify(ledgerRepo, atLeastOnce()).save(any(LedgerEntry.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("ERROR HANDLING: Señales inválidas y estados límite")
+    class ErrorHandlingTests {
+
+        @Test
+        @DisplayName("✓ BUY cuando ya existe posición abierta debe ser ignorado")
+        void should_ignore_buy_when_position_already_open() {
+            // Given
+            Long instanciaId = 901L;
+            InstanciaEstrategia instancia = instanciaActiva(instanciaId, 90L, "1000.00", "0.10");
+            when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(instancia, "BTCUSDT")).thenReturn(true);
+
+            // When
+            SignalDTO buy = signal("BUY", "BTCUSDT", "1h", "100.00", 1_710_000_000_000L);
+            paperTradingService.onSignal(instanciaId, buy);
+
+            // Then — no debe abrir nueva posición
+            verify(posicionRepo, never()).save(any(Posicion.class));
+            verify(ledgerRepo, never()).save(any(LedgerEntry.class));
+        }
+
+        @Test
+        @DisplayName("✓ SELL sin posición abierta debe ser ignorado silenciosamente")
+        void should_ignore_sell_when_no_open_position() {
+            // Given
+            Long instanciaId = 902L;
+            InstanciaEstrategia instancia = instanciaActiva(instanciaId, 90L, "1000.00", "0.10");
+            when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(instancia, "BTCUSDT"))
+                    .thenReturn(Optional.empty());
+
+            // When
+            SignalDTO sell = signal("SELL", "BTCUSDT", "1h", "110.00", 1_710_000_003_600L);
+            paperTradingService.onSignal(instanciaId, sell);
+
+            // Then — no debe cerrar nada
+            verify(ledgerRepo, never()).save(any(LedgerEntry.class));
+        }
+
+        @Test
+        @DisplayName("✓ onSignal con instanciaId inexistente debe lanzar excepción")
+        void should_throw_when_instancia_not_found() {
+            // Given
+            when(instanciaRepo.findByIdWithLock(999L)).thenReturn(Optional.empty());
+
+            // When & Then
+            SignalDTO buy = signal("BUY", "BTCUSDT", "1h", "100.00", 1_710_000_000_000L);
+            org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                    () -> paperTradingService.onSignal(999L, buy));
+        }
+
+        @Test
+        @DisplayName("✓ terminarEstrategia ya TERMINADA no debe volver a cerrar")
+        void should_not_re_close_already_terminated_strategy() {
+            // Given
+            Long instanciaId = 903L;
+            InstanciaEstrategia instancia = instanciaActiva(instanciaId, 90L, "0.00", "0.05");
+            instancia.setEstado(EstadoEstrategia.TERMINADA);
+            when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
+
+            // When
+            lifecycleService.terminarEstrategia(instanciaId);
+
+            // Then — closeStrategy no debe ser llamado
+            verify(walletRepo, never()).findByIdWithLock(anyLong());
+            verify(ledgerRepo, never()).save(any(LedgerEntry.class));
+        }
+
+        @Test
+        @DisplayName("✓ Señal con acción desconocida debe ser ignorada sin excepción")
+        void should_ignore_unknown_action_signal() {
+            // Given
+            Long instanciaId = 904L;
+            InstanciaEstrategia instancia = instanciaActiva(instanciaId, 90L, "1000.00", "0.10");
+            when(instanciaRepo.findByIdWithLock(instanciaId)).thenReturn(Optional.of(instancia));
+
+            // When
+            SignalDTO unknown = signal("HOLD", "BTCUSDT", "1h", "100.00", 1_710_000_000_000L);
+
+            // Then — no debe lanzar excepción
+            org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> paperTradingService.onSignal(instanciaId, unknown));
+            verify(posicionRepo, never()).save(any(Posicion.class));
         }
     }
 
@@ -329,7 +413,7 @@ class StrategyLifecycleE2ETest {
             new BigDecimal(capital)
         );
         instancia.setId(instanciaId);
-        instancia.setEstado(AppConstants.KEY_ACTIVA);
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
         instancia.setCapitalComprometido(BigDecimal.ZERO);
         instancia.setRiesgoAbierto(BigDecimal.ZERO);
         return instancia;

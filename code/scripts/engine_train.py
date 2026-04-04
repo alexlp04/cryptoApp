@@ -29,8 +29,10 @@ warnings.filterwarnings("ignore")
 # =========================
 # CONFIGURACIÓN DE LOGS
 # =========================
+# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+code_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(code_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
@@ -58,8 +60,8 @@ def load_strategy(strategy_name: str) -> "BaseStrategy":
 
     strategy_name = strategy_name.strip()
 
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    if code_dir not in sys.path:
+        sys.path.insert(0, code_dir)
 
     try:
         from strategies.BaseStrategy import BaseStrategy

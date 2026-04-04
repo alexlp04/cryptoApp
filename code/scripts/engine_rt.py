@@ -7,12 +7,15 @@ import websockets
 import os
 import types
 import logging
+from decimal import Decimal
 from datetime import datetime
 from ipc_protocol import read_request_payload
 
 # Logging dual: archivo para diagnostico y stdout para que Java consuma eventos.
+# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+code_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(code_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "engine_rt.log")
@@ -37,10 +40,8 @@ if sys.platform == "win32":
     if "posix" not in sys.modules:
         sys.modules["posix"] = types.ModuleType("posix")
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
-    sys.path.append(project_root)
+if code_dir not in sys.path:
+    sys.path.append(code_dir)
 
 from strategies.BaseStrategy import BaseStrategy
 
@@ -78,10 +79,14 @@ async def run_symbol(
     strategy = load_strategy(strategy_path, capital, risk_per_trade)
     df = pd.DataFrame(columns=["timestamp", "close", "open", "high", "low", "volume"])
 
+    retry_delay = 5
+    max_retry_delay = 300
+
     while True:
         try:
             async with websockets.connect(url) as ws:
                 logging.info(f"Conectado a WebSocket de Binance para {symbol}")
+                retry_delay = 5  # reset on successful connection
                 async for msg in ws:
                     data = json.loads(msg)
                     k = data["k"]
@@ -90,6 +95,11 @@ async def run_symbol(
                     # Si se desea comportamiento clásico de cierre, activar only_closed_candles.
                     if only_closed_candles and not k["x"]:
                         continue
+
+                    # Binance devuelve precios como strings — float para operaciones pandas/numpy.
+                    # La clave del precio de cierre original se preserva para emitir la señal
+                    # con precisión total (Decimal) sin depender del redondeo de float64.
+                    raw_close: str = k["c"]
 
                     new_row = pd.DataFrame([{
                         "timestamp": int(k["t"]),
@@ -118,17 +128,18 @@ async def run_symbol(
                             "symbol": symbol,
                             "action": action,
                             "timeframe": timeframe,
-                            "price": float(row["close"]),
+                            "price": str(Decimal(raw_close)),  # precisión total desde string Binance
                             "timestamp": int(row["timestamp"]),
                             "is_real": is_real
                         }
                         # Formato unico de intercambio con el runtime Java.
                         print(f"SIGNAL\t{json.dumps(signal)}", flush=True)
-                        logging.info(f"SEÑAL ENVIADA: {action} para {symbol} a precio {row['close']}")
+                        logging.info(f"SEÑAL ENVIADA: {action} para {symbol} a precio {raw_close}")
 
         except Exception as e:
             logging.error(f"Error en loop de {symbol}: {str(e)}", exc_info=True)
-            await asyncio.sleep(5) 
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
 
 def main():
     """Punto de entrada: recibe configuracion IPC y arranca tareas async."""

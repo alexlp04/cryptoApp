@@ -1,11 +1,13 @@
 package com.bottrading.infrastructure.bridge;
 
+import org.springframework.stereotype.Service;
+
 import com.bottrading.beans.SignalDTO;
 import com.bottrading.exceptions.SignalProcessingException;
-import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 
 /**
  * Parser de protocolo IPC para líneas de entrada desde procesos Python.
@@ -18,7 +20,7 @@ import org.springframework.stereotype.Service;
 public class SignalProtocolParser {
 
     private static final String SIGNAL_PREFIX = "SIGNAL\t";
-    private final Gson gson = new Gson();
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
      * Procesa una línea del stdout de Python.
@@ -41,13 +43,13 @@ public class SignalProtocolParser {
      */
     private SignalDTO parseSignal(String jsonLine, Long instanciaId) {
         try {
-            SignalDTO signal = gson.fromJson(jsonLine, SignalDTO.class);
+            SignalDTO signal = MAPPER.readValue(jsonLine, SignalDTO.class);
             validarSignal(signal);
             log.debug("Señal parseada correctamente: [{}] {} {}", 
                      instanciaId, signal.getAction(), signal.getSymbol());
             return signal;
             
-        } catch (JsonSyntaxException e) {
+        } catch (JsonProcessingException e) {
             log.error("JSON corrupto de Python (será ignorado): {} - Error: {}", jsonLine, e.getMessage());
             // No lanzar excepción, simplemente ignorar líneas malformadas
             return null;

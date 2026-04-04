@@ -9,9 +9,10 @@ from ipc_protocol import read_request_payload, write_response
 # =========================
 # CONFIGURACIÓN DE LOGS
 # =========================
-# Creamos la carpeta logs en el directorio actual (raíz del proyecto)
+# Creamos la carpeta logs en la raíz real del proyecto (dos niveles arriba de scripts/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+code_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(code_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 

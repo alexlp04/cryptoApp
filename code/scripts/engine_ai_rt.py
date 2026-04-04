@@ -18,8 +18,10 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # =========================
 # CONFIGURACIÓN DE LOGS
 # =========================
+# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
+code_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(code_dir)
 log_dir = os.path.join(project_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 
@@ -51,8 +53,8 @@ if sys.platform == "win32":
     if "posix" not in sys.modules:
         sys.modules["posix"] = types.ModuleType("posix")
 
-if project_root not in sys.path:
-    sys.path.append(project_root)
+if code_dir not in sys.path:
+    sys.path.append(code_dir)
 
 from strategies.BaseStrategy import BaseStrategy
 

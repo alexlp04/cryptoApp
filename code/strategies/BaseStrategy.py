@@ -1,13 +1,15 @@
 from abc import ABC, abstractmethod
 import inspect
+from decimal import Decimal
+from typing import Union
 
 class BaseStrategy(ABC):
 
     WARMUP_PERIOD: int = 300
 
-    def __init__(self, capital: float = 1000, risk_per_trade: float = 0.02):
-        self.capital = capital
-        self.risk_per_trade = risk_per_trade
+    def __init__(self, capital: Union[float, Decimal] = 1000, risk_per_trade: Union[float, Decimal] = 0.02):
+        self.capital = Decimal(str(capital))
+        self.risk_per_trade = Decimal(str(risk_per_trade))
 
     # ── Abstractos obligatorios ────────────────────────────────────────
 
@@ -43,8 +45,8 @@ class BaseStrategy(ABC):
     def get_name(self) -> str:
         return self.__class__.__name__
 
-    def get_position_size(self, price: float) -> float:
-        return (self.capital * self.risk_per_trade) / price
+    def get_position_size(self, price: Union[float, Decimal]) -> Decimal:
+        return (self.capital * self.risk_per_trade) / Decimal(str(price))
 
     def should_close(self, row, entry_price: float) -> bool:
         return (

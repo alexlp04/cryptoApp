@@ -13,9 +13,9 @@ import org.springframework.stereotype.Service;
 
 import com.bottrading.domain.strategy.InstanciaEstrategia;
 import com.bottrading.exceptions.PythonProcessException;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessagePackCodec;
+import com.bottrading.infrastructure.bridge.protocol.IpcMessageType;
 import com.bottrading.utils.PathConfig;
-import com.bottrading.utils.PythonProcessSupport;
-import com.google.gson.Gson;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -89,8 +89,8 @@ public class RealtimeProcessSupervisor {
         Map<String, Object> payload = construirPayload(instancia, symbols);
         
         try (OutputStream os = process.getOutputStream()) {
-            PythonProcessSupport.writeUtf8(os, new Gson().toJson(payload));
-            log.debug("Payload enviado a proceso: {}", instancia.getId());
+            IpcMessagePackCodec.writeEnvelope(os, IpcMessageType.RT_SIGNAL, payload);
+            log.debug("Payload enviado a proceso RT: {}", instancia.getId());
         } catch (IOException e) {
             throw new PythonProcessException("Error al enviar configuración a Python: " + e.getMessage(), e);
         }

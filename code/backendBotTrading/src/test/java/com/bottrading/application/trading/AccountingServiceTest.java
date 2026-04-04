@@ -1,26 +1,5 @@
 package com.bottrading.application.trading;
 
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.LedgerEntry;
-import com.bottrading.domain.trading.LedgerRepository;
-import com.bottrading.domain.trading.LedgerType;
-import com.bottrading.domain.wallet.Wallet;
-import com.bottrading.domain.wallet.WalletRepository;
-import com.bottrading.exceptions.ValidationException;
-import com.bottrading.utils.AppConstants;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.math.BigDecimal;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,6 +9,28 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.LedgerEntry;
+import com.bottrading.domain.trading.LedgerRepository;
+import com.bottrading.domain.trading.LedgerType;
+import com.bottrading.domain.wallet.Wallet;
+import com.bottrading.domain.wallet.WalletRepository;
+import com.bottrading.exceptions.ValidationException;
 
 @ExtendWith(MockitoExtension.class)
 class AccountingServiceTest {
@@ -66,14 +67,14 @@ class AccountingServiceTest {
             InstanciaEstrategia estrategia = estrategia(10L, 1L, "200.00", "200.00", "0.02");
 
             when(walletRepo.findByIdWithLock(1L)).thenReturn(Optional.of(wallet));
-            when(estrategiaRepo.findById(10L)).thenReturn(Optional.of(estrategia));
+            when(estrategiaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(estrategia));
             when(estrategiaRepo.save(any(InstanciaEstrategia.class))).thenAnswer(i -> i.getArgument(0));
 
             InstanciaEstrategia out = service.activateStrategy(1L, 10L, new BigDecimal("250.00"));
 
             assertEquals("750.00", wallet.getBalanceDisponible().toPlainString());
             assertEquals("250.00", out.getCapitalAsignado().toPlainString());
-            assertEquals("ACTIVA", out.getEstado());
+            assertEquals(EstadoEstrategia.ACTIVA, out.getEstado());
             verify(walletRepo, times(1)).save(wallet);
             verify(ledgerRepo, times(1)).save(any(LedgerEntry.class));
         }
@@ -82,20 +83,20 @@ class AccountingServiceTest {
         void should_throw_when_wallet_not_found() {
             when(walletRepo.findByIdWithLock(1L)).thenReturn(Optional.empty());
             assertThrows(RuntimeException.class, () -> service.activateStrategy(1L, 10L, new BigDecimal("100")));
-            verify(estrategiaRepo, never()).findById(10L);
+            verify(estrategiaRepo, never()).findByIdWithLock(10L);
         }
 
         @Test
         void should_throw_when_strategy_not_found() {
             when(walletRepo.findByIdWithLock(1L)).thenReturn(Optional.of(wallet(1L, "1000", "1000")));
-            when(estrategiaRepo.findById(10L)).thenReturn(Optional.empty());
+            when(estrategiaRepo.findByIdWithLock(10L)).thenReturn(Optional.empty());
             assertThrows(RuntimeException.class, () -> service.activateStrategy(1L, 10L, new BigDecimal("100")));
         }
 
         @Test
         void should_throw_validation_when_insufficient_balance() {
             when(walletRepo.findByIdWithLock(1L)).thenReturn(Optional.of(wallet(1L, "50", "50")));
-            when(estrategiaRepo.findById(10L)).thenReturn(Optional.of(estrategia(10L, 1L, "100", "100", "0.02")));
+            when(estrategiaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(estrategia(10L, 1L, "100", "100", "0.02")));
 
             assertThrows(ValidationException.class,
                 () -> service.activateStrategy(1L, 10L, new BigDecimal("100")));
@@ -111,12 +112,12 @@ class AccountingServiceTest {
         @Test
         void should_pause_strategy_and_write_ledger_marker() {
             InstanciaEstrategia e = estrategia(10L, 1L, "100", "100", "0.02");
-            e.setEstado("ACTIVA");
+            e.setEstado(EstadoEstrategia.ACTIVA);
             when(estrategiaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(e));
 
             service.pauseStrategyTemporarily(1L, 10L);
 
-            assertEquals("DETENIDA", e.getEstado());
+            assertEquals(EstadoEstrategia.DETENIDA, e.getEstado());
             ArgumentCaptor<LedgerEntry> captor = ArgumentCaptor.forClass(LedgerEntry.class);
             verify(ledgerRepo).save(captor.capture());
             assertEquals(LedgerType.STRATEGY_PAUSED, captor.getValue().getType());
@@ -138,7 +139,7 @@ class AccountingServiceTest {
         void should_release_reserved_capital_and_terminate() {
             Wallet w = wallet(1L, "500", "500");
             InstanciaEstrategia e = estrategia(10L, 1L, "200", "200", "0.02");
-            e.setEstado("ACTIVA");
+            e.setEstado(EstadoEstrategia.ACTIVA);
 
             when(walletRepo.findByIdWithLock(1L)).thenReturn(Optional.of(w));
             when(estrategiaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(e));
@@ -148,7 +149,7 @@ class AccountingServiceTest {
             assertEquals("700", w.getBalanceDisponible().toPlainString());
             assertEquals("0", e.getCapitalReservado().toPlainString());
             assertEquals("0", e.getCapitalAsignado().toPlainString());
-            assertEquals(AppConstants.KEY_TERMINADA, e.getEstado());
+            assertEquals(EstadoEstrategia.TERMINADA, e.getEstado());
             verify(ledgerRepo, times(1)).save(any(LedgerEntry.class));
             verify(walletRepo).save(w);
             verify(estrategiaRepo).save(e);
@@ -165,7 +166,7 @@ class AccountingServiceTest {
             service.closeStrategy(1L, 10L);
 
             verify(ledgerRepo, never()).save(any(LedgerEntry.class));
-            assertEquals(AppConstants.KEY_TERMINADA, e.getEstado());
+            assertEquals(EstadoEstrategia.TERMINADA, e.getEstado());
         }
     }
 
@@ -305,7 +306,7 @@ class AccountingServiceTest {
         e.setCapitalComprometido(BigDecimal.ZERO);
         e.setRiesgoAbierto(BigDecimal.ZERO);
         e.setRiskPerTrade(new BigDecimal(risk));
-        e.setEstado("ACTIVA");
+        e.setEstado(EstadoEstrategia.ACTIVA);
         return e;
     }
 }

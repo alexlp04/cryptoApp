@@ -1,14 +1,30 @@
 package com.bottrading.application.trading;
 
-import com.bottrading.beans.SignalDTO;
-import com.bottrading.domain.strategy.InstanciaEstrategia;
-import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
-import com.bottrading.domain.trading.Posicion;
-import com.bottrading.domain.trading.PosicionRepository;
-import com.bottrading.infrastructure.cache.StatsCache;
-import com.bottrading.infrastructure.persistence.FileService;
-import lombok.extern.slf4j.Slf4j;
-import org.junit.jupiter.api.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -18,23 +34,16 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import com.bottrading.beans.SignalDTO;
+import com.bottrading.domain.strategy.EstadoEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategia;
+import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
+import com.bottrading.domain.trading.Posicion;
+import com.bottrading.domain.trading.PosicionRepository;
+import com.bottrading.infrastructure.cache.StatsCache;
+import com.bottrading.infrastructure.persistence.FileService;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyBoolean;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Test exhaustivo para PaperTradingService.
@@ -132,7 +141,7 @@ class PaperTradingServiceTest {
         void should_ignore_signal_when_instancia_not_active() throws Exception {
             // Given
             InstanciaEstrategia instancia = new InstanciaEstrategia();
-            instancia.setEstado("PAUSADA");
+            instancia.setEstado(EstadoEstrategia.DETENIDA);
             SignalDTO signal = crearSignalTestBUY();
             
             when(instanciaRepo.findByIdWithLock(1L))
@@ -588,7 +597,7 @@ class PaperTradingServiceTest {
     private InstanciaEstrategia crearInstanciaActivaTest() {
         InstanciaEstrategia instancia = new InstanciaEstrategia();
         instancia.setId(1L);
-        instancia.setEstado("ACTIVA");
+        instancia.setEstado(EstadoEstrategia.ACTIVA);
         instancia.setNombreEstrategia("RSI_SMA");
         instancia.setTimeframe("1h");
         instancia.setCapitalReservado(new BigDecimal("10000.00"));

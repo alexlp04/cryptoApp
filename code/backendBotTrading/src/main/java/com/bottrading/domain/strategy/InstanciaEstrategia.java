@@ -1,14 +1,18 @@
 package com.bottrading.domain.strategy;
 
 
-import com.bottrading.domain.BaseEntity;import java.math.BigDecimal;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.bottrading.domain.BaseEntity;
 
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
@@ -46,11 +50,9 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "riesgo_abierto", precision = 18, scale = 8)
     private BigDecimal riesgoAbierto = BigDecimal.ZERO;
 
-    @Column(nullable = false)
-    private Boolean eliminado = false;
-
+    @Enumerated(EnumType.STRING)
     @Column(length = 20, nullable = false)
-    private String estado = "CREADA";
+    private EstadoEstrategia estado = EstadoEstrategia.CREADA;
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "instancia_simbolos", joinColumns = @JoinColumn(name = "instancia_id"))
@@ -160,19 +162,11 @@ public class InstanciaEstrategia extends BaseEntity {
         this.riesgoAbierto = riesgoAbierto;
     }
 
-    public Boolean getEliminado() {
-        return eliminado;
-    }
-
-    public void setEliminado(Boolean eliminado) {
-        this.eliminado = eliminado;
-    }
-
-    public String getEstado() {
+    public EstadoEstrategia getEstado() {
         return estado;
     }
 
-    public void setEstado(String estado) {
+    public void setEstado(EstadoEstrategia estado) {
         this.estado = estado;
     }
 

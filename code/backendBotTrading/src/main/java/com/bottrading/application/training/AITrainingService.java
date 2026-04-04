@@ -241,13 +241,7 @@ public class AITrainingService {
     }
 
     private String parseResponseWithFallback(InputStream inputStream) throws IOException {
-        byte[] raw = inputStream.readAllBytes();
-        try {
-            return leerEnvelopeTrain(new java.io.ByteArrayInputStream(raw));
-        } catch (Exception ignored) {
-            // Fallback legacy temporal por compatibilidad en despliegues mixtos.
-            return IpcMessagePackCodec.readUtf8Fallback(new java.io.ByteArrayInputStream(raw));
-        }
+        return leerEnvelopeTrain(inputStream);
     }
 
     private int resolveCandlesPerDay(String timeframe) {

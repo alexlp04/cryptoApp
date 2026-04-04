@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.bottrading.domain.strategy.EstadoEstrategia;
 import com.bottrading.domain.strategy.InstanciaEstrategia;
 import com.bottrading.domain.strategy.InstanciaEstrategiaRepository;
 import com.bottrading.domain.trading.LedgerEntry;
@@ -16,7 +17,6 @@ import com.bottrading.domain.trading.LedgerType;
 import com.bottrading.domain.wallet.Wallet;
 import com.bottrading.domain.wallet.WalletRepository;
 import com.bottrading.exceptions.ValidationException;
-import com.bottrading.utils.AppConstants;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -54,11 +54,11 @@ public class AccountingService {
      */
     public InstanciaEstrategia activateStrategy(long walletId, long estrategiaId, BigDecimal capital) {
         try {
-            // Bloqueo pesimista para evitar condiciones de carrera en el saldo
+            // Bloqueo pesimista en ambas entidades para evitar condiciones de carrera
             Wallet w = walletRepo.findByIdWithLock(walletId)
-                    .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
-            InstanciaEstrategia e = estrategiaRepo.findById(estrategiaId)
-                    .orElseThrow(() -> new RuntimeException("Estrategia no encontrada"));
+                    .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
+            InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
+                    .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
 
             if (w.getBalanceDisponible().compareTo(capital) < 0) {
                 throw new ValidationException("Fondos insuficientes en balance disponible");
@@ -66,7 +66,7 @@ public class AccountingService {
 
             w.setBalanceDisponible(w.getBalanceDisponible().subtract(capital));
             e.setCapitalAsignado(capital);
-            e.setEstado("ACTIVA");
+            e.setEstado(EstadoEstrategia.ACTIVA);
 
             saveLedger(w, e, LedgerType.RESERVED, capital.negate());
 
@@ -89,8 +89,9 @@ public class AccountingService {
      * @param estrategiaId ID de la estrategia.
      */
     public void pauseStrategyTemporarily(Long walletId, Long estrategiaId) {
-        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId).orElseThrow();
-        e.setEstado("DETENIDA");
+        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
+                .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
+        e.setEstado(EstadoEstrategia.DETENIDA);
         
         // Registrar en Ledger la pausa (sin movimiento de dinero, solo meta dato)
         LedgerEntry le = new LedgerEntry();
@@ -114,8 +115,10 @@ public class AccountingService {
      * @param estrategiaId ID de la estrategia a liquidar.
      */
     public void closeStrategy(Long walletId, Long estrategiaId) {
-        Wallet w = walletRepo.findByIdWithLock(walletId).orElseThrow();
-        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId).orElseThrow();
+        Wallet w = walletRepo.findByIdWithLock(walletId)
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
+        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
+                .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
         
         // Devolución de fondos si queda algo reservado
         if (e.getCapitalReservado().compareTo(BigDecimal.ZERO) > 0) {
@@ -130,7 +133,7 @@ public class AccountingService {
             e.setCapitalAsignado(BigDecimal.ZERO);
         }
 
-        e.setEstado(AppConstants.KEY_TERMINADA);
+        e.setEstado(EstadoEstrategia.TERMINADA);
         
         walletRepo.save(Objects.requireNonNull(w, "Wallet no puede ser null"));
         estrategiaRepo.save(e);
@@ -147,7 +150,7 @@ public class AccountingService {
      */
     public void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
-                .orElseThrow(() -> new RuntimeException("Instancia no encontrada"));
+                .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
 
         if (e.getCapitalReservado().compareTo(margin) < 0) {
             throw new ValidationException("Capital reservado insuficiente en la estrategia para abrir operación");
@@ -181,8 +184,10 @@ public class AccountingService {
      * @param risk Riesgo a reducir.
      */
     public void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk) {
-        Wallet w = walletRepo.findByIdWithLock(walletId).orElseThrow();
-        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId).orElseThrow();
+        Wallet w = walletRepo.findByIdWithLock(walletId)
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
+        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
+                .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
 
         e.setCapitalComprometido(e.getCapitalComprometido().subtract(margin));
         // El margen vuelve al reservado + la ganancia (o - la pérdida)
@@ -203,7 +208,7 @@ public class AccountingService {
      */
     public void applyFee(Long walletId, BigDecimal fee) {
         Wallet w = walletRepo.findByIdWithLock(walletId)
-                .orElseThrow(() -> new RuntimeException("Wallet no encontrada"));
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
 
         w.setBalanceReal(w.getBalanceReal().subtract(fee));
 
