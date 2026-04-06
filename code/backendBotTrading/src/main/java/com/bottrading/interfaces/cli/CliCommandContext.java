@@ -3,12 +3,13 @@ package com.bottrading.interfaces.cli;
 import java.util.Scanner;
 import java.util.function.Consumer;
 
-import com.bottrading.application.market.MarketDataService;
-import com.bottrading.application.strategy.EstrategiaService;
-import com.bottrading.application.training.AITrainingService;
-import com.bottrading.infrastructure.validation.SessionManager;
-import com.bottrading.infrastructure.validation.UsuarioService;
-import com.bottrading.infrastructure.validation.WalletService;
+import com.bottrading.market.application.MarketDataService;
+import com.bottrading.strategy.application.EstrategiaService;
+import com.bottrading.training.application.AIOptimizationService;
+import com.bottrading.training.application.AITrainingService;
+import com.bottrading.user.infrastructure.SessionManager;
+import com.bottrading.user.infrastructure.UsuarioService;
+import com.bottrading.wallet.infrastructure.WalletService;
 import com.bottrading.interfaces.cli.commands.FetchGapDetector;
 
 /**
@@ -21,6 +22,7 @@ public record CliCommandContext(
         EstrategiaService estrategiaService,
         WalletService walletService,
         AITrainingService aiTrainingService,
+        AIOptimizationService aiOptimizationService,
         MarketDataService marketDataService,
         FetchGapDetector fetchGapDetector,
         Consumer<String> print,

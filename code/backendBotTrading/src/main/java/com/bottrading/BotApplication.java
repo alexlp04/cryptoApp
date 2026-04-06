@@ -6,10 +6,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
-import com.bottrading.exceptions.EnvironmentConfigException;
-import com.bottrading.utils.ConsoleLoader;
-import com.bottrading.utils.EnvironmentValidator;
-import com.bottrading.utils.PythonEnvironmentValidator;
+import com.bottrading.shared.exceptions.EnvironmentConfigException;
+import com.bottrading.shared.utils.ConsoleLoader;
+import com.bottrading.shared.utils.EnvironmentValidator;
+import com.bottrading.shared.utils.PythonEnvironmentValidator;
 
 import io.github.cdimascio.dotenv.Dotenv;
 

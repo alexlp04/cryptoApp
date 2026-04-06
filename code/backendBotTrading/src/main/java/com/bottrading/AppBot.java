@@ -10,12 +10,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.stereotype.Component;
 
-import com.bottrading.application.market.MarketDataService;
-import com.bottrading.application.strategy.EstrategiaService;
-import com.bottrading.application.training.AITrainingService;
-import com.bottrading.infrastructure.validation.SessionManager;
-import com.bottrading.infrastructure.validation.UsuarioService;
-import com.bottrading.infrastructure.validation.WalletService;
+import com.bottrading.market.application.MarketDataService;
+import com.bottrading.strategy.application.EstrategiaService;
+import com.bottrading.training.application.AIOptimizationService;
+import com.bottrading.training.application.AITrainingService;
+import com.bottrading.user.infrastructure.SessionManager;
+import com.bottrading.user.infrastructure.UsuarioService;
+import com.bottrading.wallet.infrastructure.WalletService;
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.commands.BacktestCommand;
 import com.bottrading.interfaces.cli.commands.CbiCommand;
@@ -33,13 +34,14 @@ import com.bottrading.interfaces.cli.commands.ListWalletsCommand;
 import com.bottrading.interfaces.cli.commands.LoginCommand;
 import com.bottrading.interfaces.cli.commands.LogoutCommand;
 import com.bottrading.interfaces.cli.commands.ModelsCommand;
+import com.bottrading.interfaces.cli.commands.OptimizeCommand;
 import com.bottrading.interfaces.cli.commands.SignupCommand;
 import com.bottrading.interfaces.cli.commands.StartCommand;
 import com.bottrading.interfaces.cli.commands.StopCommand;
 import com.bottrading.interfaces.cli.commands.TermCommand;
 import com.bottrading.interfaces.cli.commands.TradeCommand;
 import com.bottrading.interfaces.cli.commands.TrainCommand;
-import com.bottrading.utils.ConsoleLoader;
+import com.bottrading.shared.utils.ConsoleLoader;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,7 @@ public class AppBot implements CommandLineRunner {
     private final WalletService walletService;
     private final SessionManager sessionManager;
     private final AITrainingService aiTrainingService;
+    private final AIOptimizationService aiOptimizationService;
     private final FetchGapDetector fetchGapDetector;
     private final ConfigurableApplicationContext applicationContext;
 
@@ -78,6 +81,7 @@ public class AppBot implements CommandLineRunner {
                 estrategiaService,
                 walletService,
                 aiTrainingService,
+                aiOptimizationService,
                 marketDataService,
                 fetchGapDetector,
                 this::uiPrint,
@@ -89,6 +93,7 @@ public class AppBot implements CommandLineRunner {
         registerCommand(new HelpCommand());
         registerCommand(new TradeCommand());
         registerCommand(new TrainCommand());
+        registerCommand(new OptimizeCommand());
         registerCommand(new FetchCommand());
         registerCommand(new BacktestCommand());
         registerCommand(new StartCommand());

@@ -4,8 +4,8 @@ import java.math.BigDecimal;
 
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
-import com.bottrading.utils.CommandParser;
-import com.bottrading.utils.PathConfig;
+import com.bottrading.shared.utils.CommandParser;
+import com.bottrading.shared.utils.PathConfig;
 
 /**
  * Handles trade command orchestration from CLI.

@@ -7,7 +7,7 @@ import java.util.List;
 
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
-import com.bottrading.utils.CommandParser;
+import com.bottrading.shared.utils.CommandParser;
 
 /**
  * Handles market data fetch command.

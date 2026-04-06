@@ -1,6 +1,6 @@
 package com.bottrading.interfaces.cli;
 
-import com.bottrading.utils.CommandParser;
+import com.bottrading.shared.utils.CommandParser;
 import java.math.BigDecimal;
 
 /**
