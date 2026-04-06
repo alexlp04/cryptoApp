@@ -61,7 +61,8 @@ public class AITrainingService {
     }
 
     /**
-     * Orquesta el proceso de preparación de datos y entrenamiento con retries automáticos.
+     * Orquesta el proceso de preparación de datos y entrenamiento con retries
+     * automáticos.
      */
     public String entrenarModelo(String nombreModelo, String timeframe, String symbol, int dias,
             Map<String, Object> hyperparams, String strategyName) {
@@ -77,26 +78,25 @@ public class AITrainingService {
             Integer warmupCandles = null;
             Integer totalCandles = null;
             int daysForPreparation = dias;
-            
+
             if (useDynamicStrategy) {
                 try {
                     warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
                     totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
                 } catch (Exception e) {
                     throw new StrategyExecutionException(
-                        "Error al inspeccionar estrategia '" + strategyName + "': " +
-                        e.getMessage() + ". ¿Exists el archivo " + strategyName + ".py en la carpeta de estrategias?",
-                        e
-                    );
+                            "Error al inspeccionar estrategia '" + strategyName + "': " +
+                                    e.getMessage() + ". ¿Exists el archivo " + strategyName
+                                    + ".py en la carpeta de estrategias?",
+                            e);
                 }
-                
+
                 if (warmupCandles == null || totalCandles == null) {
                     throw new StrategyExecutionException(
-                        "La estrategia '" + strategyName + "' no devolvió warmup_period o candles_required. " +
-                        "Verifica que implemente estos métodos correctamente."
-                    );
+                            "La estrategia '" + strategyName + "' no devolvió warmup_period o candles_required. " +
+                                    "Verifica que implemente estos métodos correctamente.");
                 }
-                
+
                 int candlesPerDay = resolveCandlesPerDay(timeframe);
                 daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
             }
@@ -152,7 +152,8 @@ public class AITrainingService {
                     row.put("close", v.getClose());
                     row.put("volume", v.getVolume());
 
-                    List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(), new ArrayList<>());
+                    List<IndicadorTecnico> indicadoresVela = indicadoresPorVela.getOrDefault(v.getId(),
+                            new ArrayList<>());
                     for (IndicadorTecnico ind : indicadoresVela) {
                         row.put(ind.getTipo(), ind.getValor());
                     }
@@ -193,8 +194,10 @@ public class AITrainingService {
     }
 
     /**
-     * Invoca el motor Python con timeout configurado y destrucción forzada en caso de error.
-     * El timeout se basa en TRAIN_INACTIVITY_TIMEOUT_SECONDS (1800 segundos = 30 minutos)
+     * Invoca el motor Python con timeout configurado y destrucción forzada en caso
+     * de error.
+     * El timeout se basa en TRAIN_INACTIVITY_TIMEOUT_SECONDS (1800 segundos = 30
+     * minutos)
      * suficiente para entrenamientos de Deep Learning con 100+ épocas.
      */
     private String invocarMotorPythonConTimeouts(String jsonPayload) throws StrategyExecutionException {
