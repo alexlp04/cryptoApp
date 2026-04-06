@@ -1,6 +1,6 @@
 package com.bottrading.interfaces.cli.commands;
 
-import com.bottrading.domain.user.Usuario;
+import com.bottrading.user.domain.Usuario;
 import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.interfaces.cli.CliCommandContext;
 

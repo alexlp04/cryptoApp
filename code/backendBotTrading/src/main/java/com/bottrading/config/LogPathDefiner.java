@@ -1,6 +1,6 @@
 package com.bottrading.config;
 
-import com.bottrading.utils.PathConfig;
+import com.bottrading.shared.utils.PathConfig;
 
 import ch.qos.logback.core.PropertyDefinerBase;
 

@@ -1,7 +1,7 @@
 package com.bottrading.config;
 
-import com.bottrading.infrastructure.persistence.FileService;
-import com.bottrading.infrastructure.cache.StatsCache;
+import com.bottrading.backtesting.infrastructure.FileService;
+import com.bottrading.trading.infrastructure.cache.StatsCache;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

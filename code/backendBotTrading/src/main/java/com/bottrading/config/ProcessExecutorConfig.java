@@ -28,6 +28,9 @@ public final class ProcessExecutorConfig {
     /** Inactividad máxima tolerada en entrenamiento de modelos. */
     public static final int TRAIN_INACTIVITY_TIMEOUT_SECONDS = 1800;
 
+    /** Inactividad máxima tolerada en optimización de hiperparámetros (Optuna). */
+    public static final int OPTIMIZE_INACTIVITY_TIMEOUT_SECONDS = 3600;
+
     /** Número máximo de reintentos automáticos en caso de fallo. */
     public static final int MAX_RETRIES = 3;
 

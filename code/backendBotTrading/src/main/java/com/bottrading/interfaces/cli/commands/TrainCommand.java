@@ -2,7 +2,7 @@ package com.bottrading.interfaces.cli.commands;
 
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
-import com.bottrading.utils.CommandParser;
+import com.bottrading.shared.utils.CommandParser;
 
 /**
  * Handles train command orchestration from CLI.
