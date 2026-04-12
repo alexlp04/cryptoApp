@@ -22,16 +22,17 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import com.bottrading.market.domain.IndicadorRepository;
+import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
+import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.VelaDTO;
-import com.bottrading.market.domain.VelaRepository;
 import com.bottrading.shared.exceptions.DataFetchException;
+import com.bottrading.shared.utils.ConsoleLoader;
+import com.bottrading.shared.utils.PathConfig;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeExecutionException;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeFacade;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeRequest;
 import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.shared.utils.ConsoleLoader;
-import com.bottrading.shared.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -50,14 +51,14 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class FetchService {
+public class FetchService implements FetchMarketDataUseCase {
 
     private static final Type VELA_DTO_LIST_TYPE = new TypeToken<List<VelaDTO>>() {}.getType();
 
     private final Gson gson = new Gson();
 
-    private final VelaRepository velaRepo;
-    private final IndicadorRepository indicadorRepo;
+    private final VelaRepositoryPort velaRepo;
+    private final IndicadorRepositoryPort indicadorRepo;
     private final JdbcTemplate jdbcTemplate;
     private final PythonBridgeFacade pythonBridgeFacade;
 
@@ -73,8 +74,8 @@ public class FetchService {
             private record PageProcessResult(long lastOpenTime, int inserted) {
             }
 
-    public FetchService(VelaRepository velaRepo,
-            IndicadorRepository indicadorRepo,
+        public FetchService(VelaRepositoryPort velaRepo,
+            IndicadorRepositoryPort indicadorRepo,
             JdbcTemplate jdbcTemplate,
             PythonBridgeFacade pythonBridgeFacade) {
         this.velaRepo = velaRepo;
@@ -88,6 +89,7 @@ public class FetchService {
      * Incluye detección de huecos en el rango histórico completo para evitar
      * falsos "al día" cuando hay agujeros antiguos.
      */
+    @Override
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
         ConsoleLoader.getInstance().startDots("Verificando historial local para " + symbol);
@@ -127,6 +129,7 @@ public class FetchService {
      * Modo full refresh: elimina histórico del símbolo/intervalo y vuelve a descargar
      * desde el inicio o desde una ventana de días.
      */
+    @Override
     public void fullRefresh(String symbol, String interval, Integer days) {
         Long fromTimestamp = null;
         if (days != null) {
@@ -145,10 +148,20 @@ public class FetchService {
         callPythonAndSave(symbol, interval, fromTimestamp);
     }
 
+    @Override
+    public LocalDateTime findOldestTimestamp(String symbol, String interval) {
+        Long oldest = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
+        if (oldest == null) {
+            return null;
+        }
+        return LocalDateTime.ofEpochSecond(oldest / 1000L, (int) ((oldest % 1000L) * 1_000_000), ZoneOffset.UTC);
+    }
+
     /**
      * Modo gap fill: activa descarga desde el inicio de un hueco detectado.
      * Nota: el downloader actual opera desde fromTimestamp hasta "now".
      */
+    @Override
     public void fillGapRange(String symbol, String interval, long fromTimestamp, long toTimestamp) {
         LocalDateTime from = LocalDateTime.ofEpochSecond(
                 fromTimestamp / 1000L,
@@ -164,6 +177,7 @@ public class FetchService {
     /**
      * Descarga velas en el rango exacto [from, to] y las inserta en BD con INSERT plano.
      */
+    @Override
     public int fetchRange(String symbol, String timeframe, LocalDateTime from, LocalDateTime to) {
         validateFetchRangeInputs(symbol, timeframe, from, to);
 
@@ -248,6 +262,7 @@ public class FetchService {
     /**
      * Coordina la descarga incremental inteligente.
      */
+    @Override
     public long fetchIncremental(String symbol, String interval, int dias, long now) {
         long millisPerDay = 24L * 60L * 60L * 1000L;
         long targetTimestamp = now - dias * millisPerDay;

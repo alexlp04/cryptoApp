@@ -1,7 +1,6 @@
 import asyncio
 import json
 import sys
-import importlib.util
 import pandas as pd
 import websockets
 import os
@@ -9,8 +8,9 @@ import types
 import logging
 import joblib
 import warnings
-from datetime import datetime
+from collections import deque
 from ipc_protocol import read_request_payload
+from shared_utils import load_strategy_by_path
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -32,8 +32,8 @@ file_handler = logging.FileHandler(log_file, encoding='utf-8')
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-# Logger a stdout (para que Java vea el progreso)
-stream_handler = logging.StreamHandler(sys.stdout)
+# Logger a stderr (señales van por stdout; logs no deben contaminar ese canal)
+stream_handler = logging.StreamHandler(sys.stderr)
 stream_handler.setLevel(logging.INFO)
 stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
 
@@ -46,8 +46,7 @@ logging.basicConfig(
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-# Alias para logging.info → stdout
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     if "posix" not in sys.modules:
@@ -55,30 +54,6 @@ if sys.platform == "win32":
 
 if code_dir not in sys.path:
     sys.path.append(code_dir)
-
-from strategies.BaseStrategy import BaseStrategy
-
-# Modo estrés para validar rápidamente el pipeline de señales en paper trading.
-# Cuando está activo, también evalúa updates intravela (no sólo velas cerradas).
-HIGH_ACTIVITY_TEST_MODE = True
-
-# =========================
-# CARGA DE ESTRATEGIA (Para calcular indicadores)
-# =========================
-def load_strategy(path, capital=1000, risk_per_trade=0.02):
-    try:
-        logging.info(f"Cargando estrategia generadora de indicadores desde: {path}")
-        spec = importlib.util.spec_from_file_location("user_strategy", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        for obj in module.__dict__.values():
-            if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-                return obj(capital=capital, risk_per_trade=risk_per_trade)
-        raise Exception("No se encontró una clase válida en el archivo.")
-    except Exception as e:
-        logging.error(f"Error crítico cargando estrategia: {str(e)}", exc_info=True)
-        sys.exit(1)
 
 # =========================
 # CARGA DE MODELO IA UNIVERSAL
@@ -96,17 +71,17 @@ def load_model(model_name, timeframe, symbol):
         bare_path = os.path.join(models_dir, f"{model_name}{ext}")
         if os.path.exists(bare_path):
             if ext == ".pkl":
-                logging.info(f"Cargando modelo (nombre libre, PKL): {bare_path}")
+                logger.info("Cargando modelo (nombre libre, PKL): %s", bare_path)
                 return joblib.load(bare_path), "ml_standard"
             else:
-                logging.info(f"Cargando modelo (nombre libre, Keras/TF): {bare_path}")
+                logger.info("Cargando modelo (nombre libre, Keras/TF): %s", bare_path)
                 from tensorflow.keras.models import load_model as load_keras_model
                 return load_keras_model(bare_path), "deep_learning"
 
     # 1. Buscar modelos estándar (Scikit-Learn, XGBoost, LightGBM)
     pkl_path = os.path.join(models_dir, f"{base_filename}.pkl")
     if os.path.exists(pkl_path):
-        logging.info(f"Cargando modelo clásico (PKL): {pkl_path}")
+        logger.info("Cargando modelo clasico (PKL): %s", pkl_path)
         return joblib.load(pkl_path), "ml_standard"
 
     # 2. Buscar modelos de Deep Learning (TensorFlow / Keras)
@@ -116,7 +91,7 @@ def load_model(model_name, timeframe, symbol):
     dl_path = keras_path if os.path.exists(keras_path) else h5_path if os.path.exists(h5_path) else None
     
     if dl_path:
-        logging.info(f"Cargando modelo de Red Neuronal (Keras/TF): {dl_path}")
+        logger.info("Cargando modelo de Red Neuronal (Keras/TF): %s", dl_path)
         from tensorflow.keras.models import load_model as load_keras_model
         return load_keras_model(dl_path), "deep_learning"
 
@@ -125,10 +100,10 @@ def load_model(model_name, timeframe, symbol):
         if fname.startswith(f"{base_filename}_") and fname.endswith((".pkl", ".keras", ".h5")):
             candidate = os.path.join(models_dir, fname)
             if fname.endswith(".pkl"):
-                logging.info(f"Cargando modelo con sufijo de estrategia (PKL): {candidate}")
+                logger.info("Cargando modelo con sufijo de estrategia (PKL): %s", candidate)
                 return joblib.load(candidate), "ml_standard"
             else:
-                logging.info(f"Cargando modelo con sufijo de estrategia (Keras/TF): {candidate}")
+                logger.info("Cargando modelo con sufijo de estrategia (Keras/TF): %s", candidate)
                 from tensorflow.keras.models import load_model as load_keras_model
                 return load_keras_model(candidate), "deep_learning"
 
@@ -141,36 +116,33 @@ def load_model(model_name, timeframe, symbol):
 # =========================
 # LOOP POR SÍMBOLO
 # =========================
-async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real, max_candles=100):
+async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real, max_candles=100, high_activity_test_mode=False):
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
-    logging.info(f"Iniciando AI Stream para {symbol} en {timeframe}")
-    
-    strategy = load_strategy(strategy_path, capital, risk_per_trade)
+    logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
+    strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
     
     # 🔥 AHORA RECIBIMOS TAMBIÉN EL TIPO DE MODELO
     model, model_type = load_model(model_name, timeframe, symbol)
     
-    # ✅ MEJORA: Usar deque con maxlen para evitar memory leak
-    from collections import deque
-    df_buffer = deque(maxlen=max_candles)
+    df_buffer: deque = deque(maxlen=max_candles)
     last_processed_event_id = 0
 
     while True:
         try:
             async with websockets.connect(url) as ws:
-                logging.info(f"Conectado a WebSocket de Binance para {symbol}")
+                logger.info("Conectado a WebSocket de Binance para %s", symbol)
                 async for msg in ws:
                     data = json.loads(msg)
                     k = data["k"]
                     is_candle_closed = k["x"]
 
-                    if not is_candle_closed and not HIGH_ACTIVITY_TEST_MODE:
+                    if not is_candle_closed and not high_activity_test_mode:
                         continue
 
                     # En modo normal deduplicamos por close time (T); en modo test intravela por event time (E).
-                    event_id = int(data.get("E", 0)) if (HIGH_ACTIVITY_TEST_MODE and not is_candle_closed) else int(k["T"])
+                    event_id = int(data.get("E", 0)) if (high_activity_test_mode and not is_candle_closed) else int(k["T"])
                     if event_id == last_processed_event_id:
                         continue
                     last_processed_event_id = event_id
@@ -198,21 +170,15 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                         logging.warning("[%s] La estrategia no devolvió feature columns; se omite predicción.", symbol)
                         continue
 
-                    missing_cols = [c for c in feature_cols if c not in df_con_indicadores.columns]
-                    if missing_cols:
-                        logging.warning("[%s] Faltan columnas de features: %s", symbol, missing_cols)
-                        continue
-
                     # Debe replicar el mismo schema usado en entrenamiento (mismo orden y columnas).
                     ultima_fila = df_con_indicadores[feature_cols].iloc[[-1]].copy()
                     
                     # ✅ VALIDACIÓN CRÍTICA: Verificar que las columnas coincidan exactamente
                     missing_cols = [col for col in feature_cols if col not in df_con_indicadores.columns]
                     if missing_cols:
-                        logging.error(
-                            f"[{symbol}] ❌ CRÍTICO: Feature columns faltantes para {model_name}. "
-                            f"Esperadas: {feature_cols}. Faltantes: {missing_cols}. "
-                            f"Modelo entrenado con diferentes features. Predicción descartada."
+                        logger.error(
+                            "[%s] Feature columns faltantes para %s. Esperadas: %s. Faltantes: %s.",
+                            symbol, model_name, feature_cols, missing_cols,
                         )
                         continue
                     
@@ -220,10 +186,9 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                     expected_order = feature_cols
                     actual_cols = list(ultima_fila.columns)
                     if actual_cols != expected_order:
-                        logging.warning(
-                            f"[{symbol}] Orden de columnas diferente. "
-                            f"Esperado: {expected_order}. Actual: {actual_cols}. "
-                            f"Reordenando automáticamente..."
+                        logger.warning(
+                            "[%s] Orden de columnas diferente. Esperado: %s. Actual: %s. Reordenando.",
+                            symbol, expected_order, actual_cols,
                         )
                         ultima_fila = ultima_fila[expected_order]
 
@@ -263,9 +228,10 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                                 prob_sell = prob_por_clase.get(-1, 0.0)
                                 prob_hold = prob_por_clase.get(0, 0.0)
                                 prob_buy = prob_por_clase.get(1, 0.0)
-                                logging.info(
-                                    f"[{symbol}] {model_name.upper()} Predice: {prediccion} "
-                                    f"(BUY: {prob_buy*100:.1f}%, HOLD: {prob_hold*100:.1f}%, SELL: {prob_sell*100:.1f}%)"
+                                logger.info(
+                                    "[%s] %s Predice: %s (BUY: %.1f%%, HOLD: %.1f%%, SELL: %.1f%%)",
+                                    symbol, model_name.upper(), prediccion,
+                                    prob_buy * 100, prob_hold * 100, prob_sell * 100,
                                 )
 
                                 if int(prediccion) == 1:
@@ -275,7 +241,9 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                             else:
                                 prob_baja = prob_por_clase.get(0, probabilidades[0])
                                 prob_sube = prob_por_clase.get(1, probabilidades[1] if len(probabilidades) > 1 else 0.0)
-                                logging.info(f"[{symbol}] {model_name.upper()} Predice: {prediccion} (Sube: {prob_sube*100:.1f}%, Baja: {prob_baja*100:.1f}%)")
+                                logger.info("[%s] %s Predice: %s (Sube: %.1f%%, Baja: %.1f%%)",
+                                            symbol, model_name.upper(), prediccion,
+                                            prob_sube * 100, prob_baja * 100)
 
                                 if int(prediccion) == 1 and prob_sube >= 0.52:
                                     action = "BUY"
@@ -284,7 +252,7 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                                 
                         except AttributeError:
                             # SVM lineales u otros modelos sin probabilidades
-                            logging.info(f"[{symbol}] {model_name.upper()} Predice: {prediccion} (Binario)")
+                            logger.info("[%s] %s Predice: %s (Binario)", symbol, model_name.upper(), prediccion)
                             if int(prediccion) == 1:
                                 action = "BUY"
                             elif int(prediccion) == -1:
@@ -296,7 +264,7 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                         # Para Redes Neuronales (TensorFlow / Keras)
                         # Las RNN devuelven un porcentaje continuo entre 0 y 1 (Sigmoid)
                         prediccion_cruda = model.predict(x_pred, verbose=0)[0][0]
-                        logging.info(f"[{symbol}] RED NEURONAL Predice: {prediccion_cruda*100:.2f}% confianza alcista")
+                        logger.info("[%s] RED NEURONAL Predice: %.2f%% confianza alcista", symbol, prediccion_cruda * 100)
                         
                         if prediccion_cruda >= 0.55: action = "BUY"
                         elif prediccion_cruda <= 0.45: action = "SELL"
@@ -312,24 +280,26 @@ async def run_symbol(symbol, timeframe, strategy_path, model_name, capital, risk
                             "is_real": is_real,
                             "source": f"AI_{model_name.upper()}"
                         }
-                        print(f"SIGNAL\t{json.dumps(signal)}", flush=True)
-                        logging.info(f"🚀 SEÑAL {model_name.upper()} ENVIADA: {action} para {symbol} a {signal['price']}")
+                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        logger.info("SEÑAL %s ENVIADA: %s para %s a %s", model_name.upper(), action, symbol, signal["price"])
 
         except websockets.exceptions.ConnectionClosed:
-            logging.warning(f"Conexión WS cerrada para {symbol}. Reconectando...")
+            logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
             await asyncio.sleep(2)
         except Exception as e:
-            logging.error(f"Error en loop WS de {symbol}: {str(e)}", exc_info=True)
+            logger.error("Error en loop WS de %s: %s", symbol, str(e), exc_info=True)
             await asyncio.sleep(5) 
 
 # =========================
 # MAIN
 # =========================
 def main():
-    logging.info("Motor Python AI RT iniciado. Esperando Payload de Java...")
+    logger.info("Motor Python AI RT iniciado. Esperando Payload de Java...")
     try:
         payload = read_request_payload()
-        logging.info(f"Configuración recibida: {payload}")
+        high_activity_test_mode = bool(payload.get("high_activity_test", False))
+        logger.info("Configuracion recibida para %d simbolos (high_activity_test=%s)",
+                    len(payload.get("symbols", [])), high_activity_test_mode)
         
         model_name = payload.get("model_name")
         if not model_name:
@@ -342,15 +312,17 @@ def main():
             model_name=model_name,
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),
-            is_real=payload.get("is_real", False)
+            is_real=payload.get("is_real", False),
+            high_activity_test_mode=high_activity_test_mode,
         ))
     except Exception as e:
-        logging.critical(f"Fallo catastrófico en el motor IA: {str(e)}", exc_info=True)
+        logger.critical("Fallo catastrofico en el motor IA: %s", str(e), exc_info=True)
         sys.exit(1)
 
-async def run_all(symbols, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real):
+async def run_all(symbols, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real, high_activity_test_mode=False):
     tasks = [
-        run_symbol(sym, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real)
+        run_symbol(sym, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real,
+                   high_activity_test_mode=high_activity_test_mode)
         for sym in symbols
     ]
     await asyncio.gather(*tasks)

@@ -1,15 +1,15 @@
 import asyncio
 import json
 import sys
-import importlib.util
 import pandas as pd
 import websockets
 import os
 import types
 import logging
+from collections import deque
 from decimal import Decimal
-from datetime import datetime
 from ipc_protocol import read_request_payload
+from shared_utils import load_strategy_by_path
 
 # Logging dual: archivo para diagnostico y stdout para que Java consuma eventos.
 # current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
@@ -24,7 +24,7 @@ file_handler = logging.FileHandler(log_file, encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler = logging.StreamHandler(sys.stderr)
 stream_handler.setLevel(logging.INFO)
 stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
 
@@ -33,7 +33,7 @@ logging.basicConfig(
     handlers=[file_handler, stream_handler]
 )
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Compatibilidad minima para entornos Windows donde falta modulo posix.
 if sys.platform == "win32":
@@ -42,24 +42,6 @@ if sys.platform == "win32":
 
 if code_dir not in sys.path:
     sys.path.append(code_dir)
-
-from strategies.BaseStrategy import BaseStrategy
-
-def load_strategy(path, capital=1000, risk_per_trade=0.02):
-    """Carga dinamicamente una estrategia Python y devuelve su instancia."""
-    try:
-        logging.info(f"Cargando estrategia desde: {path}")
-        spec = importlib.util.spec_from_file_location("user_strategy", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        for obj in module.__dict__.values():
-            if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-                return obj(capital=capital, risk_per_trade=risk_per_trade)
-        raise Exception("No se encontró una clase válida en el archivo.")
-    except Exception as e:
-        logging.error(f"Error crítico cargando estrategia: {str(e)}", exc_info=True)
-        sys.exit(1)
 
 async def run_symbol(
     symbol,
@@ -75,9 +57,9 @@ async def run_symbol(
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
-    logging.info(f"Iniciando stream para {symbol} en {timeframe}")
-    strategy = load_strategy(strategy_path, capital, risk_per_trade)
-    df = pd.DataFrame(columns=["timestamp", "close", "open", "high", "low", "volume"])
+    logger.info("Iniciando stream para %s en %s", symbol, timeframe)
+    strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
+    buffer: deque = deque(maxlen=max_candles)
 
     retry_delay = 5
     max_retry_delay = 300
@@ -85,7 +67,7 @@ async def run_symbol(
     while True:
         try:
             async with websockets.connect(url) as ws:
-                logging.info(f"Conectado a WebSocket de Binance para {symbol}")
+                logger.info("Conectado a WebSocket de Binance para %s", symbol)
                 retry_delay = 5  # reset on successful connection
                 async for msg in ws:
                     data = json.loads(msg)
@@ -101,19 +83,19 @@ async def run_symbol(
                     # con precisión total (Decimal) sin depender del redondeo de float64.
                     raw_close: str = k["c"]
 
-                    new_row = pd.DataFrame([{
+                    buffer.append({
                         "timestamp": int(k["t"]),
                         "open": float(k["o"]),
                         "high": float(k["h"]),
                         "low": float(k["l"]),
                         "close": float(k["c"]),
-                        "volume": float(k["v"])
-                    }])
-                    
-                    df = pd.concat([df, new_row], ignore_index=True)
-                    if len(df) > max_candles:
-                        df = df.iloc[-max_candles:]
+                        "volume": float(k["v"]),
+                    })
 
+                    if len(buffer) < 2:
+                        continue
+
+                    df = pd.DataFrame(list(buffer))
                     df = strategy.populate_indicators(df)
                     row = df.iloc[-1]
 
@@ -133,20 +115,20 @@ async def run_symbol(
                             "is_real": is_real
                         }
                         # Formato unico de intercambio con el runtime Java.
-                        print(f"SIGNAL\t{json.dumps(signal)}", flush=True)
-                        logging.info(f"SEÑAL ENVIADA: {action} para {symbol} a precio {raw_close}")
+                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
         except Exception as e:
-            logging.error(f"Error en loop de {symbol}: {str(e)}", exc_info=True)
+            logger.error("Error en loop de %s: %s", symbol, str(e), exc_info=True)
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
 
 def main():
     """Punto de entrada: recibe configuracion IPC y arranca tareas async."""
-    logging.info("Motor Python RT iniciado. Esperando configuración de Java...")
+    logger.info("Motor Python RT iniciado. Esperando configuracion de Java...")
     try:
         payload = read_request_payload()
-        logging.info(f"Configuración recibida: {payload}")
+        logger.info("Configuracion recibida para %d simbolos", len(payload.get("symbols", [])))
         
         asyncio.run(run_all(
             symbols=payload["symbols"],
@@ -158,7 +140,7 @@ def main():
             only_closed_candles=payload.get("only_closed_candles", False),
         ))
     except Exception as e:
-        logging.critical(f"Fallo catastrófico en el motor: {str(e)}", exc_info=True)
+        logger.critical("Fallo catastrofico en el motor: %s", str(e), exc_info=True)
         sys.exit(1)
 
 async def run_all(symbols, timeframe, strategy_path, capital, risk_per_trade, is_real, only_closed_candles=False):

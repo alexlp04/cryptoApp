@@ -14,22 +14,16 @@ import jakarta.transaction.Transactional;
 @Repository
 public interface IndicadorRepository extends JpaRepository<IndicadorTecnico, Long> {
 
-    // Buscar indicadores por vela (findByVela)
     List<IndicadorTecnico> findByVela(Vela vela);
 
-    // Buscar por vela y tipo (findByVelaAndTipo)
     List<IndicadorTecnico> findByVelaAndTipo(Vela vela, String tipo);
 
-    // Buscar específico (findByVelaTipoParametros)
     Optional<IndicadorTecnico> findByVelaAndTipoAndParametros(Vela vela, String tipo, String parametros);
 
-    // Verificar existencia (exists)
     boolean existsByVelaAndTipoAndParametros(Vela vela, String tipo, String parametros);
-
 
     boolean existsByVela_Id(Long velaId);
 
-    // Eliminar indicadores de una vela (deleteByVela)
     @Modifying
     @Transactional
     @Query("DELETE FROM IndicadorTecnico i WHERE i.vela = :vela")
@@ -39,10 +33,9 @@ public interface IndicadorRepository extends JpaRepository<IndicadorTecnico, Lon
     @Transactional
     @Query("DELETE FROM IndicadorTecnico i WHERE i.vela.id IN (SELECT v.id FROM Vela v WHERE v.symbol = :symbol AND v.interval = :interval AND v.openTime >= :openTime)")
     void deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(
-            @Param("symbol") String symbol, 
-            @Param("interval") String interval, 
-            @Param("openTime") Long openTime
-    );
+            @Param("symbol") String symbol,
+            @Param("interval") String interval,
+            @Param("openTime") Long openTime);
 
     List<IndicadorTecnico> findByVelaIn(List<Vela> velas);
 }

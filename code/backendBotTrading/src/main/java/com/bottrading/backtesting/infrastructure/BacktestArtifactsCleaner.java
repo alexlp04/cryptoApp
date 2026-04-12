@@ -7,6 +7,8 @@ import java.nio.file.Paths;
 
 import org.springframework.stereotype.Service;
 
+import com.bottrading.backtesting.application.port.out.BacktestPersistencePort;
+
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -17,7 +19,12 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class BacktestArtifactsCleaner {
+public class BacktestArtifactsCleaner implements BacktestPersistencePort {
+
+    @Override
+    public void limpiarResultadosPrevios(String strategyName) {
+        verificarYLimpiarCarpetaEstrategia(strategyName, true);
+    }
 
     /**
      * Verifica y limpia la carpeta de una estrategia.

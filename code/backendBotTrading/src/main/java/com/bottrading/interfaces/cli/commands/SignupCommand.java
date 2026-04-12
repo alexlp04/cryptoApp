@@ -24,7 +24,7 @@ public final class SignupCommand implements CliCommand {
         context.print().accept("Password: ");
         String pass = context.scanner().nextLine().trim();
 
-        if (context.usuarioService().registrar(nombre, pass) == null) {
+        if (context.createUsuarioUseCase().registrar(nombre, pass) == null) {
             context.println().accept("No se pudo registrar (quizas el usuario ya existe).");
             return;
         }

@@ -20,6 +20,6 @@ public final class ListStrategiesCommand implements CliCommand {
         }
 
         context.println().accept("--- Estrategias en Ejecucion ---");
-        context.estrategiaService().listarEstrategias().forEach(context.println());
+        context.queryStrategiesUseCase().listarEstrategias().forEach(context.println());
     }
 }

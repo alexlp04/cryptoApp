@@ -1,13 +1,13 @@
 package com.bottrading.user.infrastructure;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
 import com.bottrading.user.domain.Usuario;
-import com.bottrading.strategy.application.EstrategiaService;
 
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 /**
  * Gestiona el estado de la sesión del usuario y la carga de configuración de
@@ -19,11 +19,11 @@ public class SessionManager {
 
     private Usuario currentUser;
 
-    private final EstrategiaService estrategiaService;
+    private final StrategyLifecycleUseCase strategyLifecycleUseCase;
 
     @Autowired
-    public SessionManager(EstrategiaService estrategiaService) {
-        this.estrategiaService = estrategiaService;
+    public SessionManager(StrategyLifecycleUseCase strategyLifecycleUseCase) {
+        this.strategyLifecycleUseCase = strategyLifecycleUseCase;
     }
 
 
@@ -55,7 +55,7 @@ public class SessionManager {
     public void cleanup() {
         log.info("Cerrando todas las estrategias antes de apagar el sistema...");
         // Delegamos la limpieza al servicio que tiene el mapa
-        estrategiaService.terminarTodas();
+        strategyLifecycleUseCase.terminarTodas();
 
     }
 }

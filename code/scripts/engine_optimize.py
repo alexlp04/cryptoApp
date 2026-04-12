@@ -63,8 +63,10 @@ import lightgbm as lgb
 import xgboost as xgb
 
 from ipc_protocol import read_request_payload, write_error, write_response
+from backtest_engine import run_backtest_with_predictions
+from shared_utils import load_strategy_by_name, apply_strategy_features
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # =============================================================================
@@ -99,152 +101,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_N_TRIALS: int = 100
 DEFAULT_CV_FOLDS: int = 5
 DEFAULT_MIN_ACCURACY: float = 0.55
-OVERFIT_PENALTY_THRESHOLD: float = 0.05   # gap > 5 % → penalizar
-OVERFIT_PENALTY_FACTOR: float = 2.0
 MIN_SAMPLES_REQUIRED: int = 50
 RESULTS_SUBDIR: str = "optimize"
 
-# Pesos de la función objetivo multi-métrica
-W_F1_CV: float = 0.40       # F1 en cross-validation (calidad de clasificación)
-W_WIN_RATE: float = 0.30    # Win rate de la simulación de trading en validación
-W_PROFIT_FACTOR: float = 0.20  # Profit factor normalizado
-W_SHARPE: float = 0.10      # Sharpe ratio normalizado de la curva de capital
-
-# Parámetros de la simulación de trading interna
-INITIAL_CAPITAL_SIM: float = 10_000.0
-RISK_PER_TRADE_SIM: float = 0.02  # 2 % de capital por trade
-CAP_PROFIT_FACTOR: float = 5.0    # normalización del profit factor
-
 
 # =============================================================================
-# SIMULACIÓN DE TRADING INTERNA (señales del modelo → trades simulados)
+# FUNCIÓN OBJETIVO COMPUESTA (multi-métrica)
 # =============================================================================
-
-def _simulate_trades(
-    predictions: np.ndarray,
-    prices: np.ndarray,
-    timestamps: np.ndarray,
-) -> dict[str, Any]:
-    """
-    Simula trades a partir de las predicciones del modelo sobre precios reales.
-
-    Convención de labels sobre el dataset de validación:
-      - Clase más alta (ej. 1 en binario, 2 en ternario) → señal LONG
-      - Resto → sin posición
-
-    Devuelve un dict con win_rate, profit_factor, sharpe, n_trades y lista de trades.
-    """
-    capital = INITIAL_CAPITAL_SIM
-    risk = RISK_PER_TRADE_SIM
-
-    # La señal de compra es la clase máxima del label_encoder (1 → sube, binario; 2 → buy, ternario)
-    n_classes = int(predictions.max()) + 1 if len(predictions) > 0 else 2
-    buy_class = n_classes - 1
-
-    in_position = False
-    entry_price = 0.0
-    position_size = 0.0
-    trades: list[dict[str, Any]] = []
-    capital_curve: list[float] = [capital]
-    pos_pnl = 0.0
-    neg_pnl = 0.0
-    n_wins = 0
-    n_losses = 0
-
-    for i, (pred, price, ts) in enumerate(zip(predictions, prices, timestamps)):
-        price = float(price)
-        if price <= 0:
-            continue
-
-        if not in_position and int(pred) == buy_class:
-            in_position = True
-            entry_price = price
-            position_size = (capital * risk) / price
-            trades.append({
-                "side": "BUY",
-                "price": round(price, 8),
-                "timestamp": int(ts),
-                "pnl": None,
-                "capital": round(capital, 4),
-            })
-
-        elif in_position and int(pred) != buy_class:
-            in_position = False
-            pnl = position_size * (price - entry_price)
-            capital += pnl
-            capital_curve.append(capital)
-            if pnl > 0:
-                n_wins += 1
-                pos_pnl += pnl
-            elif pnl < 0:
-                n_losses += 1
-                neg_pnl += abs(pnl)
-            trades.append({
-                "side": "SELL",
-                "price": round(price, 8),
-                "timestamp": int(ts),
-                "pnl": round(pnl, 4),
-                "capital": round(capital, 4),
-            })
-
-    # Cerrar posición abierta al final si queda
-    if in_position and len(prices) > 0:
-        price = float(prices[-1])
-        pnl = position_size * (price - entry_price)
-        capital += pnl
-        capital_curve.append(capital)
-        if pnl > 0:
-            n_wins += 1
-            pos_pnl += pnl
-        elif pnl < 0:
-            n_losses += 1
-            neg_pnl += abs(pnl)
-        trades.append({
-            "side": "SELL_EOD",
-            "price": round(price, 8),
-            "timestamp": int(timestamps[-1]),
-            "pnl": round(pnl, 4),
-            "capital": round(capital, 4),
-        })
-
-    n_closed = n_wins + n_losses
-    win_rate = n_wins / n_closed if n_closed > 0 else 0.0
-    profit_factor = pos_pnl / neg_pnl if neg_pnl > 0 else (float(pos_pnl) if pos_pnl > 0 else 0.0)
-    # Clamp profit_factor para normalización
-    profit_factor_norm = min(profit_factor, CAP_PROFIT_FACTOR) / CAP_PROFIT_FACTOR
-
-    # Sharpe sobre curva de capital (retornos período a período)
-    sharpe = 0.0
-    if len(capital_curve) > 2:
-        arr = np.array(capital_curve, dtype=float)
-        returns = np.diff(arr) / arr[:-1]
-        if returns.std() > 1e-9:
-            sharpe = float(returns.mean() / returns.std())
-
-    # Normalizar Sharpe a [0, 1] usando umbral razonable (2.0 = excelente)
-    sharpe_norm = max(0.0, min(sharpe / 2.0, 1.0))
-
-    retorno_pct = ((capital - INITIAL_CAPITAL_SIM) / INITIAL_CAPITAL_SIM) * 100.0
-
-    return {
-        "win_rate": round(win_rate, 6),
-        "profit_factor": round(profit_factor, 6),
-        "profit_factor_norm": round(profit_factor_norm, 6),
-        "sharpe": round(sharpe, 6),
-        "sharpe_norm": round(sharpe_norm, 6),
-        "n_trades": n_closed * 2,  # BUY+SELL
-        "n_wins": n_wins,
-        "n_losses": n_losses,
-        "retorno_pct": round(retorno_pct, 4),
-        "capital_final": round(capital, 4),
-        "trades": trades,
-    }
-
 
 def _compute_composite_score(
     f1_cv: float,
-    win_rate: float,
-    profit_factor_norm: float,
+    win_rate_frac: float,
+    pf_norm: float,
     sharpe_norm: float,
     overfit_gap: float,
 ) -> float:
@@ -252,14 +120,17 @@ def _compute_composite_score(
     Función de scoring compuesta (maximizar).
     Combina calidad de clasificación + métricas de trading reales.
     Penaliza overfitting.
+
+    win_rate_frac: fracción 0-1 (no porcentaje).
+    pf_norm / sharpe_norm: ya normalizados a [0, 1].
     """
     base = (
-        W_F1_CV * f1_cv
-        + W_WIN_RATE * win_rate
-        + W_PROFIT_FACTOR * profit_factor_norm
-        + W_SHARPE * sharpe_norm
+        0.40 * f1_cv
+        + 0.30 * win_rate_frac
+        + 0.20 * pf_norm
+        + 0.10 * sharpe_norm
     )
-    penalty = max(0.0, overfit_gap - OVERFIT_PENALTY_THRESHOLD) * OVERFIT_PENALTY_FACTOR
+    penalty = max(0.0, overfit_gap - 0.05) * 2.0
     return base - penalty
 
 
@@ -267,113 +138,9 @@ def _compute_composite_score(
 # CARGA DE ESTRATEGIA (reutiliza misma lógica que engine_train.py)
 # =============================================================================
 
-def load_strategy(strategy_name: str) -> Any:
-    """Carga una estrategia dinámicamente y valida que herede de BaseStrategy."""
-    if not strategy_name or not strategy_name.strip():
-        raise ValueError("strategy_name está vacío o no es válido.")
-
-    strategy_name = strategy_name.strip()
-    if code_dir not in sys.path:
-        sys.path.insert(0, code_dir)
-
-    try:
-        from strategies.BaseStrategy import BaseStrategy
-    except Exception as exc:
-        raise ValueError(f"No se pudo importar BaseStrategy: {exc}") from exc
-
-    module = None
-    errors: list[str] = []
-    for module_name in (f"strategies.{strategy_name}", strategy_name):
-        try:
-            module = importlib.import_module(module_name)
-            break
-        except Exception as exc:
-            errors.append(f"{module_name}: {exc}")
-
-    if module is None:
-        raise ValueError(
-            f"No se pudo importar la estrategia '{strategy_name}'. "
-            f"Detalle: {' | '.join(errors)}"
-        )
-
-    strategy_class = getattr(module, strategy_name, None)
-    if strategy_class is None:
-        raise ValueError(f"No existe la clase '{strategy_name}' en el módulo de estrategia.")
-
-    if not isinstance(strategy_class, type) or not issubclass(strategy_class, BaseStrategy):
-        raise ValueError(f"La clase '{strategy_name}' no hereda de BaseStrategy.")
-
-    return strategy_class()
-
-
-# =============================================================================
-# PREPARACIÓN DE FEATURES (reutiliza misma lógica que engine_train.py)
-# =============================================================================
-
-def apply_strategy_features(
-    df: pd.DataFrame,
-    strategy: Any,
-    warmup_candles: int,
-) -> tuple[pd.DataFrame, pd.Series]:
-    """Aplica indicadores/labels de estrategia y devuelve X, y alineados."""
-    if "timestamp" not in df.columns and df.index.name == "timestamp":
-        df = df.reset_index()
-    if "timestamp" in df.columns:
-        df = df.sort_values("timestamp")
-
-    logger.info("Iniciando populate_indicators para estrategia '%s'", strategy.get_name())
-    t0 = datetime.now()
-    df_enriched = strategy.populate_indicators(df.copy())
-    logger.info(
-        "populate_indicators finalizado en %.2fs (filas=%d)",
-        (datetime.now() - t0).total_seconds(),
-        len(df_enriched),
-    )
-
-    warmup = max(int(warmup_candles or 0), 0)
-    if warmup > 0:
-        logger.info("Aplicando warmup: descartando primeras %d velas", warmup)
-        df_enriched = df_enriched.iloc[warmup:].copy()
-
-    if len(df_enriched) < 2:
-        raise ValueError("No hay suficientes velas tras aplicar indicadores y warmup.")
-
-    feature_cols = strategy.get_feature_columns(df_enriched)
-    if not feature_cols:
-        raise ValueError("La estrategia no devolvió columnas de features (get_feature_columns vacío).")
-
-    current_rows = df_enriched.iloc[:-1].copy()
-    next_rows = df_enriched.iloc[1:].copy()
-
-    labels: list[int] = [
-        strategy.get_label(row._asdict(), next_row._asdict())
-        for row, next_row in zip(
-            current_rows.itertuples(index=False, name="Row"),
-            next_rows.itertuples(index=False, name="NextRow"),
-        )
-    ]
-
-    y = pd.Series(labels, index=current_rows.index, name="Target")
-    x_features = current_rows[feature_cols].copy()
-
-    x_features = x_features.replace([float("inf"), float("-inf")], float("nan"))
-    valid_mask = ~x_features.isna().any(axis=1)
-    dropped = int((~valid_mask).sum())
-    if dropped > 0:
-        logger.warning("Se descartaron %d filas por NaN/inf en features.", dropped)
-    x_features = x_features.loc[valid_mask]
-    y = y.loc[valid_mask]
-
-    if len(x_features) < MIN_SAMPLES_REQUIRED:
-        raise ValueError("No hay suficientes datos limpios tras aplicar la estrategia dinámica.")
-
-    logger.info(
-        "Feature engineering completado: filas_validas=%d, features=%d, labels=%s",
-        len(x_features),
-        len(feature_cols),
-        y.value_counts(dropna=False).to_dict(),
-    )
-    return x_features, y
+# load_strategy y apply_strategy_features provienen de shared_utils.
+# Alias para compatibilidad con las llamadas internas de este módulo.
+load_strategy = load_strategy_by_name
 
 
 # =============================================================================
@@ -486,6 +253,12 @@ def _build_and_eval_neural_network(
     hidden_layers = int(params.get("hidden_layers", 2))
     neurons = int(params.get("neurons", 64))
 
+    n_classes_nn = len(np.unique(y))
+    is_multiclass = n_classes_nn > 2
+    output_units = n_classes_nn if is_multiclass else 1
+    output_activation = "softmax" if is_multiclass else "sigmoid"
+    loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
+
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     cv_scores: list[float] = []
 
@@ -500,18 +273,21 @@ def _build_and_eval_neural_network(
         for _ in range(hidden_layers):
             layers.append(Dense(neurons, activation="relu"))
             layers.append(Dropout(dropout))
-        layers.append(Dense(1, activation="sigmoid"))
+        layers.append(Dense(output_units, activation=output_activation))
 
         model = Sequential(layers)
         model.compile(
             optimizer=Adam(learning_rate=lr),
-            loss="binary_crossentropy",
+            loss=loss_fn,
             metrics=["accuracy"],
         )
         model.fit(X_tr, y_tr, epochs=epochs, batch_size=batch_size,
                   verbose=0, validation_split=0.0)
-        y_pred = (model.predict(X_val, verbose=0) > 0.5).astype(int).flatten()
-        cv_scores.append(float(accuracy_score(y_val, y_pred)))
+        if is_multiclass:
+            y_pred_fold = np.argmax(model.predict(X_val, verbose=0), axis=1)
+        else:
+            y_pred_fold = (model.predict(X_val, verbose=0) > 0.5).astype(int).flatten()
+        cv_scores.append(float(accuracy_score(y_val, y_pred_fold)))
         tf.keras.backend.clear_session()
         logger.debug("NN fold %d/%d — val_acc=%.4f", fold_idx + 1, cv_folds, cv_scores[-1])
 
@@ -524,15 +300,18 @@ def _build_and_eval_neural_network(
     for _ in range(hidden_layers):
         layers_full.append(Dense(neurons, activation="relu"))
         layers_full.append(Dropout(dropout))
-    layers_full.append(Dense(1, activation="sigmoid"))
+    layers_full.append(Dense(output_units, activation=output_activation))
     model_full = Sequential(layers_full)
     model_full.compile(
         optimizer=Adam(learning_rate=lr),
-        loss="binary_crossentropy",
+        loss=loss_fn,
         metrics=["accuracy"],
     )
     model_full.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0)
-    y_train_pred = (model_full.predict(X, verbose=0) > 0.5).astype(int).flatten()
+    if is_multiclass:
+        y_train_pred = np.argmax(model_full.predict(X, verbose=0), axis=1)
+    else:
+        y_train_pred = (model_full.predict(X, verbose=0) > 0.5).astype(int).flatten()
     train_acc = float(accuracy_score(y, y_train_pred))
     tf.keras.backend.clear_session()
 
@@ -547,17 +326,24 @@ def _make_objective(
     model_type: str,
     X: np.ndarray,
     y: np.ndarray,
-    prices: np.ndarray,
+    df_enriched: pd.DataFrame,
+    strategy: Any,
     timestamps: np.ndarray,
+    symbol: str,
     cv_folds: int,
     trial_log: list[dict[str, Any]],
+    label_encoder: Any,
 ) -> Any:
     """
-    Cierra sobre X, y, prices, timestamps y devuelve la función objetivo multi-métrica para Optuna.
+    Cierra sobre X, y, df_enriched, strategy, timestamps y devuelve la función
+    objetivo multi-métrica para Optuna.
 
     Puntuación compuesta:
-      score = W_F1_CV * F1_cv + W_WIN_RATE * win_rate_cv + W_PROFIT_FACTOR * pf_norm + W_SHARPE * sharpe_norm
+      score = 0.40*F1_cv + 0.30*win_rate_cv + 0.20*pf_norm + 0.10*sharpe_norm
               - penalización_overfitting
+
+    Por cada fold sklearn se corre un backtest real con run_backtest_with_predictions
+    para obtener métricas de trading fidedignas a la estrategia.
     """
     suggest_fn = _SUGGEST_FN.get(model_type, _suggest_random_forest)
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
@@ -568,7 +354,6 @@ def _make_objective(
         trial_start = datetime.now()
 
         try:
-            # ─ Métricas de clasificación por fold + simulación de trading ─────────
             cv_f1_scores: list[float] = []
             cv_acc_scores: list[float] = []
             cv_win_rates: list[float] = []
@@ -576,11 +361,9 @@ def _make_objective(
             cv_sharpe_norms: list[float] = []
 
             if is_neural:
-                # Para NN reutilizamos la función existente (sin simulación de trading por fold)
                 cv_acc, train_acc = _build_and_eval_neural_network(X, y, params, cv_folds)
-                # NN: calculamos F1 aproximado como proxy del accuracy
                 f1_cv = cv_acc
-                win_rate_cv = cv_acc  # no hay trading real en este modo
+                win_rate_cv = cv_acc
                 pf_norm_cv = cv_acc
                 sharpe_norm_cv = cv_acc
             else:
@@ -599,17 +382,26 @@ def _make_objective(
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
 
-                    # Simulación de trading sobre el fold de validación
-                    prices_val = prices[val_idx]
-                    ts_val = timestamps[val_idx]
-                    sim = _simulate_trades(y_pred_val, prices_val, ts_val)
-                    cv_win_rates.append(sim["win_rate"])
-                    cv_pf_norms.append(sim["profit_factor_norm"])
-                    cv_sharpe_norms.append(sim["sharpe_norm"])
+                    # Backtest real sobre el fold de validación con predicciones inversas
+                    y_pred_original = label_encoder.inverse_transform(y_pred_val)
+                    val_timestamps = timestamps[val_idx]
+                    df_val = df_enriched[
+                        df_enriched["timestamp"].isin(set(val_timestamps.tolist()))
+                    ].sort_values("timestamp").reset_index(drop=True)
+
+                    sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
+
+                    win_rate_frac = sim["win_rate"] / 100.0
+                    pf_norm = min(sim["profit_factor"], 5.0) / 5.0
+                    sharpe_norm = max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0))
+
+                    cv_win_rates.append(win_rate_frac)
+                    cv_pf_norms.append(pf_norm)
+                    cv_sharpe_norms.append(sharpe_norm)
                     logger.debug(
-                        "  fold %d/%d | f1=%.4f acc=%.4f win_rate=%.4f pf=%.4f sharpe=%.4f",
+                        "  fold %d/%d | f1=%.4f acc=%.4f win_rate=%.2f%% pf=%.4f sharpe=%.4f",
                         fold_idx + 1, cv_folds, fold_f1, fold_acc,
-                        sim["win_rate"], sim["profit_factor"], sim["sharpe"],
+                        sim["win_rate"], sim["profit_factor"], sim.get("sharpe", 0.0),
                     )
 
                 f1_cv = float(np.mean(cv_f1_scores))
@@ -618,7 +410,6 @@ def _make_objective(
                 pf_norm_cv = float(np.mean(cv_pf_norms))
                 sharpe_norm_cv = float(np.mean(cv_sharpe_norms))
 
-                # Entrenamiento completo para medir gap de overfitting
                 model_full = _build_sklearn_model(model_type, params)
                 model_full.fit(X, y)
                 train_acc = float(accuracy_score(y, model_full.predict(X)))
@@ -713,24 +504,33 @@ def _train_final_model(
         hidden_layers = int(best_params.get("hidden_layers", 2))
         neurons = int(best_params.get("neurons", 64))
 
+        n_cls = len(np.unique(y))
+        is_mc = n_cls > 2
+        out_units = n_cls if is_mc else 1
+        out_act = "softmax" if is_mc else "sigmoid"
+        final_loss = "sparse_categorical_crossentropy" if is_mc else "binary_crossentropy"
+
         norm = Normalization()
         norm.adapt(X)
         layers: list[Any] = [norm]
         for _ in range(hidden_layers):
             layers.append(Dense(neurons, activation="relu"))
             layers.append(Dropout(dropout))
-        layers.append(Dense(1, activation="sigmoid"))
+        layers.append(Dense(out_units, activation=out_act))
 
         model = Sequential(layers)
         model.compile(
             optimizer=Adam(learning_rate=lr),
-            loss="binary_crossentropy",
+            loss=final_loss,
             metrics=["accuracy"],
         )
         model.fit(X, y, epochs=epochs, batch_size=batch_size,
                   verbose=0, validation_split=0.1)
 
-        y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
+        if is_mc:
+            y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
+        else:
+            y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
 
         suffix = f"_{strategy_name}" if strategy_name else ""
         model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
@@ -780,44 +580,6 @@ def _train_final_model(
         "f1": round(float(f1_score(y_test, y_pred, average=avg, zero_division=0)), 6),
     }
     return model, model_filename, metrics
-
-
-# =============================================================================
-# GUARDADO DE CSV DE TRADES (igual contrato que engine_backtest.py)
-# =============================================================================
-
-def _save_trades_csv(
-    trades: list[dict[str, Any]],
-    model_type: str,
-    timeframe: str,
-    symbol: str,
-    strategy_name: str | None,
-) -> str:
-    """Guarda los trades individuales del modelo final y devuelve la ruta relativa."""
-    import csv as _csv
-    results_dir = os.path.join(project_root, "results", RESULTS_SUBDIR)
-    os.makedirs(results_dir, exist_ok=True)
-
-    suffix = f"_{strategy_name}" if strategy_name else ""
-    csv_filename = f"optimize_trades_{model_type}_{timeframe}_{symbol}{suffix}.csv"
-    csv_path = os.path.join(results_dir, csv_filename)
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
-        writer = _csv.writer(fh)
-        writer.writerow(["symbol", "timeframe", "side", "price", "timestamp", "pnl", "capital"])
-        for t in trades:
-            writer.writerow([
-                symbol,
-                timeframe,
-                t.get("side", ""),
-                t.get("price", ""),
-                t.get("timestamp", ""),
-                t.get("pnl", ""),
-                t.get("capital", ""),
-            ])
-
-    logger.info("CSV de trades guardado en: %s (%d entradas)", csv_path, len(trades))
-    return os.path.join("results", RESULTS_SUBDIR, csv_filename)
 
 
 # =============================================================================
@@ -905,54 +667,38 @@ def main() -> None:
         if strategy_name:
             logger.info("Modo dinámico activado con estrategia: %s", strategy_name)
             strategy = load_strategy(strategy_name)
-            X_df, y_ser = apply_strategy_features(df.copy(), strategy, int(warmup_candles or 0))
+
+            # 1. Enriquecer el DataFrame completo con los indicadores de la estrategia
+            df_raw = df.reset_index() if df.index.name == "timestamp" else df.copy()
+            if "timestamp" not in df_raw.columns:
+                df_raw["timestamp"] = df_raw.index
+
+            logger.info("Iniciando populate_indicators para estrategia '%s'", strategy_name)
+            t0 = datetime.now()
+            df_enriched_full = strategy.populate_indicators(df_raw.copy())
+            logger.info(
+                "populate_indicators finalizado en %.2fs (filas=%d)",
+                (datetime.now() - t0).total_seconds(),
+                len(df_enriched_full),
+            )
+
+            # 2. Extraer features/labels (indica df ya enriquecido con indicadores)
+            X_df, y_ser = apply_strategy_features(
+                df_enriched_full.copy(), strategy, int(warmup_candles or 0),
+                already_enriched=True,
+            )
             feature_cols = list(X_df.columns)
-            # Capturar precios OHLCV del df enriquecido alineados con X_df
-            # df.reset_index() tiene timestamp como columna; X_df usa ese mismo índice
-            df_for_prices = df.copy()
-            if df_for_prices.index.name == "timestamp":
-                df_for_prices = df_for_prices.reset_index()
-            df_for_prices = df_for_prices.sort_values("timestamp").set_index("timestamp")
-            # X_df.index contiene los timestamps alineados con features (tras warmup y dropna)
-            prices_aligned = df_for_prices.reindex(X_df.index)["close"]
-            # Rellenar posibles NaN con interpolación forward
-            prices_aligned = prices_aligned.ffill().fillna(0.0)
         else:
-            # Flujo legacy: target binario por siguiente vela
-            df["Target"] = (df["close"].shift(-1) > df["close"]).astype(int)
-            rows_before = len(df)
-            df.dropna(inplace=True)
-            rows_dropped = rows_before - len(df)
-            if rows_dropped > 0:
-                pct = rows_dropped / rows_before * 100
-                logger.info("Filas descartadas por NaN/Inf: %d (%.1f%%)", rows_dropped, pct)
-                if pct > 50:
-                    logger.warning(
-                        "Se perdió más del 50%% de filas. Considera aumentar los días."
-                    )
-            if len(df) < MIN_SAMPLES_REQUIRED:
-                raise ValueError(
-                    f"Datos insuficientes tras limpieza: {len(df)} filas "
-                    f"(mínimo {MIN_SAMPLES_REQUIRED})."
-                )
-            X_df = df.drop(columns=["Target"])
-            y_ser = df["Target"]
-            feature_cols = list(X_df.columns)
+            raise ValueError(
+                "strategy_name es obligatorio: los indicadores deben calcularse siempre "
+                "a través de populate_indicators() de la estrategia. "
+                "Especifica una estrategia válida con --strategy."
+            )
 
         X_np = X_df.values.astype(float)
         y_np = y_ser.values
 
-        # ── Extraer precios y timestamps alineados con X/y para simulación de trading ──
-        if strategy_name:
-            # prices_aligned fue construido arriba con el df enriquecido
-            prices_all = prices_aligned.values.astype(float)
-        elif "close" in X_df.columns:
-            prices_all = X_df["close"].values.astype(float)
-        else:
-            prices_all = np.zeros(len(X_np), dtype=float)
-            logger.warning("No se encontró columna 'close'; simulación de trading usará precios=0.")
-
-        # Timestamps como array numérico (el índice de X_df es el timestamp)
+        # Timestamps reales (epoch ms) alineados con X/y — usados para alinear folds y test sim
         timestamps_all = X_df.index.values.astype(np.int64)
 
         label_distribution = {
@@ -970,8 +716,6 @@ def main() -> None:
         y_train_full = y_np[:split_idx]
         X_test = X_np[split_idx:]
         y_test = y_np[split_idx:]
-        prices_train = prices_all[:split_idx]
-        prices_test = prices_all[split_idx:]
         timestamps_train = timestamps_all[:split_idx]
         timestamps_test = timestamps_all[split_idx:]
 
@@ -986,8 +730,8 @@ def main() -> None:
             len(label_encoder.classes_) - 1,
         )
 
-        # Liberación de memoria
-        del df, X_df, y_ser, prices_all, timestamps_all
+        # Liberación de memoria — df_enriched_full se mantiene para folds y test sim
+        del df, X_df, y_ser, timestamps_all
         if strategy_name and "prices_aligned" in dir():
             del prices_aligned
         gc.collect()
@@ -1007,8 +751,7 @@ def main() -> None:
             n_trials, cv_folds,
         )
         logger.info(
-            "Fórmula objetivo compuesta: F1_cv*%.2f + WinRate*%.2f + PF_norm*%.2f + Sharpe_norm*%.2f - penalización_overfitting",
-            W_F1_CV, W_WIN_RATE, W_PROFIT_FACTOR, W_SHARPE,
+            "Fórmula objetivo compuesta: F1_cv*0.40 + WinRate*0.30 + PF_norm*0.20 + Sharpe_norm*0.10 - penalización_overfitting",
         )
 
         study = optuna.create_study(
@@ -1019,8 +762,8 @@ def main() -> None:
 
         objective_fn = _make_objective(
             model_type, X_train_full, y_train_full,
-            prices_train, timestamps_train,
-            cv_folds, trial_log,
+            df_enriched_full, strategy, timestamps_train,
+            symbol, cv_folds, trial_log, label_encoder,
         )
 
         study.optimize(
@@ -1089,8 +832,8 @@ def main() -> None:
             label_encoder=label_encoder,
         )
 
-        # ── Simulación de trading verídica sobre el conjunto de TEST ─────────
-        logger.info("Ejecutando simulación de trading sobre el conjunto de TEST (20%%)...")
+        # ── Backtest real sobre el conjunto de TEST con predicciones del modelo ─
+        logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
         is_neural_final = model_type in ("neural_network", "deep_learning", "keras")
         if is_neural_final:
             import tensorflow as _tf_final  # noqa: F401 — importación diferida
@@ -1098,20 +841,20 @@ def main() -> None:
         else:
             y_test_pred_final = final_model.predict(X_test)
 
-        test_sim = _simulate_trades(y_test_pred_final, prices_test, timestamps_test)
-        logger.info(
-            "Simulación test: n_trades=%d win_rate=%.4f profit_factor=%.4f "
-            "sharpe=%.4f retorno_pct=%.2f%% capital_final=%.2f",
-            test_sim["n_trades"], test_sim["win_rate"], test_sim["profit_factor"],
-            test_sim["sharpe"], test_sim["retorno_pct"], test_sim["capital_final"],
-        )
+        y_test_pred_original = label_encoder.inverse_transform(y_test_pred_final)
+        df_test = df_enriched_full[
+            df_enriched_full["timestamp"].isin(set(timestamps_test.tolist()))
+        ].sort_values("timestamp").reset_index(drop=True)
+        test_stats = run_backtest_with_predictions(strategy, df_test, y_test_pred_original, symbol)
+        del df_enriched_full, df_test
+        gc.collect()
 
-        # ── CSV de trades del modelo final ───────────────────────────────────
-        trades_csv_path = ""
-        if test_sim["trades"]:
-            trades_csv_path = _save_trades_csv(
-                test_sim["trades"], model_type, timeframe, symbol, strategy_name
-            )
+        logger.info(
+            "Backtest test: op_totales=%d win_rate=%.2f%% profit_factor=%.4f "
+            "sharpe=%.4f retorno_acumulado=%.2f%%",
+            test_stats["op_totales"], test_stats["win_rate"], test_stats["profit_factor"],
+            test_stats.get("sharpe", 0.0), test_stats["retorno_acumulado"],
+        )
 
         # ── CSV de resultados de todos los trials ─────────────────────────────
         csv_rel_path = _save_results_csv(
@@ -1148,7 +891,6 @@ def main() -> None:
             "label_distribution": label_distribution,
             "label_classes": label_encoder.classes_.tolist(),
             "csv_path": csv_rel_path,
-            "trades_csv_path": trades_csv_path,
             "final_metrics": {
                 "accuracy": round(final_metrics["accuracy"] * 100, 2),
                 "precision": round(final_metrics["precision"] * 100, 2),
@@ -1156,15 +898,15 @@ def main() -> None:
                 "f1": round(final_metrics["f1"] * 100, 2),
             },
             "trading_simulation_test": {
-                "n_trades": test_sim["n_trades"],
-                "n_wins": test_sim["n_wins"],
-                "n_losses": test_sim["n_losses"],
-                "win_rate": round(test_sim["win_rate"] * 100, 2),
-                "profit_factor": round(test_sim["profit_factor"], 4),
-                "sharpe": round(test_sim["sharpe"], 4),
-                "retorno_pct": round(test_sim["retorno_pct"], 4),
-                "capital_inicial": INITIAL_CAPITAL_SIM,
-                "capital_final": round(test_sim["capital_final"], 2),
+                "op_totales": test_stats["op_totales"],
+                "op_ganadas": test_stats["op_ganadas"],
+                "op_perdidas": test_stats["op_perdidas"],
+                "win_rate": round(test_stats["win_rate"], 2),
+                "profit_factor": round(test_stats["profit_factor"], 4),
+                "sharpe": round(test_stats.get("sharpe", 0.0), 4),
+                "retorno_acumulado": round(test_stats["retorno_acumulado"], 4),
+                "retorno_total": round(test_stats["retorno_total"], 2),
+                "max_drawdown": round(test_stats["max_drawdown"], 4),
             },
             "all_trials": trial_log,
             "data_info": {
@@ -1177,10 +919,10 @@ def main() -> None:
                 "n_trials_solicitados": n_trials,
                 "n_trials_completados": trials_completed,
                 "objetivo_pesos": {
-                    "F1_cv": W_F1_CV,
-                    "win_rate": W_WIN_RATE,
-                    "profit_factor": W_PROFIT_FACTOR,
-                    "sharpe": W_SHARPE,
+                    "F1_cv": 0.40,
+                    "win_rate": 0.30,
+                    "profit_factor": 0.20,
+                    "sharpe": 0.10,
                 },
             },
         }

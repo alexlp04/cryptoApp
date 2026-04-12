@@ -53,7 +53,7 @@ public final class FetchCommand implements CliCommand {
 
         for (String symbol : args.getCoins()) {
             context.println().accept("Full refresh para " + symbol + " [" + args.getTimeframe() + "]...");
-            context.marketDataService().fullRefresh(symbol, args.getTimeframe(), days);
+            context.fetchMarketDataService().fullRefresh(symbol, args.getTimeframe(), days);
             context.println().accept("Sincronizacion completa para " + symbol + ".");
         }
     }
@@ -73,7 +73,7 @@ public final class FetchCommand implements CliCommand {
             if (days != null) {
                 fromDate = toDate.minusDays(days);
             } else {
-                fromDate = context.marketDataService().findOldestTimestamp(symbol, args.getTimeframe());
+                fromDate = context.fetchMarketDataService().findOldestTimestamp(symbol, args.getTimeframe());
                 if (fromDate == null) {
                     context.println().accept("No hay datos existentes para " + symbol + " [" + args.getTimeframe()
                             + "] para detectar huecos.");
@@ -86,7 +86,9 @@ public final class FetchCommand implements CliCommand {
             printGaps(symbol, args.getTimeframe(), gaps, context);
 
             for (Pair<LocalDateTime, LocalDateTime> gap : gaps) {
-                context.marketDataService().fillGapRange(symbol, args.getTimeframe(), gap.left(), gap.right());
+                long fromMs = gap.left().toInstant(ZoneOffset.UTC).toEpochMilli();
+                long toMs = gap.right().toInstant(ZoneOffset.UTC).toEpochMilli();
+                context.fetchMarketDataService().fillGapRange(symbol, args.getTimeframe(), fromMs, toMs);
             }
         }
     }

@@ -51,7 +51,7 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
-        context.estrategiaService().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
+        context.strategyLifecycleUseCase().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
                 args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado);
         context.println().accept("Bot lanzado en segundo plano con exito.");
     }
@@ -105,14 +105,14 @@ public final class TradeCommand implements CliCommand {
     private WalletSelection seleccionarWallet(CliCommandContext context) {
 
         context.println().accept("\nSelecciona una wallet:");
-        context.walletService().listarWallets().forEach(context.println());
+        context.walletManagementUseCase().listarWallets().forEach(context.println());
 
         context.print().accept("Nombre exacto de la wallet: ");
         String walletName = context.scanner().nextLine().trim();
 
-        BigDecimal balanceTotal = context.walletService().getBalance(walletName);
-        Long walletId = context.walletService().obtenerIdPorNombre(walletName);
-        BigDecimal comprometido = context.estrategiaService().getCapitalComprometido(walletId);
+        BigDecimal balanceTotal = context.walletManagementUseCase().getBalance(walletName);
+        Long walletId = context.walletManagementUseCase().obtenerIdPorNombre(walletName);
+        BigDecimal comprometido = context.strategyCatalogUseCase().getCapitalComprometido(walletId);
         BigDecimal disponible = balanceTotal.subtract(comprometido);
 
         context.println().accept(String.format("Saldo Total: %s | En Silos: %s | DISPONIBLE: %s",

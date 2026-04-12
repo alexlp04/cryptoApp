@@ -14,19 +14,16 @@ import jakarta.persistence.LockModeType;
 @Repository
 public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEstrategia, Long> {
 
-    // Sustituye sumCapitalActivoByWallet
-    @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i " +
-            "WHERE i.walletAsociada = :walletAsociada " +
-            "AND i.estado = com.bottrading.strategy.domain.EstadoEstrategia.ACTIVA")
-        BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
+    @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i "
+            + "WHERE i.walletAsociada = :walletAsociada "
+            + "AND i.estado = com.bottrading.strategy.domain.EstadoEstrategia.ACTIVA")
+    BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
 
     List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
 
-    // Sustituye findActivasByWallet
     List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, EstadoEstrategia estado);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT i FROM InstanciaEstrategia i WHERE i.id = :id")
     Optional<InstanciaEstrategia> findByIdWithLock(Long id);
-
 }

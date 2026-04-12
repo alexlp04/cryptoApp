@@ -1,148 +1,43 @@
 package com.bottrading.training.application;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
-import com.bottrading.market.application.MarketDataService;
-import com.bottrading.config.ProcessExecutorConfig;
-import com.bottrading.market.domain.IndicadorRepository;
-import com.bottrading.market.domain.IndicadorTecnico;
+import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
-import com.bottrading.trading.infrastructure.bridge.PythonBridgeExecutionException;
-import com.bottrading.trading.infrastructure.bridge.PythonBridgeFacade;
-import com.bottrading.trading.infrastructure.bridge.PythonBridgeRequest;
-import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessageType;
+import com.bottrading.shared.utils.ConsoleLoader;
 import com.bottrading.shared.utils.PathConfig;
 import com.bottrading.strategy.infrastructure.StrategyInspector;
-import com.google.gson.Gson;
+import com.bottrading.training.application.port.in.OptimizeModelUseCase;
+import com.bottrading.training.application.port.out.OptimizationEnginePort;
+import com.bottrading.training.domain.OptimizationResult;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Servicio de aplicación encargado de orquestar la búsqueda de hiperparámetros
- * óptimos mediante Optuna (Python), reutilizando el mismo pipeline de preparación
- * de datos que AITrainingService.
+ * Servicio de aplicación que orquesta la búsqueda de hiperparámetros óptimos
+ * mediante Optuna (Python). Los indicadores técnicos se calculan directamente
+ * en engine_optimize.py, eliminando el round-trip IPC+BD previo.
  */
 @Slf4j
 @Service
-public class AIOptimizationService {
+@RequiredArgsConstructor
+public class AIOptimizationService implements OptimizeModelUseCase {
 
-    private static final int DEFAULT_N_TRIALS = 100;
-    private static final int DEFAULT_CV_FOLDS = 5;
-    private static final double DEFAULT_MIN_ACCURACY = 55.0;
-
-    private final Gson gson = new Gson();
-
-    private final MarketDataService marketDataService;
+    private final FetchMarketDataUseCase fetchMarketDataUseCase;
     private final VelaRepository velaRepo;
-    private final IndicadorRepository indicadorRepo;
-    private final PythonBridgeFacade pythonBridgeFacade;
+    private final OptimizationEnginePort optimizationEnginePort;
 
-    public AIOptimizationService(MarketDataService marketDataService, VelaRepository velaRepo,
-            IndicadorRepository indicadorRepo, PythonBridgeFacade pythonBridgeFacade) {
-        this.marketDataService = marketDataService;
-        this.velaRepo = velaRepo;
-        this.indicadorRepo = indicadorRepo;
-        this.pythonBridgeFacade = pythonBridgeFacade;
-    }
-
-    /**
-     * Orquesta la búsqueda de hiperparámetros óptimos para el modelo dado.
-     *
-     * @param nombreModelo   tipo de modelo (xgboost, lightgbm, random_forest, neural_network)
-     * @param timeframe      timeframe de las velas (1m, 5m, 15m, 1h, 4h, 1d)
-     * @param symbol         símbolo del par de trading (ej: BTCUSDT)
-     * @param dias           número de días históricos a usar
-     * @param strategyName   nombre de la estrategia Python (puede ser null)
-     * @param minAccuracy    accuracy mínima requerida en porcentaje (ej: 60.0 → 0.60)
-     * @return resultado formateado con mejores hiperparámetros y métricas
-     */
+    @Override
     public String optimizarHiperparametros(String nombreModelo, String timeframe, String symbol,
             int dias, String strategyName, double minAccuracy) {
-        return ejecutarOptimizacion(nombreModelo, timeframe, symbol, dias, strategyName, minAccuracy);
-    }
-
-    private String ejecutarOptimizacion(String nombreModelo, String timeframe, String symbol,
-            int dias, String strategyName, double minAccuracy) {
         try {
-            long now = System.currentTimeMillis();
-            final boolean useDynamicStrategy = strategyName != null && !strategyName.isBlank();
-
-            Integer warmupCandles = null;
-            Integer totalCandles = null;
-            int daysForPreparation = dias;
-
-            if (useDynamicStrategy) {
-                try {
-                    warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
-                    totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
-                } catch (Exception e) {
-                    throw new StrategyExecutionException(
-                        "Error al inspeccionar estrategia '" + strategyName + "': " +
-                        e.getMessage() + ". ¿Existe el archivo " + strategyName + ".py en la carpeta de estrategias?",
-                        e
-                    );
-                }
-
-                if (warmupCandles == null || totalCandles == null) {
-                    throw new StrategyExecutionException(
-                        "La estrategia '" + strategyName + "' no devolvió warmup_period o candles_required. " +
-                        "Verifica que implemente estos métodos correctamente."
-                    );
-                }
-
-                int candlesPerDay = resolveCandlesPerDay(timeframe);
-                daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
-            }
-
-            marketDataService.prepararDatosParaEntrenamiento(symbol, timeframe, daysForPreparation, now);
-
-            log.info("Extrayendo dataset para optimización — modo: {}",
-                    useDynamicStrategy ? "estrategia dinámica (" + strategyName + ")" : "indicadores técnicos");
-
-            long targetTimestamp;
-            if (useDynamicStrategy) {
-                targetTimestamp = now - (daysForPreparation * 24L * 60L * 60L * 1000L);
-                log.info("Modo estrategia dinámica: strategy='{}', warmup={}, velas_requeridas={}, dias_efectivos={}",
-                        strategyName, warmupCandles, totalCandles, daysForPreparation);
-            } else {
-                targetTimestamp = now - (dias * 24L * 60L * 60L * 1000L);
-            }
-
-            List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
-                    symbol, timeframe, targetTimestamp);
-
-            if (velas.isEmpty()) {
-                return "Error: No hay datos suficientes de " + symbol + " para optimizar.";
-            }
-
-            List<Map<String, Object>> dataset = construirDataset(velas, useDynamicStrategy, indicadorRepo);
-
-            log.info("--- DATASET LISTO --- {} registros para optimización", dataset.size());
-
-            Map<String, Object> payload = construirPayload(nombreModelo, symbol, timeframe, dataset,
-                    strategyName, warmupCandles, useDynamicStrategy, minAccuracy);
-
-            String jsonPayload = gson.toJson(payload);
-
-            log.info("Enviando {} registros al motor de optimización (Python)...", dataset.size());
-
-            velas.clear();
-            dataset.clear();
-
-            return invocarMotorOptimizacion(jsonPayload);
-
+            return ejecutarOptimizacion(nombreModelo, timeframe, symbol, dias, strategyName, minAccuracy);
         } catch (StrategyExecutionException e) {
             throw e;
         } catch (Exception e) {
@@ -151,114 +46,85 @@ public class AIOptimizationService {
         }
     }
 
-    private List<Map<String, Object>> construirDataset(List<Vela> velas, boolean useDynamicStrategy,
-            IndicadorRepository indicadorRepo) {
-        List<Map<String, Object>> dataset = new ArrayList<>();
+    private String ejecutarOptimizacion(String nombreModelo, String timeframe, String symbol,
+            int dias, String strategyName, double minAccuracy) {
+        ConsoleLoader loader = ConsoleLoader.getInstance();
+        if (strategyName == null || strategyName.isBlank()) {
+            throw new StrategyExecutionException(
+                    "La optimización requiere una estrategia (--strategy). "
+                    + "Los indicadores se calculan siempre vía populate_indicators() de la estrategia.");
+        }
+
+        loader.startSpinner("[OPTIMIZE] Validando estrategia y configuración inicial");
+        log.info("[optimize] Inicio optimización model={} symbol={} timeframe={} dias={} strategy={} minAccuracy={}%%",
+            nombreModelo, symbol, timeframe, dias, strategyName, minAccuracy);
+
+        long now = System.currentTimeMillis();
+        final boolean useDynamicStrategy = true;
+
+        Integer warmupCandles = null;
+        int daysForPreparation = dias;
+        String strategyPath = null;
 
         if (useDynamicStrategy) {
-            log.info("Extraídas {} velas. Construyendo dataset OHLCV puro para Python...", velas.size());
-            for (Vela v : velas) {
-                Map<String, Object> row = new HashMap<>();
-                row.put("timestamp", v.getOpenTime());
-                row.put("open", v.getOpen());
-                row.put("high", v.getHigh());
-                row.put("low", v.getLow());
-                row.put("close", v.getClose());
-                row.put("volume", v.getVolume());
-                dataset.add(row);
+            try {
+                loader.updateMessage("[OPTIMIZE] Inspeccionando warmup y velas requeridas de la estrategia");
+                warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+                int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
+                int candlesPerDay = resolveCandlesPerDay(timeframe);
+                daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
+                strategyPath = PathConfig.getValidStrategyPath(strategyName);
+            } catch (Exception e) {
+                throw new StrategyExecutionException(
+                        "Error al inspeccionar estrategia '" + strategyName + "': " + e.getMessage(), e);
             }
-        } else {
-            log.info("Extraídas {} velas. Obteniendo indicadores en bloque...", velas.size());
-            List<IndicadorTecnico> todosLosIndicadores = indicadorRepo.findByVelaIn(velas);
-            Map<Long, List<IndicadorTecnico>> indicadoresPorVela = todosLosIndicadores.stream()
-                    .collect(Collectors.groupingBy(ind -> ind.getVela().getId()));
 
-            for (Vela v : velas) {
-                Map<String, Object> row = new HashMap<>();
-                row.put("timestamp", v.getOpenTime());
-                row.put("close", v.getClose());
-                row.put("volume", v.getVolume());
-
-                List<IndicadorTecnico> indicadoresVela = indicadoresPorVela
-                        .getOrDefault(v.getId(), new ArrayList<>());
-                for (IndicadorTecnico ind : indicadoresVela) {
-                    row.put(ind.getTipo(), ind.getValor());
-                }
-                dataset.add(row);
-            }
+            log.info("Modo estrategia dinámica: strategy='{}', warmup={}, dias_efectivos={}",
+                    strategyName, warmupCandles, daysForPreparation);
         }
-        return dataset;
-    }
 
-    private Map<String, Object> construirPayload(String nombreModelo, String symbol, String timeframe,
-            List<Map<String, Object>> dataset, String strategyName, Integer warmupCandles,
-            boolean useDynamicStrategy, double minAccuracy) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("model_type", nombreModelo);
-        payload.put("symbol", symbol);
-        payload.put("timeframe", timeframe);
-        payload.put("dataset", dataset);
-        payload.put("min_accuracy", minAccuracy / 100.0);
-        payload.put("n_trials", DEFAULT_N_TRIALS);
-        payload.put("cv_folds", DEFAULT_CV_FOLDS);
+            loader.updateMessage("[OPTIMIZE] Descargando/actualizando velas para optimización");
+        fetchMarketDataUseCase.fetchIncremental(symbol, timeframe, daysForPreparation, now);
 
-        if (useDynamicStrategy) {
-            payload.put("strategy_name", strategyName);
-            payload.put("warmup_candles", warmupCandles);
+            loader.updateMessage("[OPTIMIZE] Consultando velas en repositorio local");
+        long targetTimestamp = now - (daysForPreparation * 24L * 60L * 60L * 1000L);
+        List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
+                symbol, timeframe, targetTimestamp);
+
+            log.info("[optimize] Velas disponibles tras fetch incremental: {}", velas.size());
+
+        if (velas.isEmpty()) {
+                loader.stop("[OPTIMIZE] Sin datos suficientes para optimizar");
+            return "Error: No hay datos suficientes de " + symbol + " para optimizar.";
         }
-        return payload;
-    }
 
-    /**
-     * Invoca el motor Python de optimización con timeout extendido (OPTIMIZE_INACTIVITY_TIMEOUT_SECONDS).
-     */
-    private String invocarMotorOptimizacion(String jsonPayload) {
-        try {
-            long startTime = System.currentTimeMillis();
-            log.debug("Iniciando optimización con payload de {} bytes", jsonPayload.length());
+        log.info("Enviando {} velas crudas al motor de optimización — modo: {}",
+                velas.size(), useDynamicStrategy ? "estrategia dinámica (" + strategyName + ")" : "legacy");
 
-            PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_OPTIMIZE_PATH)
-                    .operationName("optimize-hyperparams")
-                    .noTimeout()
-                    .inactivityTimeout(ProcessExecutorConfig.OPTIMIZE_INACTIVITY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
-                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
-                    .stdinWriter(os -> escribirEnvelopeOptimize(os, jsonPayload))
-                    .stdoutReader(this::leerEnvelopeOptimize)
-                    .onStderrLine(line -> log.info("PY [optimize]: {}", line))
-                    .build();
+        loader.updateMessage("[OPTIMIZE] Ejecutando engine_optimize.py (Optuna + backtest interno)");
 
-            String stdout = pythonBridgeFacade.execute(request);
+        OptimizationResult result = optimizationEnginePort.ejecutarOptimizacion(
+                nombreModelo,
+                strategyPath,
+                Map.of(symbol, velas),
+                timeframe,
+                minAccuracy / 100.0,
+                warmupCandles);
 
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("Optimización completada en {} ms", duration);
-
-            return stdout;
-        } catch (PythonBridgeExecutionException e) {
-            throw new StrategyExecutionException("Optimización falló: " + e.getMessage(), e);
-        } catch (StrategyExecutionException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Error inesperado en optimización: {}", e.getMessage(), e);
-            throw new StrategyExecutionException("Error inesperado: " + e.getMessage(), e);
+        if (!result.success()) {
+            loader.stop("[OPTIMIZE] Falló la ejecución en engine_optimize.py");
+            throw new StrategyExecutionException("Optimización IA falló: " + result.errorMessage());
         }
-    }
 
-    private void escribirEnvelopeOptimize(java.io.OutputStream outputStream, String jsonPayload) throws IOException {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = gson.fromJson(jsonPayload, Map.class);
-        IpcMessagePackCodec.writeEnvelope(outputStream, IpcMessageType.OPTIMIZE_REQUEST, payload);
-    }
+        loader.updateMessage("[OPTIMIZE] Procesando respuesta y formateando salida");
+        log.info("[optimize] Optimización completada. status={} trials={}/{} best_cv={}%%",
+                result.resultData().getOrDefault("status", "unknown"),
+                result.resultData().getOrDefault("trials_completed", "?"),
+                result.resultData().getOrDefault("trials_total", "?"),
+                result.resultData().getOrDefault("best_accuracy_cv_pct", "?"));
+        loader.stop("[OPTIMIZE] Optimización finalizada");
 
-    private String leerEnvelopeOptimize(InputStream inputStream) throws IOException {
-        Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
-        Object payload = envelope.get("payload");
-        if (payload == null) {
-            return "Sin respuesta del motor de optimización.";
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> resultado = (Map<String, Object>) payload;
-        return formatearResultadoOptimizacion(resultado);
+        return formatearResultadoOptimizacion(result.resultData());
     }
 
     private String formatearResultadoOptimizacion(Map<String, Object> r) {
@@ -301,15 +167,15 @@ public class AIOptimizationService {
         sb.append("\n--- SIMULACION DE TRADING (conjunto test 20%) ---\n");
         Object sim = r.get("trading_simulation_test");
         if (sim instanceof Map<?, ?> simMap) {
-            sb.append("Trades totales  : ").append(simMap.get("n_trades")).append("\n");
-            sb.append("Ganadas / Perdidas: ").append(simMap.get("n_wins"))
-              .append(" / ").append(simMap.get("n_losses")).append("\n");
+                        sb.append("Trades totales  : ").append(simMap.get("op_totales")).append("\n");
+                        sb.append("Ganadas / Perdidas: ").append(simMap.get("op_ganadas"))
+                            .append(" / ").append(simMap.get("op_perdidas")).append("\n");
             sb.append("Win Rate        : ").append(simMap.get("win_rate")).append("%\n");
             sb.append("Profit Factor   : ").append(simMap.get("profit_factor")).append("\n");
             sb.append("Sharpe Ratio    : ").append(simMap.get("sharpe")).append("\n");
-            sb.append("Retorno         : ").append(simMap.get("retorno_pct")).append("%\n");
-            sb.append("Capital inicial : ").append(simMap.get("capital_inicial")).append("\n");
-            sb.append("Capital final   : ").append(simMap.get("capital_final")).append("\n");
+                        sb.append("Retorno acum.   : ").append(simMap.get("retorno_acumulado")).append("%\n");
+                        sb.append("Retorno total   : ").append(simMap.get("retorno_total")).append("\n");
+                        sb.append("Max drawdown    : ").append(simMap.get("max_drawdown")).append("\n");
         }
 
         Object modelSaved = r.get("model_saved_at");
@@ -320,11 +186,6 @@ public class AIOptimizationService {
         if (csvPath != null) {
             sb.append("CSV trials      : ").append(csvPath).append("\n");
         }
-        Object tradesCsvPath = r.get("trades_csv_path");
-        if (tradesCsvPath != null && !String.valueOf(tradesCsvPath).isBlank()) {
-            sb.append("CSV trades      : ").append(tradesCsvPath).append("\n");
-        }
-
         Object dataInfo = r.get("data_info");
         if (dataInfo instanceof Map<?, ?> di) {
             sb.append("\n--- INFORMACION DEL DATASET ---\n");
@@ -367,3 +228,4 @@ public class AIOptimizationService {
         };
     }
 }
+

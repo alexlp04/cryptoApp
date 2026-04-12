@@ -1,14 +1,17 @@
 package com.bottrading.strategy.application;
 
-import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
-import com.bottrading.shared.utils.PathConfig;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.bottrading.shared.utils.PathConfig;
+import com.bottrading.strategy.application.port.in.StrategyCatalogUseCase;
+import com.bottrading.strategy.application.port.out.InstanciaEstrategiaRepositoryPort;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio de catálogo de estrategias.
@@ -18,17 +21,18 @@ import java.util.List;
  */
 @Slf4j
 @Service
-public class StrategyCatalogService {
+public class StrategyCatalogService implements StrategyCatalogUseCase {
 
-    private final InstanciaEstrategiaRepository instanciaRepo;
+    private final InstanciaEstrategiaRepositoryPort instanciaRepo;
 
-    public StrategyCatalogService(InstanciaEstrategiaRepository instanciaRepo) {
+    public StrategyCatalogService(InstanciaEstrategiaRepositoryPort instanciaRepo) {
         this.instanciaRepo = instanciaRepo;
     }
 
     /**
      * Lista los ficheros .py de estrategias disponibles en disco.
      */
+    @Override
     public List<String> listarFicherosDeEstrategias() {
         File folder = new File(PathConfig.STRATEGIES_DIR);
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".py"));
@@ -46,6 +50,7 @@ public class StrategyCatalogService {
     /**
      * Obtiene el capital total comprometido (en reserva) en una billetera.
      */
+    @Override
     public BigDecimal getCapitalComprometido(Long walletAsociada) {
         BigDecimal sum = instanciaRepo.sumCapitalActivoByWallet(walletAsociada);
         return sum != null ? sum : BigDecimal.ZERO;
@@ -55,6 +60,7 @@ public class StrategyCatalogService {
      * Obtiene el capital disponible en una billetera.
      * (Se calcula restando capital comprometido del saldo total)
      */
+    @Override
     public BigDecimal getCapitalDisponible(Long walletAsociada, BigDecimal saldoTotal) {
         BigDecimal comprometido = getCapitalComprometido(walletAsociada);
         return saldoTotal.subtract(comprometido);
@@ -63,6 +69,7 @@ public class StrategyCatalogService {
     /**
      * Verifica si una estrategia .py existe en disco.
      */
+    @Override
     public boolean existeEstrategia(String nombreArchivo) {
         String nombreConExtension = nombreArchivo.endsWith(".py") ? nombreArchivo : nombreArchivo + ".py";
         File archivo = new File(PathConfig.STRATEGIES_DIR, nombreConExtension);
@@ -72,6 +79,7 @@ public class StrategyCatalogService {
     /**
      * Obtiene la ruta validada de una estrategia.
      */
+    @Override
     public String getValidStrategyPath(String nombreEstra) throws IllegalArgumentException {
         if (!existeEstrategia(nombreEstra)) {
             throw new IllegalArgumentException("Estrategia no encontrada: " + nombreEstra);

@@ -7,8 +7,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 import org.springframework.stereotype.Service;
 
-import com.bottrading.trading.application.PaperTradingService;
-import com.bottrading.trading.infrastructure.bridge.SignalDTO;
+import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -66,7 +65,7 @@ public class SignalRetryQueueService {
      * Procesa toda la cola de señales fallidas para una estrategia.
      * Intenta reintentar cada señal una sola vez en el ciclo actual.
      */
-    public void procesarSignalesPendientes(Long instanciaId, PaperTradingService paperTradingService) {
+    public void procesarSignalesPendientes(Long instanciaId, ProcessSignalUseCase paperTradingService) {
         Queue<SignalDTO> cola = failedSignalsQueue.get(instanciaId);
         if (cola == null || cola.isEmpty()) {
             return;

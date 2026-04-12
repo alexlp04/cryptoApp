@@ -11,15 +11,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.bottrading.trading.infrastructure.bridge.SignalDTO;
+import com.bottrading.shared.utils.SafeParser;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
+import com.bottrading.trading.application.port.in.AccountingUseCase;
+import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
+import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
+import com.bottrading.trading.application.port.out.TradeResultsPort;
 import com.bottrading.trading.domain.Posicion;
-import com.bottrading.trading.domain.PosicionRepository;
+import com.bottrading.trading.infrastructure.bridge.SignalDTO;
 import com.bottrading.trading.infrastructure.cache.StatsCache;
-import com.bottrading.backtesting.infrastructure.FileService;
-import com.bottrading.shared.utils.SafeParser;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -30,24 +32,24 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class PaperTradingService {
+public class PaperTradingService implements ProcessSignalUseCase {
 
-    private final AccountingService accountingService;
+    private final AccountingUseCase accountingService;
     private final InstanciaEstrategiaRepository instanciaRepo;
-    private final PosicionRepository posicionRepo;
-    private final FileService fileService;
+    private final PosicionRepositoryPort posicionRepo;
+    private final TradeResultsPort tradeResultsPort;
     private final StatsCache statsCache;
 
     @Autowired
-    public PaperTradingService(AccountingService accountingService,
+    public PaperTradingService(AccountingUseCase accountingService,
             InstanciaEstrategiaRepository instanciaRepo,
-            PosicionRepository posicionRepo,
-            FileService fileService,
+            PosicionRepositoryPort posicionRepo,
+            TradeResultsPort tradeResultsPort,
             StatsCache statsCache) {
         this.accountingService = accountingService;
         this.instanciaRepo = instanciaRepo;
         this.posicionRepo = posicionRepo;
-        this.fileService = fileService;
+        this.tradeResultsPort = tradeResultsPort;
         this.statsCache = statsCache;
     }
 
@@ -62,6 +64,7 @@ public class PaperTradingService {
      *                    etc.).
      */
     @Transactional
+    @Override
     public void onSignal(Long instanciaId, SignalDTO signal) {
         InstanciaEstrategia instancia = instanciaRepo.findByIdWithLock(instanciaId)
                 .orElseThrow(() -> new RuntimeException("Instancia no encontrada: " + instanciaId));
@@ -109,7 +112,7 @@ public class PaperTradingService {
         posicionRepo.save(pos);
 
         // Registro en archivo CSV
-        fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
+        tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
                 signal.getPrice(), signal.getTimestamp(), null);
     }
 
@@ -141,12 +144,12 @@ public class PaperTradingService {
         posicionRepo.save(pos);
 
         // Registro en archivo CSV
-        fileService.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
+        tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
                 signal.getPrice(), signal.getTimestamp(), pnlNeto);
 
         // Actualización de estadísticas agregadas
         Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
-        fileService.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
+        tradeResultsPort.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
     }
 
     /**

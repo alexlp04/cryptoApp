@@ -1,9 +1,10 @@
 package com.bottrading.interfaces.cli.commands;
 
+import java.math.BigDecimal;
+
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.shared.utils.CommandParser;
-import java.math.BigDecimal;
 
 /**
  * Handles backtest command.
@@ -45,7 +46,7 @@ public final class BacktestCommand implements CliCommand {
 
         context.println().accept("Iniciando Backtest...");
         try {
-            context.estrategiaService().ejecutarBacktest(
+                context.executeBacktestUseCase().ejecutarBacktest(
                     args.getEstrategia(),
                     args.getTimeframe(),
                     args.getCoins(),

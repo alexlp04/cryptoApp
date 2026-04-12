@@ -21,5 +21,12 @@ public interface CreateUsuarioUseCase {
      * @throws IllegalArgumentException si los parámetros son inválidos
      * @throws RuntimeException si el usuario ya existe
      */
-    Usuario create(String nombre, String passwordHash);
+    Usuario create(String nombre, String password);
+
+    /**
+     * Alias explicito para flujo CLI.
+     */
+    default Usuario registrar(String nombre, String password) {
+        return create(nombre, password);
+    }
 }

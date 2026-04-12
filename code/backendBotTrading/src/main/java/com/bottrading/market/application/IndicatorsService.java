@@ -14,16 +14,17 @@ import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import com.bottrading.market.application.port.in.CalculateIndicatorsUseCase;
 import com.bottrading.market.domain.IndicadorTecnicoDTO;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaDTO;
 import com.bottrading.shared.exceptions.PythonProcessException;
+import com.bottrading.shared.utils.PathConfig;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeExecutionException;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeFacade;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeRequest;
 import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec;
 import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessageType;
-import com.bottrading.shared.utils.PathConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
@@ -39,7 +40,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class IndicatorsService {
+public class IndicatorsService implements CalculateIndicatorsUseCase {
 
     private static final Type INDICADOR_DTO_LIST_TYPE = new TypeToken<List<IndicadorTecnicoDTO>>() {}.getType();
 
@@ -61,6 +62,7 @@ public class IndicatorsService {
     /**
      * Calcula indicadores técnicos básicos procesando las velas por lotes.
      */
+    @Override
     public void calculateBasicIndicators(String symbol, List<Vela> todasLasVelas, boolean guardarPrimeras50) {
         if (todasLasVelas == null || todasLasVelas.isEmpty()) {
             log.warn("La lista de velas está vacía. Abortando cálculo para {}", symbol);

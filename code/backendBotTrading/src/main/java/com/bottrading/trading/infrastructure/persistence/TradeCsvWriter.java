@@ -11,7 +11,6 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 
-import com.bottrading.backtesting.infrastructure.CsvUtilities;
 import com.bottrading.shared.exceptions.FileOperationException;
 import com.bottrading.shared.utils.AppConstants;
 
@@ -27,9 +26,9 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class TradeCsvWriter {
 
-    private final CsvUtilities csvUtils;
+    private final TradingCsvUtilities csvUtils;
 
-    public TradeCsvWriter(CsvUtilities csvUtils) {
+    public TradeCsvWriter(TradingCsvUtilities csvUtils) {
         this.csvUtils = csvUtils;
     }
 

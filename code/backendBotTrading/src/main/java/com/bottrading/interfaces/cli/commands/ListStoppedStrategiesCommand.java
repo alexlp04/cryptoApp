@@ -20,6 +20,6 @@ public final class ListStoppedStrategiesCommand implements CliCommand {
         }
 
         context.println().accept("--- Historial Detenidas ---");
-        context.estrategiaService().listarEstrategiasDetenidas().forEach(context.println());
+        context.queryStrategiesUseCase().listarEstrategiasDetenidas().forEach(context.println());
     }
 }

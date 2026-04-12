@@ -24,7 +24,7 @@ public final class StopCommand implements CliCommand {
         }
 
         if (parts[1].equalsIgnoreCase("-all")) {
-            context.estrategiaService().detenerTodas();
+            context.strategyLifecycleUseCase().detenerTodas();
             context.println().accept("Todas las estrategias activas han sido pausadas.");
             return;
         }
@@ -34,7 +34,7 @@ public final class StopCommand implements CliCommand {
             return;
         }
 
-        context.estrategiaService().detenerEstrategia(id);
+        context.strategyLifecycleUseCase().detenerEstrategia(id);
         context.println().accept("Estrategia " + id + " detenida.");
     }
 }

@@ -3,27 +3,39 @@ package com.bottrading.interfaces.cli;
 import java.util.Scanner;
 import java.util.function.Consumer;
 
-import com.bottrading.market.application.MarketDataService;
-import com.bottrading.strategy.application.EstrategiaService;
-import com.bottrading.training.application.AIOptimizationService;
-import com.bottrading.training.application.AITrainingService;
-import com.bottrading.user.infrastructure.SessionManager;
-import com.bottrading.user.infrastructure.UsuarioService;
-import com.bottrading.wallet.infrastructure.WalletService;
+import com.bottrading.backtesting.application.port.in.ExecuteBacktestUseCase;
 import com.bottrading.interfaces.cli.commands.FetchGapDetector;
+import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.application.port.in.MarketDataUseCase;
+import com.bottrading.strategy.application.port.in.QueryStrategiesUseCase;
+import com.bottrading.strategy.application.port.in.StrategyCatalogUseCase;
+import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
+import com.bottrading.training.application.port.in.OptimizeModelUseCase;
+import com.bottrading.training.application.port.in.TrainModelUseCase;
+import com.bottrading.user.application.port.in.AuthenticateUseCase;
+import com.bottrading.user.application.port.in.CreateUsuarioUseCase;
+import com.bottrading.user.application.port.in.GetUsuarioUseCase;
+import com.bottrading.user.infrastructure.SessionManager;
+import com.bottrading.wallet.application.port.in.WalletManagementUseCase;
 
 /**
  * Shared context for CLI commands.
  */
 public record CliCommandContext(
         Scanner scanner,
-        UsuarioService usuarioService,
+        CreateUsuarioUseCase createUsuarioUseCase,
+        GetUsuarioUseCase getUsuarioUseCase,
+        AuthenticateUseCase authenticateUseCase,
         SessionManager sessionManager,
-        EstrategiaService estrategiaService,
-        WalletService walletService,
-        AITrainingService aiTrainingService,
-        AIOptimizationService aiOptimizationService,
-        MarketDataService marketDataService,
+        StrategyLifecycleUseCase strategyLifecycleUseCase,
+        QueryStrategiesUseCase queryStrategiesUseCase,
+        StrategyCatalogUseCase strategyCatalogUseCase,
+        ExecuteBacktestUseCase executeBacktestUseCase,
+        WalletManagementUseCase walletManagementUseCase,
+        TrainModelUseCase aiTrainingService,
+        OptimizeModelUseCase aiOptimizationService,
+        MarketDataUseCase marketDataService,
+        FetchMarketDataUseCase fetchMarketDataService,
         FetchGapDetector fetchGapDetector,
         Consumer<String> print,
         Consumer<String> println) {

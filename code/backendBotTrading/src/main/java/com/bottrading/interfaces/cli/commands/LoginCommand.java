@@ -1,8 +1,8 @@
 package com.bottrading.interfaces.cli.commands;
 
-import com.bottrading.user.domain.Usuario;
-import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.interfaces.cli.CliCommandContext;
+import com.bottrading.interfaces.cli.CliInputValidator;
+import com.bottrading.user.domain.Usuario;
 
 /**
  * Handles user login from CLI.
@@ -25,8 +25,8 @@ public final class LoginCommand implements CliCommand {
         context.print().accept("Password: ");
         String pass = context.scanner().nextLine().trim();
 
-        if (context.usuarioService().validarCredenciales(nombre, pass)) {
-            Usuario usuario = context.usuarioService().obtenerPorNombre(nombre);
+        if (context.authenticateUseCase().validarCredenciales(nombre, pass)) {
+            Usuario usuario = context.getUsuarioUseCase().obtenerPorNombre(nombre);
             context.sessionManager().login(usuario);
             context.println().accept("Sesion iniciada como " + usuario.getNombre());
             return;

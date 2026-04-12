@@ -1,8 +1,9 @@
 package com.bottrading.interfaces.cli.commands;
 
+import java.math.BigDecimal;
+
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
-import java.math.BigDecimal;
 
 /**
  * Handles mkpwallet command.
@@ -24,7 +25,7 @@ public final class CreatePaperWalletCommand implements CliCommand {
             return;
         }
 
-        context.walletService().crearWallet(parts[1], new BigDecimal("10000.00"), false);
+        context.walletManagementUseCase().crearWallet(parts[1], new BigDecimal("10000.00"), false);
         context.println().accept("Wallet de papel '" + parts[1] + "' creada con 10,000 USD.");
     }
 }

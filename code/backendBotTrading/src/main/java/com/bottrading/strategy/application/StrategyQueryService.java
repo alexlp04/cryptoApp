@@ -4,9 +4,10 @@ import java.util.List;
 
 import org.springframework.stereotype.Service;
 
+import com.bottrading.strategy.application.port.in.QueryStrategiesUseCase;
+import com.bottrading.strategy.application.port.out.InstanciaEstrategiaRepositoryPort;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
-import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -18,17 +19,18 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class StrategyQueryService {
+public class StrategyQueryService implements QueryStrategiesUseCase {
 
-    private final InstanciaEstrategiaRepository instanciaRepo;
+    private final InstanciaEstrategiaRepositoryPort instanciaRepo;
 
-    public StrategyQueryService(InstanciaEstrategiaRepository instanciaRepo) {
+    public StrategyQueryService(InstanciaEstrategiaRepositoryPort instanciaRepo) {
         this.instanciaRepo = instanciaRepo;
     }
 
     /**
      * Lista todas las estrategias.
      */
+    @Override
     public List<String> listarEstrategias() {
         return instanciaRepo.findAll()
                 .stream()
@@ -39,6 +41,7 @@ public class StrategyQueryService {
     /**
      * Lista estrategias activas.
      */
+    @Override
     public List<String> listarEstrategiasActivas() {
         return listarPorEstado(EstadoEstrategia.ACTIVA, "No hay estrategias activas.");
     }
@@ -46,6 +49,7 @@ public class StrategyQueryService {
     /**
      * Lista estrategias en pausa.
      */
+    @Override
     public List<String> listarEstrategiasDetenidas() {
         return listarPorEstado(EstadoEstrategia.DETENIDA, "No hay estrategias en pausa.");
     }
@@ -53,6 +57,7 @@ public class StrategyQueryService {
     /**
      * Lista estrategias terminadas.
      */
+    @Override
     public List<String> listarEstrategiasTerminadas() {
         return listarPorEstado(EstadoEstrategia.TERMINADA, "No hay estrategias terminadas.");
     }
