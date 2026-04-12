@@ -259,7 +259,7 @@ def _build_and_eval_neural_network(
     output_activation = "softmax" if is_multiclass else "sigmoid"
     loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
 
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
     cv_scores: list[float] = []
 
     for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
@@ -347,7 +347,7 @@ def _make_objective(
     """
     suggest_fn = _SUGGEST_FN.get(model_type, _suggest_random_forest)
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
