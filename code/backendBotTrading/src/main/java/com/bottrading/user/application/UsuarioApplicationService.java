@@ -1,15 +1,20 @@
 package com.bottrading.user.application;
 
+import java.util.Optional;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.bottrading.shared.exceptions.ValidationException;
+import com.bottrading.shared.utils.HashUtils;
+import com.bottrading.user.application.port.in.AuthenticateUseCase;
 import com.bottrading.user.application.port.in.CreateUsuarioUseCase;
 import com.bottrading.user.application.port.in.GetUsuarioUseCase;
 import com.bottrading.user.application.port.out.UsuarioRepositoryPort;
 import com.bottrading.user.domain.Usuario;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.Optional;
 
 /**
  * APPLICATION SERVICE - Casos de uso para Usuario.
@@ -38,23 +43,23 @@ import java.util.Optional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuarioUseCase {
+public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuarioUseCase, AuthenticateUseCase {
 
     private final UsuarioRepositoryPort usuarioRepositoryPort;
 
     @Override
     @Transactional
-    public Usuario create(String nombre, String passwordHash) {
+    public Usuario create(String nombre, String password) {
         log.info("Creando usuario con nombre: {}", nombre);
 
         // Validar que el usuario no exista
-        Optional<Usuario> existing = usuarioRepositoryPort.findByNombre(nombre);
+        Optional<Usuario> existing = usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre);
         if (existing.isPresent()) {
-            throw new RuntimeException("Usuario ya existe: " + nombre);
+            throw new ValidationException("El nombre de usuario ya esta en uso");
         }
 
-        // Crear la entidad de dominio (con validaciones internas)
-        Usuario usuario = new Usuario(nombre, passwordHash);
+        // Hashing de password en capa de aplicacion para no exponerlo en CLI.
+        Usuario usuario = new Usuario(nombre, HashUtils.hashPassword(password));
 
         // Persistir y retornar
         return usuarioRepositoryPort.save(usuario);
@@ -63,12 +68,20 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
     @Override
     @Transactional(readOnly = true)
     public Optional<Usuario> getByNombre(String nombre) {
-        return usuarioRepositoryPort.findByNombre(nombre);
+        return usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Optional<Usuario> getById(Long id) {
-        return usuarioRepositoryPort.findById(id);
+        return usuarioRepositoryPort.findByIdAndEliminadoFalse(id);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean validarCredenciales(String nombre, String password) {
+        return usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre)
+                .map(usuario -> HashUtils.verificarPassword(password, usuario.getPasswordHash()))
+                .orElse(false);
     }
 }

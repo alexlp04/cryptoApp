@@ -8,15 +8,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.bottrading.shared.exceptions.ValidationException;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
+import com.bottrading.trading.application.port.in.AccountingUseCase;
+import com.bottrading.trading.application.port.out.LedgerRepositoryPort;
 import com.bottrading.trading.domain.LedgerEntry;
-import com.bottrading.trading.domain.LedgerRepository;
 import com.bottrading.trading.domain.LedgerType;
+import com.bottrading.wallet.application.port.out.WalletRepositoryPort;
 import com.bottrading.wallet.domain.Wallet;
-import com.bottrading.wallet.domain.WalletRepository;
-import com.bottrading.shared.exceptions.ValidationException;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -27,17 +28,17 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Slf4j
 @Transactional
-public class AccountingService {
+public class AccountingService implements AccountingUseCase {
 
-    private final WalletRepository walletRepo;
+    private final WalletRepositoryPort walletRepo;
 
     private final InstanciaEstrategiaRepository estrategiaRepo;
 
-    private final LedgerRepository ledgerRepo;
+    private final LedgerRepositoryPort ledgerRepo;
 
     @Autowired
-    public AccountingService(WalletRepository walletRepo, InstanciaEstrategiaRepository estrategiaRepo,
-            LedgerRepository ledgerRepo) {
+    public AccountingService(WalletRepositoryPort walletRepo, InstanciaEstrategiaRepository estrategiaRepo,
+            LedgerRepositoryPort ledgerRepo) {
         this.walletRepo = walletRepo;
         this.estrategiaRepo = estrategiaRepo;
         this.ledgerRepo = ledgerRepo;
@@ -52,6 +53,7 @@ public class AccountingService {
      * @param capital Cantidad a reservar.
      * @return La instancia de la estrategia actualizada con estado ACTIVA.
      */
+    @Override
     public InstanciaEstrategia activateStrategy(long walletId, long estrategiaId, BigDecimal capital) {
         try {
             // Bloqueo pesimista en ambas entidades para evitar condiciones de carrera
@@ -88,6 +90,7 @@ public class AccountingService {
      * @param walletId ID de la wallet asociada.
      * @param estrategiaId ID de la estrategia.
      */
+    @Override
     public void pauseStrategyTemporarily(Long walletId, Long estrategiaId) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                 .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
@@ -114,6 +117,7 @@ public class AccountingService {
      * @param walletId ID de la wallet destino.
      * @param estrategiaId ID de la estrategia a liquidar.
      */
+    @Override
     public void closeStrategy(Long walletId, Long estrategiaId) {
         Wallet w = walletRepo.findByIdWithLock(walletId)
                 .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
@@ -148,6 +152,7 @@ public class AccountingService {
      * @param margin Cantidad a invertir en la operación.
      * @param risk Riesgo calculado para esta operación.
      */
+    @Override
     public void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                 .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
@@ -183,6 +188,7 @@ public class AccountingService {
      * @param pnl Beneficio o pérdida neta.
      * @param risk Riesgo a reducir.
      */
+    @Override
     public void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk) {
         Wallet w = walletRepo.findByIdWithLock(walletId)
                 .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));

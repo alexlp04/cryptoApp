@@ -24,7 +24,7 @@ public final class StartCommand implements CliCommand {
         }
 
         if (parts[1].equalsIgnoreCase("-all")) {
-            context.estrategiaService().iniciarTodasDetenidas();
+            context.strategyLifecycleUseCase().iniciarTodasDetenidas();
             context.println().accept("Solicitud de inicio masivo enviada.");
             return;
         }
@@ -35,7 +35,7 @@ public final class StartCommand implements CliCommand {
         }
 
         try {
-            context.estrategiaService().iniciarEstrategiaDetenida(id);
+            context.strategyLifecycleUseCase().iniciarEstrategiaDetenida(id);
             context.println().accept("Estrategia " + id + " iniciada.");
         } catch (Exception e) {
             context.println().accept("Error: " + e.getMessage());

@@ -1,8 +1,9 @@
 package com.bottrading.user.application.port.out;
 
-import com.bottrading.user.domain.Usuario;
-import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
+
+import com.bottrading.user.domain.Usuario;
 
 /**
  * PUERTO DE SALIDA — Abstración de persistencia para Usuario.
@@ -23,9 +24,19 @@ public interface UsuarioRepositoryPort {
     Optional<Usuario> findById(Long id);
 
     /**
+     * Busca un usuario activo por ID.
+     */
+    Optional<Usuario> findByIdAndEliminadoFalse(Long id);
+
+    /**
      * Busca un usuario por nombre.
      */
     Optional<Usuario> findByNombre(String nombre);
+
+    /**
+     * Busca un usuario activo por nombre.
+     */
+    Optional<Usuario> findByNombreAndEliminadoFalse(String nombre);
 
     /**
      * Persiste un usuario.

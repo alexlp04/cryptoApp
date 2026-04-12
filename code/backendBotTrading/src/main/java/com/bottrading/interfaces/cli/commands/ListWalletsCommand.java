@@ -20,6 +20,6 @@ public final class ListWalletsCommand implements CliCommand {
         }
 
         context.println().accept("--- Tus Billeteras ---");
-        context.walletService().listarWallets().forEach(context.println());
+        context.walletManagementUseCase().listarWallets().forEach(context.println());
     }
 }

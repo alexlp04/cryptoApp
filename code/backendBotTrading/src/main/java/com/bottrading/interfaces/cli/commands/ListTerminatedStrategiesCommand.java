@@ -20,6 +20,6 @@ public final class ListTerminatedStrategiesCommand implements CliCommand {
         }
 
         context.println().accept("--- Historial Terminadas ---");
-        context.estrategiaService().listarEstrategiasTerminadas().forEach(context.println());
+        context.queryStrategiesUseCase().listarEstrategiasTerminadas().forEach(context.println());
     }
 }

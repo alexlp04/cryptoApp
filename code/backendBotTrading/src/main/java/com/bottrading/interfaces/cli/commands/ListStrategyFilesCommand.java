@@ -15,6 +15,6 @@ public final class ListStrategyFilesCommand implements CliCommand {
     @Override
     public void execute(String[] parts, CliCommandContext context) {
         context.println().accept("--- Ficheros de Estrategias (.py) ---");
-        context.estrategiaService().listarFicherosDeEstrategias().forEach(context.println());
+        context.strategyCatalogUseCase().listarFicherosDeEstrategias().forEach(context.println());
     }
 }

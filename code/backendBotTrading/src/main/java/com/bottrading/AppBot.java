@@ -10,13 +10,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.stereotype.Component;
 
-import com.bottrading.market.application.MarketDataService;
-import com.bottrading.strategy.application.EstrategiaService;
-import com.bottrading.training.application.AIOptimizationService;
-import com.bottrading.training.application.AITrainingService;
-import com.bottrading.user.infrastructure.SessionManager;
-import com.bottrading.user.infrastructure.UsuarioService;
-import com.bottrading.wallet.infrastructure.WalletService;
+import com.bottrading.backtesting.application.port.in.ExecuteBacktestUseCase;
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.commands.BacktestCommand;
 import com.bottrading.interfaces.cli.commands.CbiCommand;
@@ -41,7 +35,19 @@ import com.bottrading.interfaces.cli.commands.StopCommand;
 import com.bottrading.interfaces.cli.commands.TermCommand;
 import com.bottrading.interfaces.cli.commands.TradeCommand;
 import com.bottrading.interfaces.cli.commands.TrainCommand;
+import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.application.port.in.MarketDataUseCase;
 import com.bottrading.shared.utils.ConsoleLoader;
+import com.bottrading.strategy.application.port.in.QueryStrategiesUseCase;
+import com.bottrading.strategy.application.port.in.StrategyCatalogUseCase;
+import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
+import com.bottrading.training.application.port.in.OptimizeModelUseCase;
+import com.bottrading.training.application.port.in.TrainModelUseCase;
+import com.bottrading.user.application.port.in.AuthenticateUseCase;
+import com.bottrading.user.application.port.in.CreateUsuarioUseCase;
+import com.bottrading.user.application.port.in.GetUsuarioUseCase;
+import com.bottrading.user.infrastructure.SessionManager;
+import com.bottrading.wallet.application.port.in.WalletManagementUseCase;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -55,13 +61,19 @@ import lombok.extern.slf4j.Slf4j;
  */
 public class AppBot implements CommandLineRunner {
 
-    private final EstrategiaService estrategiaService;
-    private final MarketDataService marketDataService;
-    private final UsuarioService usuarioService;
-    private final WalletService walletService;
+    private final StrategyLifecycleUseCase strategyLifecycleUseCase;
+    private final QueryStrategiesUseCase queryStrategiesUseCase;
+    private final StrategyCatalogUseCase strategyCatalogUseCase;
+    private final ExecuteBacktestUseCase executeBacktestUseCase;
+    private final MarketDataUseCase marketDataService;
+    private final FetchMarketDataUseCase fetchMarketDataService;
+    private final CreateUsuarioUseCase createUsuarioUseCase;
+    private final GetUsuarioUseCase getUsuarioUseCase;
+    private final AuthenticateUseCase authenticateUseCase;
+    private final WalletManagementUseCase walletManagementUseCase;
     private final SessionManager sessionManager;
-    private final AITrainingService aiTrainingService;
-    private final AIOptimizationService aiOptimizationService;
+    private final TrainModelUseCase aiTrainingService;
+    private final OptimizeModelUseCase aiOptimizationService;
     private final FetchGapDetector fetchGapDetector;
     private final ConfigurableApplicationContext applicationContext;
 
@@ -76,13 +88,19 @@ public class AppBot implements CommandLineRunner {
     void initializeCommandRegistry() {
         this.commandContext = new CliCommandContext(
                 scanner,
-                usuarioService,
+                createUsuarioUseCase,
+                getUsuarioUseCase,
+                authenticateUseCase,
                 sessionManager,
-                estrategiaService,
-                walletService,
+                strategyLifecycleUseCase,
+                queryStrategiesUseCase,
+                strategyCatalogUseCase,
+                executeBacktestUseCase,
+                walletManagementUseCase,
                 aiTrainingService,
                 aiOptimizationService,
                 marketDataService,
+                fetchMarketDataService,
                 fetchGapDetector,
                 this::uiPrint,
                 this::uiPrintln);

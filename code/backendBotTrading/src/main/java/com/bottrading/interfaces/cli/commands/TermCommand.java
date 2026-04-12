@@ -26,7 +26,7 @@ public final class TermCommand implements CliCommand {
 
         if (parts[1].equalsIgnoreCase("-all")) {
             if (CliInputValidator.readYesNo(context, "Seguro que quieres LIQUIDAR TODAS las estrategias? (s/n): ")) {
-                context.estrategiaService().terminarTodas();
+                context.strategyLifecycleUseCase().terminarTodas();
                 context.println().accept("Todas las estrategias han sido liquidadas.");
             } else {
                 context.println().accept("Operacion cancelada.");
@@ -40,7 +40,7 @@ public final class TermCommand implements CliCommand {
         }
 
         try {
-            context.estrategiaService().terminarEstrategia(id);
+            context.strategyLifecycleUseCase().terminarEstrategia(id);
             context.println().accept("Estrategia " + id + " liquidada.");
         } catch (Exception e) {
             context.println().accept("Error critico: " + e.getMessage());

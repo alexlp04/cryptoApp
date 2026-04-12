@@ -8,7 +8,11 @@ import java.util.List;
  */
 public interface WalletManagementUseCase {
 
-    void crearWallet(String nombre, BigDecimal saldoInicial);
+    void crearWallet(String nombre, BigDecimal saldoInicial, boolean isReal);
 
     List<String> listarWallets();
+
+    BigDecimal getBalance(String nombre);
+
+    Long obtenerIdPorNombre(String nombreWallet);
 }

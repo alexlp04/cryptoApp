@@ -16,12 +16,11 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.stereotype.Service;
 
-import com.bottrading.trading.application.AccountingService;
-import com.bottrading.trading.application.PaperTradingService;
-import com.bottrading.trading.infrastructure.bridge.SignalDTO;
-import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.shared.exceptions.PythonProcessException;
 import com.bottrading.shared.exceptions.SignalProcessingException;
+import com.bottrading.strategy.domain.InstanciaEstrategia;
+import com.bottrading.trading.application.port.in.AccountingUseCase;
+import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
 
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -39,8 +38,8 @@ public class StrategyRuntimeCoordinator {
     private final RealtimeProcessSupervisor processSupervisor;
     private final SignalProtocolParser signalParser;
     private final SignalRetryQueueService retryQueueService;
-    private final PaperTradingService paperTradingService;
-    private final AccountingService accountingService;
+    private final ProcessSignalUseCase paperTradingService;
+    private final AccountingUseCase accountingService;
     private final PythonBridgeFacade pythonBridgeFacade;
 
     private final Map<Long, Future<?>> runtimeThreads = new ConcurrentHashMap<>();
@@ -51,8 +50,8 @@ public class StrategyRuntimeCoordinator {
             RealtimeProcessSupervisor processSupervisor,
             SignalProtocolParser signalParser,
             SignalRetryQueueService retryQueueService,
-            PaperTradingService paperTradingService,
-            AccountingService accountingService,
+            ProcessSignalUseCase paperTradingService,
+            AccountingUseCase accountingService,
             PythonBridgeFacade pythonBridgeFacade) {
         this.processSupervisor = processSupervisor;
         this.signalParser = signalParser;

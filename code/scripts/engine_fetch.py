@@ -34,6 +34,7 @@ stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
 
 logging.basicConfig(level=logging.DEBUG,
                     handlers=[file_handler, stream_handler])
+logger = logging.getLogger(__name__)
 
 URL_FETCH = "https://api.binance.com/api/v3/klines"
 REQUEST_TIMEOUT_SECONDS = 20
@@ -101,18 +102,18 @@ def _handle_response_status(response: requests.Response, attempt: int, max_retri
                             backoff: float) -> tuple[str, float]:
     if response.status_code == 429:
         wait = int(response.headers.get("Retry-After", DEFAULT_RATE_LIMIT_WAIT))
-        logging.warning("Rate limit (429). Esperando %ss...", wait)
+        logger.warning("Rate limit (429). Esperando %ss...", wait)
         time.sleep(wait)
         return "retry", backoff
 
     if response.status_code == 418:
         wait = int(response.headers.get("Retry-After", MAX_BACKOFF_SEC))
-        logging.error("IP baneada temporalmente (418). Esperando %ss...", wait)
+        logger.error("IP baneada temporalmente (418). Esperando %ss...", wait)
         time.sleep(wait)
         return "retry", backoff
 
     if response.status_code >= 500:
-        logging.warning(
+        logger.warning(
             "Error servidor Binance (%s). Intento %s/%s. Backoff %.1fs...",
             response.status_code, attempt, max_retries, backoff)
         return "retry", _apply_backoff(backoff)
@@ -138,7 +139,7 @@ def _request_with_backoff(
 
             if response.status_code >= 400:
                 data = response.json()
-                logging.error(
+                logger.error(
                     "Error Binance HTTP %s: code=%s msg=%s",
                     response.status_code,
                     data.get("code"), data.get("msg"))
@@ -147,7 +148,7 @@ def _request_with_backoff(
             data = response.json()
 
             if isinstance(data, dict) and "code" in data:
-                logging.error(
+                logger.error(
                     "Error en body con HTTP 200: code=%s msg=%s",
                     data.get("code"), data.get("msg"))
                 return None
@@ -155,18 +156,18 @@ def _request_with_backoff(
             return data
 
         except requests.exceptions.Timeout:
-            logging.warning(
+            logger.warning(
                 "Timeout intento %s/%s. Backoff %.1fs...",
                 attempt, max_retries, backoff)
             backoff = _apply_backoff(backoff)
 
         except requests.exceptions.ConnectionError as exc:
-            logging.warning(
+            logger.warning(
                 "Error conexión intento %s/%s: %s. Backoff %.1fs...",
                 attempt, max_retries, str(exc), backoff)
             backoff = _apply_backoff(backoff)
 
-    logging.error("Agotados %s intentos para params=%s", max_retries, params)
+    logger.error("Agotados %s intentos para params=%s", max_retries, params)
     return None
 
 
@@ -184,7 +185,7 @@ def _calcular_chunks(
         chunks.append((cursor, chunk_end))
         cursor = chunk_end + interval_ms
 
-    logging.info(
+    logger.info(
         "Pre-calculados %s chunks de hasta %s velas. "
         "Rango: %s -> %s",
         len(chunks), BINANCE_MAX_LIMIT,
@@ -211,7 +212,7 @@ def _fetch_chunk(
     data = _request_with_backoff(params)
 
     if data is None or not isinstance(data, list) or not data:
-        logging.warning(
+        logger.warning(
             "Chunk %s sin datos (%s -> %s).",
             chunk_index,
             pd.to_datetime(start_ms, unit='ms'),
@@ -219,7 +220,7 @@ def _fetch_chunk(
         return chunk_index, []
 
     velas = [_parse_candle(c, symbol, timeframe) for c in data]
-    logging.debug(
+    logger.debug(
         "Chunk %s OK: %s velas (%s -> %s)",
         chunk_index, len(velas),
         pd.to_datetime(start_ms, unit='ms'),
@@ -228,7 +229,7 @@ def _fetch_chunk(
 
 
 def obtener_fecha_listado(symbol: str, timeframe: str) -> Optional[int]:
-    logging.info("Buscando fecha de listado para %s...", symbol)
+    logger.info("Buscando fecha de listado para %s...", symbol)
     data = _request_with_backoff({
         "symbol": symbol,
         "interval": timeframe,
@@ -237,11 +238,11 @@ def obtener_fecha_listado(symbol: str, timeframe: str) -> Optional[int]:
     })
     if data and isinstance(data, list):
         fecha_ms = int(data[0][0])
-        logging.info("Fecha de listado: %s",
+        logger.info("Fecha de listado: %s",
                      pd.to_datetime(fecha_ms, unit='ms'))
         return fecha_ms
 
-    logging.warning(
+    logger.warning(
         "No se pudo obtener fecha de listado para %s. Usando default.", symbol)
     return None
 
@@ -256,15 +257,15 @@ def obtener_datos_binance(
     interval_ms = INTERVAL_MS.get(timeframe)
 
     if interval_ms is None:
-        logging.error("Timeframe desconocido: %s. No se puede calcular chunks.", timeframe)
+        logger.error("Timeframe desconocido: %s. No se puede calcular chunks.", timeframe)
         return 0
 
     chunks = _calcular_chunks(since_ms, until_ms, interval_ms)
     if not chunks:
-        logging.warning("Sin chunks que descargar.")
+        logger.warning("Sin chunks que descargar.")
         return 0
 
-    logging.info(
+    logger.info(
         "Iniciando descarga paralela: %s chunks x hasta %s velas, "
         "%s workers. Symbol=%s tf=%s",
         len(chunks), BINANCE_MAX_LIMIT, workers, symbol, timeframe)
@@ -286,7 +287,7 @@ def obtener_datos_binance(
             completados += 1
 
             if completados % 10 == 0 or completados == len(chunks):
-                logging.info(
+                logger.info(
                     "Descarga: %s/%s chunks completados (%s%%)",
                     completados, len(chunks),
                     round(completados / len(chunks) * 100))
@@ -304,7 +305,7 @@ def obtener_datos_binance(
 
     duplicados = len(todas_las_velas) - len(velas_unicas)
     if duplicados > 0:
-        logging.info("Eliminados %s duplicados en bordes de chunk.", duplicados)
+        logger.info("Eliminados %s duplicados en bordes de chunk.", duplicados)
 
     total_emitidas = 0
     for i in range(0, len(velas_unicas), EMIT_CHUNK_SIZE):
@@ -312,7 +313,7 @@ def obtener_datos_binance(
         try:
             write_response("FETCH_CHUNK", {"velas": chunk_ipc})
         except BrokenPipeError:
-            logging.error(
+            logger.error(
                 "Broken pipe emitiendo chunk IPC (offset=%s, size=%s, emitidas=%s/%s). "
                 "El consumidor Java cerró stdout antes de finalizar.",
                 i,
@@ -324,11 +325,11 @@ def obtener_datos_binance(
         total_emitidas += len(chunk_ipc)
 
         if total_emitidas % 50_000 == 0:
-            logging.info(
+            logger.info(
                 "Emitidas %s/%s velas a Java.",
                 total_emitidas, len(velas_unicas))
 
-    logging.info(
+    logger.info(
         "Descarga y emisión completadas: %s velas únicas.", total_emitidas)
     return total_emitidas
 
@@ -348,18 +349,18 @@ def fetch(
     total = obtener_datos_binance(symbol, timeframe, since_ms)
 
     if total <= 0:
-        logging.warning(
+        logger.warning(
             "No se obtuvieron datos para %s [%s].", symbol, timeframe)
 
-    logging.info("Fetch preparado: %s velas para %s [%s].",
+    logger.info("Fetch preparado: %s velas para %s [%s].",
                  total, symbol, timeframe)
     return total
 
 if __name__ == "__main__":
-    logging.info("=== Fetch Engine (Paralelo + endTime + IPC chunks) ===")
+    logger.info("=== Fetch Engine (Paralelo + endTime + IPC chunks) ===")
     try:
         if len(sys.argv) < 3:
-            logging.error(
+            logger.error(
                 "Uso: engine_fetch.py <symbol> <timeframe> [since_ms]")
             sys.exit(1)
 
@@ -367,16 +368,16 @@ if __name__ == "__main__":
         timeframe = sys.argv[2]
         since = sys.argv[3] if len(sys.argv) >= 4 else None
 
-        logging.info(
+        logger.info(
             "Parámetros: symbol=%s timeframe=%s since=%s",
             symbol, timeframe, since)
 
         total_velas = fetch(symbol, timeframe, since)
         write_response("FETCH_RESPONSE", {"total": total_velas})
 
-        logging.info(
+        logger.info(
             "=== Fetch completado. %s velas enviadas. ===", total_velas)
 
     except Exception as exc:
-        logging.error("Error crítico: %s", str(exc), exc_info=True)
+        logger.error("Error crítico: %s", str(exc), exc_info=True)
         sys.exit(1)

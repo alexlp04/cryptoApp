@@ -1,9 +1,9 @@
 package com.bottrading.user.infrastructure.persistence;
 
-import com.bottrading.user.infrastructure.persistence.UsuarioJpaEntity;
+import java.util.Optional;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import java.util.Optional;
 
 /**
  * SPRING DATA JPA REPOSITORY - Acceso a datos de Usuario.
@@ -17,6 +17,10 @@ import java.util.Optional;
 public interface UsuarioJpaRepository extends JpaRepository<UsuarioJpaEntity, Long> {
 
     Optional<UsuarioJpaEntity> findByNombre(String nombre);
+
+    Optional<UsuarioJpaEntity> findByNombreAndEliminadoFalse(String nombre);
+
+    Optional<UsuarioJpaEntity> findByIdAndEliminadoFalse(Long id);
 
     boolean existsByNombre(String nombre);
 }

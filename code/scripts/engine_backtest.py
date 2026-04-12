@@ -1,13 +1,10 @@
 import sys
-import json
-import importlib.util
 import pandas as pd
 import os
-import csv
-from datetime import datetime, timezone
 import traceback
 import logging
 from ipc_protocol import read_request_payload, write_response, write_error
+from shared_utils import load_strategy_by_path
 
 # --- CONFIGURACIÓN DE LOGS ---
 # current_dir  = .../code/scripts/
@@ -36,217 +33,21 @@ logging.basicConfig(
     handlers=[file_handler, stream_handler]
 )
 
-# --- CONFIGURACIÓN DE DIRECTORIO DE RESULTADOS ---
-results_root = os.path.join(project_root, "results")
-os.makedirs(results_root, exist_ok=True)
-
-# --- CONFIGURACIÓN DE RUTAS ---
+# --- IMPORTAR MOTOR COMPARTIDO ---
 if code_dir not in sys.path:
     sys.path.append(code_dir)
 
-from strategies.BaseStrategy import BaseStrategy
+from backtest_engine import (  # noqa: E402
+    crear_carpeta_estrategia,
+    guardar_trade_a_csv,
+    run_backtest,
+)
+logger = logging.getLogger(__name__)
 
-def crear_carpeta_estrategia(nombre_estrategia: str) -> str:
-    """
-    Crea la carpeta para resultados de la estrategia y devuelve la ruta.
-    """
-    estrategia_dir = os.path.join(results_root, nombre_estrategia)
-    os.makedirs(estrategia_dir, exist_ok=True)
-    return estrategia_dir
-
-def guardar_trade_a_csv(carpeta_estrategia: str, symbol: str, timeframe: str, trade: dict) -> None:
-     """
-     Escribe un trade individual a CSV en streaming (sin acumular en memoria).
-     """
-     archivo = os.path.join(carpeta_estrategia, f"{symbol}-{timeframe}-trades_backtest.csv")
-   
-     archivo_existe = os.path.exists(archivo)
-   
-     try:
-         with open(archivo, 'a', newline='', encoding='utf-8') as f:
-             writer = csv.writer(f)
-           
-             if not archivo_existe:
-                 writer.writerow(["symbol", "timeframe", "side", "price", "timestamp", "pnl", "capital"])
-           
-             writer.writerow([
-                 symbol,
-                 timeframe,
-                 trade.get("side", ""),
-                 trade.get("price", ""),
-                 trade.get("timestamp", ""),
-                 trade.get("pnl", ""),
-                 trade.get("capital", "")
-             ])
-     except IOError as e:
-         logging.error(f"Error escribiendo trade a CSV: {e}")
-         raise
-
-def load_strategy(path, capital=1000, risk_per_trade=0.02):
-    spec = importlib.util.spec_from_file_location("user_strategy", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    for obj in module.__dict__.values():
-        if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-            return obj(capital=capital, risk_per_trade=risk_per_trade)
-
-    raise Exception(f"Valid strategy not found at {path}")
-
-def run_backtest(strategy, df: pd.DataFrame, symbol: str, carpeta_estrategia: str = None, timeframe: str = None, escribir_trades: bool = False) -> tuple:
-    """
-    Ejecuta la simulación de trading sobre datos históricos.
-    Si escribir_trades=True, escribe trades a CSV en streaming (sin acumular en memoria).
-    Devuelve: (trade_count, stats_dict)
-    """
-    if df is None or df.empty:
-        return 0, _generate_empty_stats(symbol, strategy)
-
-    df = strategy.populate_indicators(df)
-
-    trade_count = 0
-    capital = float(strategy.capital)
-    risk_per_trade = float(strategy.risk_per_trade)
-    capital_history = [capital]
-    
-    in_position = False
-    entry_price = 0.0
-    current_position_size = 0.0
-    
-    peak_capital = capital
-    max_drawdown = 0.0
-
-    # ACUMULADORES ESTADÍSTICOS (Memoria O(1))
-    op_ganadas = 0
-    op_perdidas = 0
-    pos_pnl = 0.0
-    neg_pnl = 0.0
-
-    for row in df.itertuples(index=False):
-        # Strategies consumen acceso por clave (row["campo"]), no por atributo.
-        row_data = row._asdict()
-        price = float(row_data["close"])
-        timestamp = int(row_data["timestamp"])
-
-        if not in_position and strategy.should_buy(row_data):
-            in_position = True
-            entry_price = price
-            current_position_size = (capital * risk_per_trade) / price
-
-            trade = {
-                "symbol": symbol, "side": "BUY", "price": price, "timestamp": timestamp
-            }
-            
-            if escribir_trades and carpeta_estrategia and timeframe:
-                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe, trade)
-            
-            trade_count += 1
-
-        elif in_position and strategy.should_sell(row_data):
-            in_position = False
-            
-            pnl = current_position_size * (price - entry_price)
-            capital += pnl
-
-            # LÓGICA DE ACUMULACIÓN
-            if pnl > 0:
-                op_ganadas += 1
-                pos_pnl += pnl
-            elif pnl < 0:
-                op_perdidas += 1
-                neg_pnl += abs(pnl)
-
-            trade = {
-                "symbol": symbol, "side": "SELL", "price": price, 
-                "timestamp": timestamp, "pnl": pnl, "capital": capital
-            }
-            
-            if escribir_trades and carpeta_estrategia and timeframe:
-                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe, trade)
-            
-            trade_count += 1
-            
-            capital_history.append(capital)
-            peak_capital = max(peak_capital, capital)
-            max_drawdown = max(max_drawdown, peak_capital - capital)
-
-    stats = _calculate_backtest_stats(strategy, capital, capital_history, max_drawdown, df, symbol, trade_count, op_ganadas, op_perdidas, pos_pnl, neg_pnl)
-    return trade_count, stats
-
-
-def _calculate_backtest_stats(strategy, final_capital: float, capital_history: list, max_drawdown: float, df: pd.DataFrame, symbol: str, trade_count: int, op_ganadas: int, op_perdidas: int, pos_pnl: float, neg_pnl: float) -> dict:
-    """
-    Procesa las métricas de rendimiento utilizando los acumuladores calculados en caliente.
-    """
-    op_totales = max(trade_count // 2, 0)
-    initial_capital = float(strategy.capital)
-
-    retorno_total = final_capital - initial_capital
-    retorno_acumulado = (retorno_total / initial_capital * 100) if initial_capital > 0 else 0.0
-    
-    abs_drawdown = max(capital_history) - min(capital_history) if capital_history else 0.0
-
-    # CÁLCULO DE MÉTRICAS COMPLEJAS
-    win_rate = (op_ganadas / op_totales * 100) if op_totales > 0 else 0.0
-    
-    if op_totales == 0:
-        profit_factor = 0.0
-    elif neg_pnl == 0:
-        profit_factor = float(pos_pnl) # Previene división por cero
-    else:
-        profit_factor = pos_pnl / neg_pnl
-    
-    fecha_inicio = datetime.fromtimestamp(df["timestamp"].iloc[0] / 1000, timezone.utc).isoformat() if not df.empty else "N/A"
-    fecha_fin = datetime.fromtimestamp(df["timestamp"].iloc[-1] / 1000, timezone.utc).isoformat() if not df.empty else "N/A"
-
-    resultado = "NEUTRO"
-    if retorno_total > 0: resultado = "GANANCIA"
-    elif retorno_total < 0: resultado = "PERDIDA"
-
-    # CONTRATO DE DATOS RESTAURADO
-    return {
-        "symbol": symbol,
-        "timeframe": getattr(strategy, "timeframe", "N/A"),
-        "op_ganadas": int(op_ganadas),
-        "op_perdidas": int(op_perdidas),
-        "op_totales": int(op_totales),
-        "max_drawdown": float(max_drawdown),
-        "abs_drawdown": float(abs_drawdown),
-        "retorno_acumulado": float(retorno_acumulado),
-        "retorno_total": float(retorno_total),
-        "win_rate": float(win_rate),
-        "profit_factor": float(profit_factor),
-        "fecha_inicio": fecha_inicio,
-        "fecha_fin": fecha_fin,
-        "resultado": resultado
-    }
-
-
-def _generate_empty_stats(symbol: str, strategy) -> dict:
-    """
-    Devuelve un diccionario por defecto si no hay datos.
-    Garantiza la consistencia del contrato de datos de salida.
-    """
-    return {
-        "symbol": symbol,
-        "timeframe": getattr(strategy, "timeframe", "N/A"),
-        "op_ganadas": 0,
-        "op_perdidas": 0,
-        "op_totales": 0,
-        "max_drawdown": 0.0,
-        "abs_drawdown": 0.0,
-        "retorno_acumulado": 0.0,
-        "retorno_total": 0.0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "fecha_inicio": "N/A",
-        "fecha_fin": "N/A",
-        "resultado": "NEUTRO"
-    }
 
 def main():
     try:
-        logging.info("Backtest engine started")
+        logger.info("Backtest engine started")
         
         # 1. Read input
         payload = read_request_payload()
@@ -258,18 +59,18 @@ def main():
         risk_per_trade = payload.get("risk_per_trade", 0.02)
         escribir_trades = payload.get("escribir_trades", False)
 
-        logging.info(f"Loading strategy from: {strategy_path}")
-        strategy = load_strategy(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
+        logger.info("Loading strategy from: %s", strategy_path)
+        strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
         setattr(strategy, "timeframe", timeframe)
 
         # Create strategy results folder
         carpeta_estrategia = crear_carpeta_estrategia(strategy_name)
-        logging.info(f"Results folder: {carpeta_estrategia}")
+        logger.info("Results folder: %s", carpeta_estrategia)
 
         stats_list = []
         total_trades = 0
 
-        logging.info(f"Processing {len(velas)} symbols")
+        logger.info("Processing %d symbols", len(velas))
         for symbol, candles in velas.items():
             if not candles: continue
             df = pd.DataFrame(candles)
@@ -287,9 +88,9 @@ def main():
             
             total_trades += trade_count
             stats_list.append(stats)
-            logging.info(f"Backtest for {symbol}: {trade_count} trades, result: {stats.get('resultado')}")
+            logger.info("Backtest for %s: %d trades, result: %s", symbol, trade_count, stats.get("resultado"))
 
-        logging.info(f"Backtest completed successfully. Total trades saved: {total_trades}")
+        logger.info("Backtest completed successfully. Total trades saved: %d", total_trades)
         write_response("BACKTEST_RESPONSE", {
             "status": "success",
             "total_trades": total_trades,
@@ -297,8 +98,8 @@ def main():
         })
 
     except Exception as e:
-        error_msg = f"Backtest engine error: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        error_msg = "Backtest engine error: %s\n%s" % (str(e), traceback.format_exc())
+        logger.error(error_msg)
         write_error("ERROR", error_msg)
         sys.exit(1)
 

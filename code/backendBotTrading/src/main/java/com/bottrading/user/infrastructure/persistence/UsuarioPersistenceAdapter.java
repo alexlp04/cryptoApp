@@ -8,8 +8,6 @@ import org.springframework.stereotype.Component;
 
 import com.bottrading.user.application.port.out.UsuarioRepositoryPort;
 import com.bottrading.user.domain.Usuario;
-import com.bottrading.user.infrastructure.persistence.UsuarioJpaRepository;
-import com.bottrading.user.infrastructure.persistence.UsuarioMapper;
 
 import lombok.RequiredArgsConstructor;
 
@@ -49,6 +47,18 @@ public class UsuarioPersistenceAdapter implements UsuarioRepositoryPort {
     @Override
     public Optional<Usuario> findByNombre(String nombre) {
         return jpaRepository.findByNombre(nombre)
+            .map(mapper::toDomain);
+    }
+
+    @Override
+    public Optional<Usuario> findByIdAndEliminadoFalse(Long id) {
+        return jpaRepository.findByIdAndEliminadoFalse(Objects.requireNonNull(id, "id no puede ser null"))
+            .map(mapper::toDomain);
+    }
+
+    @Override
+    public Optional<Usuario> findByNombreAndEliminadoFalse(String nombre) {
+        return jpaRepository.findByNombreAndEliminadoFalse(nombre)
             .map(mapper::toDomain);
     }
 

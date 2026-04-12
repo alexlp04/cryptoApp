@@ -9,10 +9,11 @@ import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.bottrading.trading.application.AccountingService;
+import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
+import com.bottrading.strategy.application.port.out.InstanciaEstrategiaRepositoryPort;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
-import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
+import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.infrastructure.bridge.StrategyRuntimeCoordinator;
 
 import lombok.extern.slf4j.Slf4j;
@@ -25,17 +26,17 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class StrategyLifecycleApplicationService {
+public class StrategyLifecycleApplicationService implements StrategyLifecycleUseCase {
 
     private static final String INSTANCIA_ID_NULL_MSG = "instanciaId no puede ser null";
 
-    private final InstanciaEstrategiaRepository instanciaRepo;
-    private final AccountingService accountingService;
+        private final InstanciaEstrategiaRepositoryPort instanciaRepo;
+        private final AccountingUseCase accountingService;
     private final StrategyRuntimeCoordinator runtimeCoordinator;
 
     public StrategyLifecycleApplicationService(
-            InstanciaEstrategiaRepository instanciaRepo,
-            AccountingService accountingService,
+            InstanciaEstrategiaRepositoryPort instanciaRepo,
+            AccountingUseCase accountingService,
             StrategyRuntimeCoordinator runtimeCoordinator) {
         this.instanciaRepo = instanciaRepo;
         this.accountingService = accountingService;
@@ -69,6 +70,7 @@ public class StrategyLifecycleApplicationService {
      * 2. Lanza el proceso Python FUERA de la TX para evitar resource leaks.
      */
     @SuppressWarnings("java:S107")
+    @Override
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
 
@@ -81,6 +83,7 @@ public class StrategyLifecycleApplicationService {
     /**
      * Reanuda una estrategia detenida (PAUSA -> ACTIVA).
      */
+    @Override
     public void iniciarEstrategiaDetenida(Long instanciaId) {
         Optional<InstanciaEstrategia> opt = instanciaRepo.findById(Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG));
         if (opt.isEmpty()) {
@@ -104,6 +107,7 @@ public class StrategyLifecycleApplicationService {
     /**
      * Reanuda todas las estrategias detenidas.
      */
+    @Override
     public void iniciarTodasDetenidas() {
         List<InstanciaEstrategia> detenidas = instanciaRepo.findByEstado(EstadoEstrategia.DETENIDA);
         if (detenidas.isEmpty()) {
@@ -119,6 +123,7 @@ public class StrategyLifecycleApplicationService {
      * Los fondos se mantienen en reserva.
      */
     @Transactional
+    @Override
     public void detenerEstrategia(Long instanciaId) {
         // Detener el proceso Python
         runtimeCoordinator.detenerEstrategia(instanciaId);
@@ -136,6 +141,7 @@ public class StrategyLifecycleApplicationService {
     /**
      * Pausa todas las estrategias activas.
      */
+    @Override
     public void detenerTodas() {
         Set<Long> ids = runtimeCoordinator.getIdsEstrategiasActivas();
         if (ids.isEmpty()) {
@@ -151,6 +157,7 @@ public class StrategyLifecycleApplicationService {
      * Devuelve los fondos a la billetera.
      */
     @Transactional
+    @Override
     public void terminarEstrategia(Long instanciaId) {
         // Detener proceso
         runtimeCoordinator.detenerEstrategia(instanciaId);
@@ -167,6 +174,7 @@ public class StrategyLifecycleApplicationService {
     /**
      * Termina todas las estrategias activas.
      */
+    @Override
     public void terminarTodas() {
         Set<Long> ids = runtimeCoordinator.getIdsEstrategiasActivas();
         if (ids.isEmpty()) {

@@ -1,15 +1,16 @@
 package com.bottrading.trading.infrastructure.cache;
 
-import com.bottrading.backtesting.infrastructure.FileService;
-import com.bottrading.shared.utils.SafeParser;
-import lombok.extern.slf4j.Slf4j;
-
 import java.math.BigDecimal;
-import java.util.*;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+
+import com.bottrading.backtesting.infrastructure.StatsCsvRepository;
+import com.bottrading.shared.utils.SafeParser;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Cache en memoria para estadísticas de trades.
@@ -24,13 +25,13 @@ import java.util.concurrent.TimeUnit;
 public class StatsCache {
     
     private final Map<String, Map<String, Map<String, Object>>> cache = new ConcurrentHashMap<>();
-    private final FileService fileService;
+    private final StatsCsvRepository statsCsvRepository;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     
     private static final int FLUSH_INTERVAL_SECONDS = 30;
 
-    public StatsCache(FileService fileService) {
-        this.fileService = fileService;
+    public StatsCache(StatsCsvRepository statsCsvRepository) {
+        this.statsCsvRepository = statsCsvRepository;
         // Iniciar flush automático cada 30 segundos
         startAutoFlush();
     }
@@ -46,7 +47,7 @@ public class StatsCache {
             .computeIfAbsent(nombreEstrategia, k -> new ConcurrentHashMap<>())
             .computeIfAbsent(key, k -> {
                 // Intentar cargar del CSV
-                Map<String, Object> statsDelArchivo = fileService.leerStatsActuales(nombreEstrategia, timeframe, symbol);
+                Map<String, Object> statsDelArchivo = statsCsvRepository.leerStatsActuales(nombreEstrategia, timeframe, symbol);
                 return statsDelArchivo.isEmpty() ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(statsDelArchivo);
             });
     }
@@ -98,7 +99,7 @@ public class StatsCache {
      */
     public void flushStrategySymbolStats(String nombreEstrategia, String timeframe, String symbol, Map<String, Object> stats) {
         try {
-            fileService.guardarStats(nombreEstrategia, timeframe, stats, false);
+            statsCsvRepository.guardarStats(nombreEstrategia, timeframe, stats, false);
             log.debug("Stats guardadas en CSV: {} [{}] {}", nombreEstrategia, symbol, timeframe);
         } catch (Exception e) {
             log.error("Error guardando stats en CSV: {}", e.getMessage(), e);

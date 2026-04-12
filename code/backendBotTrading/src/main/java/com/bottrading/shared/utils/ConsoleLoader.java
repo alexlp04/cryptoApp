@@ -4,11 +4,15 @@ public class ConsoleLoader {
 
     private Thread loaderThread;
     private volatile boolean running;
+    private volatile String currentMessage;
+    private volatile int frameDelayMillis;
 
     private static ConsoleLoader instance;
 
     private ConsoleLoader() {
         running = false;
+        currentMessage = "";
+        frameDelayMillis = 250;
     }
 
     // Hacemos el Singleton Thread-Safe
@@ -23,13 +27,15 @@ public class ConsoleLoader {
      * Tipo 1: puntos animados con mensaje personalizable
      */
     public void startDots(String message) {
+        currentMessage = message == null ? "" : message;
+        frameDelayMillis = 400;
         start(() -> {
             String[] dots = { ".  ", ".. ", "..." };
             int i = 0;
             while (running) {
-                System.out.print("\r" + message + dots[i % dots.length]);
+                System.out.print("\r" + currentMessage + dots[i % dots.length]);
                 i++;
-                sleep(400);
+                sleep(frameDelayMillis);
             }
         });
     }
@@ -38,15 +44,28 @@ public class ConsoleLoader {
      * Tipo 2: spinner giratorio con mensaje personalizable
      */
     public void startSpinner(String message) {
+        currentMessage = message == null ? "" : message;
+        frameDelayMillis = 200;
         start(() -> {
             char[] spinner = { '|', '/', '-', '\\' };
             int i = 0;
             while (running) {
-                System.out.print("\r" + message + " " + spinner[i % spinner.length]);
+                System.out.print("\r" + currentMessage + " " + spinner[i % spinner.length]);
                 i++;
-                sleep(200);
+                sleep(frameDelayMillis);
             }
         });
+    }
+
+    /**
+     * Actualiza en caliente el mensaje mostrado por la animación activa.
+     * Si no hay animación en ejecución, no hace nada.
+     */
+    public void updateMessage(String message) {
+        if (!running) {
+            return;
+        }
+        currentMessage = message == null ? "" : message;
     }
 
     /**
@@ -62,6 +81,7 @@ public class ConsoleLoader {
                 Thread.currentThread().interrupt();
             }
         }
+        loaderThread = null;
         
         // Sobreescribe la línea actual con espacios para borrar el rastro de la animación
         System.out.print("\r                                                                      \r");
@@ -78,9 +98,12 @@ public class ConsoleLoader {
      * Función interna que inicia el hilo con la animación
      */
     private void start(Runnable animationLogic) {
-        if (running) return; // evita instanciar múltiples hilos
+        if (running) {
+            return; // evita instanciar múltiples hilos
+        }
         running = true;
-        loaderThread = new Thread(animationLogic);
+        loaderThread = new Thread(animationLogic, "console-loader-thread");
+        loaderThread.setDaemon(true);
         loaderThread.start();
     }
 
