@@ -1,7 +1,14 @@
+from ta.volatility import AverageTrueRange, BollingerBands
+from ta.momentum import ROCIndicator
+
 from strategies.BaseStrategy import BaseStrategy
+
 
 class StressTestStrategy(BaseStrategy):
     WARMUP_PERIOD = 20
+
+    # Para velas de 1 minuto, 0.1% de movimiento ya es una señal clara
+    LABEL_RETURN_THRESHOLD: float = 0.001
 
     def __init__(self, capital=1000, risk_per_trade=0.02):
         super().__init__(capital, risk_per_trade)
@@ -9,7 +16,7 @@ class StressTestStrategy(BaseStrategy):
     def populate_indicators(self, df):
         df = df.copy()
 
-        # Features de corto plazo para provocar cambios de señal frecuentes.
+        # ── Features de corto plazo (usadas en should_buy/should_sell) ────────
         df["ret_1"] = df["close"].pct_change(1)
         df["ret_3"] = df["close"].pct_change(3)
         df["ema_fast"] = df["close"].ewm(span=3, adjust=False).mean()
@@ -28,15 +35,35 @@ class StressTestStrategy(BaseStrategy):
         vol_std = df["volume"].rolling(20).std().replace(0, 1e-9)
         df["vol_z"] = (df["volume"] - vol_mean) / vol_std
 
-        df[["ret_1", "ret_3", "ema_gap", "rsi_fast", "vol_z"]] = (
-            df[["ret_1", "ret_3", "ema_gap", "rsi_fast", "vol_z"]]
+        # ── Features de contexto de mercado (NO usadas en should_buy/should_sell) ──
+        # Proporcionan señales ortogonales que el modelo puede explotar.
+
+        # ATR normalizado: volatilidad realizada reciente
+        atr = AverageTrueRange(
+            high=df["high"], low=df["low"], close=df["close"], window=14
+        ).average_true_range()
+        df["atr_norm"] = atr / df["close"].replace(0, 1e-9)
+
+        # Bollinger %B: posición del precio dentro de las bandas (0=banda inferior, 1=superior)
+        bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+        df["bb_pct"] = bb.bollinger_pband()
+
+        # ROC 5 periodos: velocidad del movimiento de precio
+        df["roc_5"] = ROCIndicator(close=df["close"], window=5).roc()
+
+        # ── Limpiar NaN/inf ────────────────────────────────────────────────────
+        feature_cols = ["ret_1", "ret_3", "ema_gap", "rsi_fast", "vol_z",
+                        "atr_norm", "bb_pct", "roc_5"]
+        df[feature_cols] = (
+            df[feature_cols]
             .replace([float("inf"), float("-inf")], 0.0)
             .fillna(0.0)
         )
         return df
 
     def get_feature_columns(self, df):
-        return ["ret_1", "ret_3", "ema_gap", "rsi_fast", "vol_z"]
+        return ["ret_1", "ret_3", "ema_gap", "rsi_fast", "vol_z",
+                "atr_norm", "bb_pct", "roc_5"]
 
     def should_buy(self, row):
         return row["ema_gap"] > 0 and row["rsi_fast"] < 65 and row["ret_1"] > -0.002

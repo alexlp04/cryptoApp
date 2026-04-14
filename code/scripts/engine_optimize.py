@@ -11,7 +11,8 @@ Payload de entrada (desde AIOptimizationService.java):
     "symbol":        str     — ej. "BTCUSDT"
     "timeframe":     str     — ej. "1h"
     "dataset":       list    — lista de rows {timestamp, open?, high?, low?, close, volume, indics…}
-    "min_accuracy":  float   — mínimo de accuracy en CV para considerar éxito (fracción, ej. 0.60)
+    "min_composite": float   — mínimo de composite score para considerar éxito (fracción, ej. 0.60)
+    "min_accuracy":  float   — DEPRECATED: alias de min_composite para compatibilidad
     "n_trials":      int     — número máximo de trials Optuna (default 100)
     "cv_folds":      int     — k en k-fold CV (default 5)
     "strategy_name": str?    — nombre de la estrategia Python (opcional)
@@ -44,6 +45,7 @@ import gc
 import importlib
 import json
 import logging
+import math
 import os
 import sys
 import warnings
@@ -64,43 +66,29 @@ import xgboost as xgb
 
 from ipc_protocol import read_request_payload, write_error, write_response
 from backtest_engine import run_backtest_with_predictions
-from shared_utils import load_strategy_by_name, apply_strategy_features
+from shared_utils import (
+    load_strategy_by_name,
+    apply_strategy_features,
+    setup_engine_logging,
+    build_sklearn_model,
+    PROJECT_ROOT,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # =============================================================================
-# CONFIGURACIÓN DE RUTAS Y LOGS
+# CONFIGURACIÓN DE LOGS
 # =============================================================================
-current_dir = os.path.dirname(os.path.abspath(__file__))
-code_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(code_dir)
-
-log_dir = os.path.join(project_root, "logs")
-os.makedirs(log_dir, exist_ok=True)
-
-log_file = os.path.join(log_dir, "engine_optimize.log")
-_file_handler = logging.FileHandler(log_file, encoding="utf-8")
-_file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-
-_stderr_handler = logging.StreamHandler(sys.stderr)
-_stderr_handler.setLevel(logging.INFO)
-_stderr_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
-
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[_file_handler, _stderr_handler],
-)
-
-logger = logging.getLogger(__name__)
+logger = setup_engine_logging("engine_optimize")
+project_root = PROJECT_ROOT  # alias utilizado en el módulo para rutas de models/ y results/
 
 # =============================================================================
 # CONSTANTES
 # =============================================================================
 DEFAULT_N_TRIALS: int = 100
 DEFAULT_CV_FOLDS: int = 5
-DEFAULT_MIN_ACCURACY: float = 0.55
+DEFAULT_MIN_COMPOSITE: float = 0.55
 MIN_SAMPLES_REQUIRED: int = 50
 RESULTS_SUBDIR: str = "optimize"
 
@@ -125,10 +113,10 @@ def _compute_composite_score(
     pf_norm / sharpe_norm: ya normalizados a [0, 1].
     """
     base = (
-        0.40 * f1_cv
-        + 0.30 * win_rate_frac
-        + 0.20 * pf_norm
-        + 0.10 * sharpe_norm
+        0.25 * f1_cv           # calidad de clasificación (reducido: ya no domina el total)
+        + 0.40 * win_rate_frac  # % de trades ganadores (clave para rentabilidad real)
+        + 0.25 * pf_norm        # profit factor normalizado
+        + 0.10 * sharpe_norm    # retorno ajustado a riesgo
     )
     penalty = max(0.0, overfit_gap - 0.05) * 2.0
     return base - penalty
@@ -216,23 +204,6 @@ _SUGGEST_FN: dict[str, Any] = {
 # CONSTRUCCIÓN DE MODELO POR TIPO
 # =============================================================================
 
-def _build_sklearn_model(model_type: str, params: dict[str, Any]) -> Any:
-    """Instancia el modelo sklearn/xgb/lgb con los parámetros dados."""
-    clean = {k: v for k, v in params.items() if k not in ("epochs", "batch_size",
-                                                            "hidden_layers", "neurons")}
-    if model_type == "xgboost":
-        # Eliminar clave obsoleta si Optuna la incluyó
-        clean.pop("use_label_encoder", None)
-        return xgb.XGBClassifier(**clean)
-    if model_type == "lightgbm":
-        return lgb.LGBMClassifier(**clean)
-    # random_forest y fallback
-    rf_keys = {"n_estimators", "max_depth", "min_samples_split",
-               "min_samples_leaf", "max_features", "random_state"}
-    rf_params = {k: v for k, v in clean.items() if k in rf_keys}
-    return RandomForestClassifier(**rf_params)
-
-
 def _build_and_eval_neural_network(
     X: np.ndarray, y: np.ndarray, params: dict[str, Any], cv_folds: int
 ) -> tuple[float, float]:
@@ -259,15 +230,17 @@ def _build_and_eval_neural_network(
     output_activation = "softmax" if is_multiclass else "sigmoid"
     loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
 
+    # shuffle=False preserva el orden temporal para validación realista de series temporales
+    # random_state no aplica cuando shuffle=False (scikit-learn lo rechaza)
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
     cv_scores: list[float] = []
 
     for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-        X_tr, X_val = X[train_idx], X[val_idx]
+        x_tr, x_val = X[train_idx], X[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
 
         norm = Normalization()
-        norm.adapt(X_tr)
+        norm.adapt(x_tr)
 
         layers: list[Any] = [norm]
         for _ in range(hidden_layers):
@@ -281,12 +254,12 @@ def _build_and_eval_neural_network(
             loss=loss_fn,
             metrics=["accuracy"],
         )
-        model.fit(X_tr, y_tr, epochs=epochs, batch_size=batch_size,
+        model.fit(x_tr, y_tr, epochs=epochs, batch_size=batch_size,
                   verbose=0, validation_split=0.0)
         if is_multiclass:
-            y_pred_fold = np.argmax(model.predict(X_val, verbose=0), axis=1)
+            y_pred_fold = np.argmax(model.predict(x_val, verbose=0), axis=1)
         else:
-            y_pred_fold = (model.predict(X_val, verbose=0) > 0.5).astype(int).flatten()
+            y_pred_fold = (model.predict(x_val, verbose=0) > 0.5).astype(int).flatten()
         cv_scores.append(float(accuracy_score(y_val, y_pred_fold)))
         tf.keras.backend.clear_session()
         logger.debug("NN fold %d/%d — val_acc=%.4f", fold_idx + 1, cv_folds, cv_scores[-1])
@@ -347,6 +320,8 @@ def _make_objective(
     """
     suggest_fn = _SUGGEST_FN.get(model_type, _suggest_random_forest)
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
+    # shuffle=False preserva el orden temporal para validación realista de series temporales
+    # random_state no aplica cuando shuffle=False (scikit-learn lo rechaza)
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
 
     def objective(trial: optuna.Trial) -> float:
@@ -368,12 +343,12 @@ def _make_objective(
                 sharpe_norm_cv = cv_acc
             else:
                 for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-                    X_tr, X_val = X[train_idx], X[val_idx]
+                    x_tr, x_val = X[train_idx], X[val_idx]
                     y_tr, y_val = y[train_idx], y[val_idx]
 
-                    model_fold = _build_sklearn_model(model_type, params)
-                    model_fold.fit(X_tr, y_tr)
-                    y_pred_val = model_fold.predict(X_val)
+                    model_fold = build_sklearn_model(model_type, params)
+                    model_fold.fit(x_tr, y_tr)
+                    y_pred_val = model_fold.predict(x_val)
 
                     n_classes_cur = len(np.unique(y))
                     avg_mode = "binary" if n_classes_cur <= 2 else "weighted"
@@ -410,7 +385,7 @@ def _make_objective(
                 pf_norm_cv = float(np.mean(cv_pf_norms))
                 sharpe_norm_cv = float(np.mean(cv_sharpe_norms))
 
-                model_full = _build_sklearn_model(model_type, params)
+                model_full = build_sklearn_model(model_type, params)
                 model_full.fit(X, y)
                 train_acc = float(accuracy_score(y, model_full.predict(X)))
 
@@ -471,6 +446,111 @@ def _make_objective(
 # ENTRENAMIENTO FINAL CON MEJORES PARÁMETROS
 # =============================================================================
 
+def _train_neural_final(
+    model_type: str,
+    best_params: dict[str, Any],
+    X: np.ndarray,
+    y: np.ndarray,
+    X_test: np.ndarray,
+    feature_cols: list[str],
+    strategy_name: str | None,
+    warmup_candles: int | None,
+    models_dir: str,
+    timeframe: str,
+    symbol: str,
+    label_encoder: LabelEncoder | None,
+) -> tuple[Any, str, np.ndarray]:
+    """Entrena y guarda el modelo neural final. Devuelve (model, filename, y_pred_test)."""
+    import tensorflow as tf
+    from tensorflow.keras.layers import Dense, Dropout, Normalization
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.optimizers import Adam
+
+    epochs = int(best_params.get("epochs", 50))
+    batch_size = int(best_params.get("batch_size", 64))
+    lr = float(best_params.get("learning_rate", 0.001))
+    dropout = float(best_params.get("dropout_rate", 0.3))
+    hidden_layers = int(best_params.get("hidden_layers", 2))
+    neurons = int(best_params.get("neurons", 64))
+
+    n_cls = len(np.unique(y))
+    is_mc = n_cls > 2
+    out_units = n_cls if is_mc else 1
+    out_act = "softmax" if is_mc else "sigmoid"
+    final_loss = "sparse_categorical_crossentropy" if is_mc else "binary_crossentropy"
+
+    norm = Normalization()
+    norm.adapt(X)
+    layers: list[Any] = [norm]
+    for _ in range(hidden_layers):
+        layers.append(Dense(neurons, activation="relu"))
+        layers.append(Dropout(dropout))
+    layers.append(Dense(out_units, activation=out_act))
+
+    model = Sequential(layers)
+    model.compile(optimizer=Adam(learning_rate=lr), loss=final_loss, metrics=["accuracy"])
+    model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0, validation_split=0.1)
+
+    y_pred = (
+        np.argmax(model.predict(X_test, verbose=0), axis=1)
+        if is_mc
+        else (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
+    )
+
+    suffix = f"_{strategy_name}" if strategy_name else ""
+    model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
+    model_path = os.path.join(models_dir, model_filename)
+    model.save(model_path)
+
+    metadata_path = model_path.replace(".keras", ".metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as mf:
+        json.dump(
+            {
+                "feature_cols": feature_cols,
+                "strategy_name": strategy_name,
+                "warmup_candles": warmup_candles,
+                "best_params": best_params,
+                "label_classes": label_encoder.classes_.tolist() if label_encoder is not None else None,
+            },
+            mf,
+            indent=2,
+        )
+    tf.keras.backend.clear_session()
+    return model, model_filename, y_pred
+
+
+def _train_sklearn_final(
+    model_type: str,
+    best_params: dict[str, Any],
+    X: np.ndarray,
+    y: np.ndarray,
+    X_test: np.ndarray,
+    feature_cols: list[str],
+    strategy_name: str | None,
+    warmup_candles: int | None,
+    models_dir: str,
+    timeframe: str,
+    symbol: str,
+    label_encoder: LabelEncoder | None,
+) -> tuple[Any, str, np.ndarray]:
+    """Entrena y guarda el modelo sklearn final. Devuelve (model, filename, y_pred_test)."""
+    model = build_sklearn_model(model_type, best_params)
+    model.fit(X, y)
+    y_pred = model.predict(X_test)
+
+    setattr(model, "feature_cols", feature_cols)
+    setattr(model, "strategy_name", strategy_name)
+    setattr(model, "warmup_candles", warmup_candles)
+    setattr(model, "best_params", best_params)
+    setattr(model, "label_encoder", label_encoder)
+
+    suffix = f"_{strategy_name}" if strategy_name else ""
+    model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
+    model_path = os.path.join(models_dir, model_filename)
+    joblib.dump(model, model_path)
+    return model, model_filename, y_pred
+
+
 def _train_final_model(
     model_type: str,
     best_params: dict[str, Any],
@@ -490,87 +570,21 @@ def _train_final_model(
     os.makedirs(models_dir, exist_ok=True)
 
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
-
     if is_neural:
-        import tensorflow as tf
-        from tensorflow.keras.layers import Dense, Dropout, Normalization
-        from tensorflow.keras.models import Sequential
-        from tensorflow.keras.optimizers import Adam
-
-        epochs = int(best_params.get("epochs", 50))
-        batch_size = int(best_params.get("batch_size", 64))
-        lr = float(best_params.get("learning_rate", 0.001))
-        dropout = float(best_params.get("dropout_rate", 0.3))
-        hidden_layers = int(best_params.get("hidden_layers", 2))
-        neurons = int(best_params.get("neurons", 64))
-
-        n_cls = len(np.unique(y))
-        is_mc = n_cls > 2
-        out_units = n_cls if is_mc else 1
-        out_act = "softmax" if is_mc else "sigmoid"
-        final_loss = "sparse_categorical_crossentropy" if is_mc else "binary_crossentropy"
-
-        norm = Normalization()
-        norm.adapt(X)
-        layers: list[Any] = [norm]
-        for _ in range(hidden_layers):
-            layers.append(Dense(neurons, activation="relu"))
-            layers.append(Dropout(dropout))
-        layers.append(Dense(out_units, activation=out_act))
-
-        model = Sequential(layers)
-        model.compile(
-            optimizer=Adam(learning_rate=lr),
-            loss=final_loss,
-            metrics=["accuracy"],
+        model, model_filename, y_pred = _train_neural_final(
+            model_type, best_params, X, y, X_test,
+            feature_cols, strategy_name, warmup_candles,
+            models_dir, timeframe, symbol, label_encoder,
         )
-        model.fit(X, y, epochs=epochs, batch_size=batch_size,
-                  verbose=0, validation_split=0.1)
-
-        if is_mc:
-            y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
-        else:
-            y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
-
-        suffix = f"_{strategy_name}" if strategy_name else ""
-        model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
-        model_path = os.path.join(models_dir, model_filename)
-        model.save(model_path)
-
-        # Metadatos separados para NN (igual que engine_train.py)
-        metadata_path = model_path.replace(".keras", ".metadata.json")
-        with open(metadata_path, "w", encoding="utf-8") as mf:
-            json.dump(
-                {"feature_cols": feature_cols,
-                 "strategy_name": strategy_name,
-                 "warmup_candles": warmup_candles,
-                 "best_params": best_params,
-                 "label_classes": label_encoder.classes_.tolist() if label_encoder is not None else None},
-                mf,
-                indent=2,
-            )
-        tf.keras.backend.clear_session()
-
     else:
-        model = _build_sklearn_model(model_type, best_params)
-        model.fit(X, y)
-        y_pred = model.predict(X_test)
+        model, model_filename, y_pred = _train_sklearn_final(
+            model_type, best_params, X, y, X_test,
+            feature_cols, strategy_name, warmup_candles,
+            models_dir, timeframe, symbol, label_encoder,
+        )
 
-        # Adjuntamos metadatos como atributos (igual que engine_train.py)
-        setattr(model, "feature_cols", feature_cols)
-        setattr(model, "strategy_name", strategy_name)
-        setattr(model, "warmup_candles", warmup_candles)
-        setattr(model, "best_params", best_params)
-        setattr(model, "label_encoder", label_encoder)
+    logger.info("Modelo final guardado en: %s/%s", models_dir, model_filename)
 
-        suffix = f"_{strategy_name}" if strategy_name else ""
-        model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
-        model_path = os.path.join(models_dir, model_filename)
-        joblib.dump(model, model_path)
-
-    logger.info("Modelo final guardado en: %s", model_path)
-
-    # Métricas finales
     is_binary = len(np.unique(y_test)) <= 2
     avg = "binary" if is_binary else "weighted"
     metrics = {
@@ -630,18 +644,205 @@ def _save_results_csv(
 # ENTRY POINT PRINCIPAL
 # =============================================================================
 
+def _preparar_dataset(
+    payload: dict[str, Any],
+    strategy_name: str | None,
+    warmup_candles: int | None,
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+    np.ndarray, np.ndarray,
+    list[str], LabelEncoder, Any, Any, dict[str, int],
+]:
+    """Construye X_train, y_train, X_test, y_test y datos auxiliares desde el payload."""
+    dataset: list[dict[str, Any]] = payload.get("dataset", [])
+    if not dataset:
+        raise ValueError("El dataset está vacío.")
+
+    df = pd.DataFrame(dataset)
+    df = df.sort_values("timestamp")
+    df = df.set_index("timestamp")
+
+    if not strategy_name:
+        raise ValueError(
+            "strategy_name es obligatorio: los indicadores deben calcularse siempre "
+            "a través de populate_indicators() de la estrategia. "
+            "Especifica una estrategia válida con --strategy."
+        )
+
+    logger.info("Modo dinámico activado con estrategia: %s", strategy_name)
+    strategy = load_strategy(strategy_name)
+
+    df_raw = df.reset_index() if df.index.name == "timestamp" else df.copy()
+    if "timestamp" not in df_raw.columns:
+        df_raw["timestamp"] = df_raw.index
+
+    logger.info("Iniciando populate_indicators para estrategia '%s'", strategy_name)
+    t0 = datetime.now()
+    df_enriched_full = strategy.populate_indicators(df_raw.copy())
+    logger.info(
+        "populate_indicators finalizado en %.2fs (filas=%d)",
+        (datetime.now() - t0).total_seconds(),
+        len(df_enriched_full),
+    )
+
+    x_df, y_ser = apply_strategy_features(
+        df_enriched_full.copy(), strategy, int(warmup_candles or 0),
+        already_enriched=True,
+    )
+    feature_cols = list(x_df.columns)
+    x_np = x_df.values.astype(float)
+    y_np = y_ser.values
+    timestamps_all = x_df.index.values.astype(np.int64)
+
+    label_distribution = {
+        str(k): int(v)
+        for k, v in y_ser.value_counts(dropna=False).to_dict().items()
+    }
+    logger.info(
+        "Dataset listo: %d filas, %d features, distribución labels=%s",
+        len(x_np), len(feature_cols), label_distribution,
+    )
+
+    split_idx = int(len(x_np) * 0.8)
+    x_train_full = x_np[:split_idx]
+    y_train_full = y_np[:split_idx]
+    X_test = x_np[split_idx:]
+    y_test = y_np[split_idx:]
+    timestamps_train = timestamps_all[:split_idx]
+    timestamps_test = timestamps_all[split_idx:]
+
+    label_encoder = LabelEncoder()
+    y_train_full = label_encoder.fit_transform(y_train_full)
+    y_test = label_encoder.transform(y_test)
+    logger.info(
+        "Labels codificados: %s → índices 0..%d",
+        label_encoder.classes_.tolist(),
+        len(label_encoder.classes_) - 1,
+    )
+
+    del df, x_df, y_ser, timestamps_all
+    gc.collect()
+
+    return (
+        x_train_full, y_train_full,
+        X_test, y_test,
+        timestamps_train, timestamps_test,
+        feature_cols, label_encoder,
+        df_enriched_full, strategy,
+        label_distribution,
+    )
+
+
+def _construir_payload_respuesta(
+    status: str,
+    model_filename: str,
+    best_params: dict[str, Any],
+    best_composite: float,
+    best_f1_cv: float,
+    best_cv_acc: float,
+    best_train_acc: float,
+    best_win_rate_cv: float,
+    best_overfit_gap: float,
+    min_composite: float,
+    min_composite_reached: bool,
+    trials_completed: int,
+    n_trials: int,
+    feature_cols: list[str],
+    strategy_name: str | None,
+    warmup_candles: int | None,
+    label_distribution: dict[str, int],
+    label_encoder: LabelEncoder,
+    csv_rel_path: str,
+    final_metrics: dict[str, float],
+    test_stats: dict[str, Any],
+    x_np: np.ndarray,
+    x_train_full: np.ndarray,
+    X_test: np.ndarray,
+    cv_folds: int,
+    model_type: str,
+    trial_log: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Construye el payload de respuesta IPC OPTIMIZE_RESPONSE."""
+    serializable_best_params = {
+        k: (v if not isinstance(v, float) or not (math.isnan(v) or math.isinf(v)) else str(v))
+        for k, v in best_params.items()
+    }
+    return {
+        "status": status,
+        "model_saved_at": model_filename,
+        "best_params": serializable_best_params,
+        "best_composite_score": round(best_composite, 6),
+        "best_f1_cv": round(best_f1_cv, 6),
+        "best_accuracy_cv": round(best_cv_acc, 6),
+        "best_accuracy_cv_pct": round(best_cv_acc * 100, 2),
+        "best_accuracy_train": round(best_train_acc, 6),
+        "best_win_rate_cv": round(best_win_rate_cv, 6),
+        "overfit_gap": round(best_overfit_gap, 6),
+        "min_composite_required": min_composite,
+        "min_composite_reached": min_composite_reached,
+        "min_accuracy_required": min_composite,
+        "min_accuracy_reached": min_composite_reached,
+        "trials_completed": trials_completed,
+        "trials_total": n_trials,
+        "feature_cols": feature_cols,
+        "strategy_name": strategy_name,
+        "warmup_candles": warmup_candles,
+        "label_distribution": label_distribution,
+        "label_classes": label_encoder.classes_.tolist(),
+        "csv_path": csv_rel_path,
+        "final_metrics": {
+            "accuracy": round(final_metrics["accuracy"] * 100, 2),
+            "precision": round(final_metrics["precision"] * 100, 2),
+            "recall": round(final_metrics["recall"] * 100, 2),
+            "f1": round(final_metrics["f1"] * 100, 2),
+        },
+        "trading_simulation_test": {
+            "op_totales": test_stats["op_totales"],
+            "op_ganadas": test_stats["op_ganadas"],
+            "op_perdidas": test_stats["op_perdidas"],
+            "win_rate": round(test_stats["win_rate"], 2),
+            "profit_factor": round(test_stats["profit_factor"], 4),
+            "sharpe": round(test_stats.get("sharpe", 0.0), 4),
+            "retorno_acumulado": round(test_stats["retorno_acumulado"], 4),
+            "retorno_total": round(test_stats["retorno_total"], 2),
+            "max_drawdown": round(test_stats["max_drawdown"], 4),
+        },
+        "all_trials": trial_log,
+        "data_info": {
+            "modelo_usado": model_type.upper(),
+            "total_filas": len(x_np),
+            "filas_entrenamiento": len(x_train_full),
+            "filas_test": len(X_test),
+            "num_features": len(feature_cols),
+            "cv_folds": cv_folds,
+            "n_trials_solicitados": n_trials,
+            "n_trials_completados": trials_completed,
+            "objetivo_pesos": {
+                "F1_cv": 0.25,
+                "win_rate": 0.40,
+                "profit_factor": 0.25,
+                "sharpe": 0.10,
+            },
+        },
+    }
+
+
+# =============================================================================
+# ENTRY POINT PRINCIPAL
+# =============================================================================
+
 def main() -> None:
     logger.info("=== Iniciando engine_optimize.py — Búsqueda de Hiperparámetros Óptimos ===")
 
     try:
         payload = read_request_payload()
 
-        # ── Extraer parámetros del payload ──────────────────────────────────
         model_type = str(payload.get("model_type", "random_forest")).lower().strip()
         symbol = str(payload.get("symbol", "UNKNOWN"))
         timeframe = str(payload.get("timeframe", "UNKNOWN"))
-        dataset: list[dict[str, Any]] = payload.get("dataset", [])
-        min_accuracy: float = float(payload.get("min_accuracy", DEFAULT_MIN_ACCURACY))
+        min_composite: float = float(
+            payload.get("min_composite", payload.get("min_accuracy", DEFAULT_MIN_COMPOSITE))
+        )
         n_trials: int = int(payload.get("n_trials", DEFAULT_N_TRIALS))
         cv_folds: int = int(payload.get("cv_folds", DEFAULT_CV_FOLDS))
         strategy_name: str | None = payload.get("strategy_name") or None
@@ -649,97 +850,23 @@ def main() -> None:
 
         logger.info(
             "Parámetros: model=%s symbol=%s tf=%s n_trials=%d cv_folds=%d "
-            "min_accuracy=%.2f strategy=%s",
+            "min_composite=%.2f strategy=%s",
             model_type, symbol, timeframe, n_trials, cv_folds,
-            min_accuracy, strategy_name or "None (indicadores)",
+            min_composite, strategy_name or "None (indicadores)",
         )
 
-        if not dataset:
-            raise ValueError("El dataset está vacío.")
+        (
+            x_train_full, y_train_full,
+            X_test, y_test,
+            timestamps_train, timestamps_test,
+            feature_cols, label_encoder,
+            df_enriched_full, strategy,
+            label_distribution,
+        ) = _preparar_dataset(payload, strategy_name, warmup_candles)
 
-        # ── Preparación del DataFrame ────────────────────────────────────────
-        df = pd.DataFrame(dataset)
-        df.sort_values("timestamp", inplace=True)
-        df.set_index("timestamp", inplace=True)
+        x_np = np.concatenate([x_train_full, X_test])
 
-        feature_cols: list[str]
-
-        if strategy_name:
-            logger.info("Modo dinámico activado con estrategia: %s", strategy_name)
-            strategy = load_strategy(strategy_name)
-
-            # 1. Enriquecer el DataFrame completo con los indicadores de la estrategia
-            df_raw = df.reset_index() if df.index.name == "timestamp" else df.copy()
-            if "timestamp" not in df_raw.columns:
-                df_raw["timestamp"] = df_raw.index
-
-            logger.info("Iniciando populate_indicators para estrategia '%s'", strategy_name)
-            t0 = datetime.now()
-            df_enriched_full = strategy.populate_indicators(df_raw.copy())
-            logger.info(
-                "populate_indicators finalizado en %.2fs (filas=%d)",
-                (datetime.now() - t0).total_seconds(),
-                len(df_enriched_full),
-            )
-
-            # 2. Extraer features/labels (indica df ya enriquecido con indicadores)
-            X_df, y_ser = apply_strategy_features(
-                df_enriched_full.copy(), strategy, int(warmup_candles or 0),
-                already_enriched=True,
-            )
-            feature_cols = list(X_df.columns)
-        else:
-            raise ValueError(
-                "strategy_name es obligatorio: los indicadores deben calcularse siempre "
-                "a través de populate_indicators() de la estrategia. "
-                "Especifica una estrategia válida con --strategy."
-            )
-
-        X_np = X_df.values.astype(float)
-        y_np = y_ser.values
-
-        # Timestamps reales (epoch ms) alineados con X/y — usados para alinear folds y test sim
-        timestamps_all = X_df.index.values.astype(np.int64)
-
-        label_distribution = {
-            str(k): int(v)
-            for k, v in y_ser.value_counts(dropna=False).to_dict().items()
-        }
-        logger.info(
-            "Dataset listo: %d filas, %d features, distribución labels=%s",
-            len(X_np), len(feature_cols), label_distribution,
-        )
-
-        # ── División train/test (80/20) ──────────────────────────────────────
-        split_idx = int(len(X_np) * 0.8)
-        X_train_full = X_np[:split_idx]
-        y_train_full = y_np[:split_idx]
-        X_test = X_np[split_idx:]
-        y_test = y_np[split_idx:]
-        timestamps_train = timestamps_all[:split_idx]
-        timestamps_test = timestamps_all[split_idx:]
-
-        # ── Codificación de labels (XGBoost requiere clases 0-indexadas) ─────
-        # Los labels de estrategia son {-1, 0, 1} → se recodifican a {0, 1, 2}
-        label_encoder = LabelEncoder()
-        y_train_full = label_encoder.fit_transform(y_train_full)
-        y_test = label_encoder.transform(y_test)
-        logger.info(
-            "Labels codificados: %s → índices 0..%d",
-            label_encoder.classes_.tolist(),
-            len(label_encoder.classes_) - 1,
-        )
-
-        # Liberación de memoria — df_enriched_full se mantiene para folds y test sim
-        del df, X_df, y_ser, timestamps_all
-        if strategy_name and "prices_aligned" in dir():
-            del prices_aligned
-        gc.collect()
-
-        # ── Optuna study ────────────────────────────────────────────────────
-        trial_log: list[dict[str, Any]] = []
-        suggest_fn = _SUGGEST_FN.get(model_type)
-        if suggest_fn is None:
+        if _SUGGEST_FN.get(model_type) is None:
             logger.warning(
                 "Tipo de modelo '%s' no reconocido. Usando random_forest como fallback.",
                 model_type,
@@ -751,76 +878,63 @@ def main() -> None:
             n_trials, cv_folds,
         )
         logger.info(
-            "Fórmula objetivo compuesta: F1_cv*0.40 + WinRate*0.30 + PF_norm*0.20 + Sharpe_norm*0.10 - penalización_overfitting",
+            "Fórmula objetivo compuesta: F1_cv*0.25 + WinRate*0.40 + PF_norm*0.25 + Sharpe_norm*0.10 - penalización_overfitting",
         )
 
+        trial_log: list[dict[str, Any]] = []
         study = optuna.create_study(
             direction="maximize",
             pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10),
             study_name=f"optimize_{model_type}_{symbol}_{timeframe}",
         )
-
-        objective_fn = _make_objective(
-            model_type, X_train_full, y_train_full,
-            df_enriched_full, strategy, timestamps_train,
-            symbol, cv_folds, trial_log, label_encoder,
-        )
-
         study.optimize(
-            objective_fn,
+            _make_objective(
+                model_type, x_train_full, y_train_full,
+                df_enriched_full, strategy, timestamps_train,
+                symbol, cv_folds, trial_log, label_encoder,
+            ),
             n_trials=n_trials,
             show_progress_bar=False,
             gc_after_trial=True,
         )
 
-        # ── Resultados del study ─────────────────────────────────────────────
-        completed_trials = [t for t in study.trials
-                            if t.state == optuna.trial.TrialState.COMPLETE]
-        trials_completed = len(completed_trials)
-
+        completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed_trials:
-            raise ValueError(
-                "Ningún trial completó correctamente. Revisa los logs para más detalles."
-            )
+            raise ValueError("Ningún trial completó correctamente. Revisa los logs para más detalles.")
 
         best_trial = study.best_trial
         best_params = best_trial.params
-
-        # Reconstituimos métricas del mejor trial desde el log
-        best_log_entry = next(
-            (e for e in trial_log if e["trial"] == best_trial.number), {}
-        )
-        best_cv_acc: float = float(best_log_entry.get("accuracy_cv") or 0.0)
-        best_f1_cv: float = float(best_log_entry.get("f1_cv") or 0.0)
-        best_train_acc: float = float(best_log_entry.get("accuracy_train") or 0.0)
-        best_overfit_gap: float = float(best_log_entry.get("overfit_gap") or 0.0)
-        best_win_rate_cv: float = float(best_log_entry.get("win_rate_cv") or 0.0)
-        best_composite: float = float(best_log_entry.get("composite_score") or 0.0)
-
-        min_accuracy_reached = best_cv_acc >= min_accuracy
-        status = "success" if min_accuracy_reached else "warning"
+        best_log_entry = next((e for e in trial_log if e["trial"] == best_trial.number), {})
+        best_cv_acc = float(best_log_entry.get("accuracy_cv") or 0.0)
+        best_f1_cv = float(best_log_entry.get("f1_cv") or 0.0)
+        best_train_acc = float(best_log_entry.get("accuracy_train") or 0.0)
+        best_overfit_gap = float(best_log_entry.get("overfit_gap") or 0.0)
+        best_win_rate_cv = float(best_log_entry.get("win_rate_cv") or 0.0)
+        best_composite = float(best_log_entry.get("composite_score") or 0.0)
+        min_composite_reached = best_composite >= min_composite
+        status = "success" if min_composite_reached else "warning"
+        trials_completed = len(completed_trials)
 
         logger.info(
             "=== MEJOR TRIAL #%d === composite=%.4f | f1_cv=%.4f acc_cv=%.4f (%.2f%%) "
-            "train_acc=%.4f gap=%.4f win_rate_cv=%.4f | min_accuracy_reached=%s",
+            "train_acc=%.4f gap=%.4f win_rate_cv=%.4f | min_composite_reached=%s",
             best_trial.number, best_composite, best_f1_cv,
             best_cv_acc, best_cv_acc * 100,
             best_train_acc, best_overfit_gap, best_win_rate_cv,
-            min_accuracy_reached,
+            min_composite_reached,
         )
-        if not min_accuracy_reached:
+        if not min_composite_reached:
             logger.warning(
-                "No se alcanzó el mínimo de accuracy requerido (%.2f%%). "
-                "Mejor obtenido: %.2f%%. Se guarda igualmente el mejor modelo encontrado.",
-                min_accuracy * 100, best_cv_acc * 100,
+                "No se alcanzó el mínimo de composite requerido (%.4f). "
+                "Mejor obtenido: %.4f. Se guarda igualmente el mejor modelo encontrado.",
+                min_composite, best_composite,
             )
 
-        # ── Entrenamiento final con mejores hiperparámetros ──────────────────
         logger.info("Entrenando modelo final con mejores hiperparámetros...")
         final_model, model_filename, final_metrics = _train_final_model(
             model_type=model_type,
             best_params=best_params,
-            X=X_train_full,
+            X=x_train_full,
             y=y_train_full,
             X_test=X_test,
             y_test=y_test,
@@ -832,11 +946,10 @@ def main() -> None:
             label_encoder=label_encoder,
         )
 
-        # ── Backtest real sobre el conjunto de TEST con predicciones del modelo ─
         logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
         is_neural_final = model_type in ("neural_network", "deep_learning", "keras")
         if is_neural_final:
-            import tensorflow as _tf_final  # noqa: F401 — importación diferida
+            import tensorflow as _tf_final  # noqa: F401
             y_test_pred_final = (final_model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
         else:
             y_test_pred_final = final_model.predict(X_test)
@@ -856,76 +969,37 @@ def main() -> None:
             test_stats.get("sharpe", 0.0), test_stats["retorno_acumulado"],
         )
 
-        # ── CSV de resultados de todos los trials ─────────────────────────────
-        csv_rel_path = _save_results_csv(
-            trial_log, model_type, timeframe, symbol, strategy_name
+        csv_rel_path = _save_results_csv(trial_log, model_type, timeframe, symbol, strategy_name)
+
+        resultado = _construir_payload_respuesta(
+            status=status,
+            model_filename=model_filename,
+            best_params=best_params,
+            best_composite=best_composite,
+            best_f1_cv=best_f1_cv,
+            best_cv_acc=best_cv_acc,
+            best_train_acc=best_train_acc,
+            best_win_rate_cv=best_win_rate_cv,
+            best_overfit_gap=best_overfit_gap,
+            min_composite=min_composite,
+            min_composite_reached=min_composite_reached,
+            trials_completed=trials_completed,
+            n_trials=n_trials,
+            feature_cols=feature_cols,
+            strategy_name=strategy_name,
+            warmup_candles=warmup_candles,
+            label_distribution=label_distribution,
+            label_encoder=label_encoder,
+            csv_rel_path=csv_rel_path,
+            final_metrics=final_metrics,
+            test_stats=test_stats,
+            x_np=x_np,
+            x_train_full=x_train_full,
+            X_test=X_test,
+            cv_folds=cv_folds,
+            model_type=model_type,
+            trial_log=trial_log,
         )
-
-        # ── Payload de respuesta ─────────────────────────────────────────────
-        # Filtrar best_params para serialización segura (quitar None, etc.)
-        serializable_best_params = {
-            k: (v if not isinstance(v, float) or not (
-                float("nan") == v or float("inf") == abs(v)
-            ) else str(v))
-            for k, v in best_params.items()
-        }
-
-        resultado: dict[str, Any] = {
-            "status": status,
-            "model_saved_at": model_filename,
-            "best_params": serializable_best_params,
-            "best_composite_score": round(best_composite, 6),
-            "best_f1_cv": round(best_f1_cv, 6),
-            "best_accuracy_cv": round(best_cv_acc, 6),
-            "best_accuracy_cv_pct": round(best_cv_acc * 100, 2),
-            "best_accuracy_train": round(best_train_acc, 6),
-            "best_win_rate_cv": round(best_win_rate_cv, 6),
-            "overfit_gap": round(best_overfit_gap, 6),
-            "min_accuracy_required": min_accuracy,
-            "min_accuracy_reached": min_accuracy_reached,
-            "trials_completed": trials_completed,
-            "trials_total": n_trials,
-            "feature_cols": feature_cols,
-            "strategy_name": strategy_name,
-            "warmup_candles": warmup_candles,
-            "label_distribution": label_distribution,
-            "label_classes": label_encoder.classes_.tolist(),
-            "csv_path": csv_rel_path,
-            "final_metrics": {
-                "accuracy": round(final_metrics["accuracy"] * 100, 2),
-                "precision": round(final_metrics["precision"] * 100, 2),
-                "recall": round(final_metrics["recall"] * 100, 2),
-                "f1": round(final_metrics["f1"] * 100, 2),
-            },
-            "trading_simulation_test": {
-                "op_totales": test_stats["op_totales"],
-                "op_ganadas": test_stats["op_ganadas"],
-                "op_perdidas": test_stats["op_perdidas"],
-                "win_rate": round(test_stats["win_rate"], 2),
-                "profit_factor": round(test_stats["profit_factor"], 4),
-                "sharpe": round(test_stats.get("sharpe", 0.0), 4),
-                "retorno_acumulado": round(test_stats["retorno_acumulado"], 4),
-                "retorno_total": round(test_stats["retorno_total"], 2),
-                "max_drawdown": round(test_stats["max_drawdown"], 4),
-            },
-            "all_trials": trial_log,
-            "data_info": {
-                "modelo_usado": model_type.upper(),
-                "total_filas": len(X_np),
-                "filas_entrenamiento": len(X_train_full),
-                "filas_test": len(X_test),
-                "num_features": len(feature_cols),
-                "cv_folds": cv_folds,
-                "n_trials_solicitados": n_trials,
-                "n_trials_completados": trials_completed,
-                "objetivo_pesos": {
-                    "F1_cv": 0.40,
-                    "win_rate": 0.30,
-                    "profit_factor": 0.20,
-                    "sharpe": 0.10,
-                },
-            },
-        }
 
         write_response("OPTIMIZE_RESPONSE", resultado)
         logger.info("=== engine_optimize.py finalizado con éxito ===")

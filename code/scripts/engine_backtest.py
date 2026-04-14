@@ -4,48 +4,21 @@ import os
 import traceback
 import logging
 from ipc_protocol import read_request_payload, write_response, write_error
-from shared_utils import load_strategy_by_path
-
-# --- CONFIGURACIÓN DE LOGS ---
-# current_dir  = .../code/scripts/
-# code_dir     = .../code/
-# project_root = .../ (raíz del proyecto, donde están logs/, results/, models/)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-code_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(code_dir)
-log_dir = os.path.join(project_root, "logs")
-os.makedirs(log_dir, exist_ok=True)
-
-log_file = os.path.join(log_dir, "engine_backtest.log")
-
-# Logger a archivo (para debugging offline)
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-
-# Logger a stderr para no contaminar stdout, reservado al frame MessagePack IPC.
-stream_handler = logging.StreamHandler(sys.stderr)
-stream_handler.setLevel(logging.INFO)
-stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    handlers=[file_handler, stream_handler]
-)
+from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
 
 # --- IMPORTAR MOTOR COMPARTIDO ---
-if code_dir not in sys.path:
-    sys.path.append(code_dir)
+if CODE_DIR not in sys.path:
+    sys.path.append(CODE_DIR)
 
 from backtest_engine import (  # noqa: E402
     crear_carpeta_estrategia,
     guardar_trade_a_csv,
     run_backtest,
 )
-logger = logging.getLogger(__name__)
+logger = setup_engine_logging("engine_backtest")
 
 
-def main():
+def main() -> None:
     try:
         logger.info("Backtest engine started")
         

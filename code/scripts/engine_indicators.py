@@ -10,6 +10,8 @@ import sys
 import warnings
 
 import pandas as pd
+from ta.trend import SMAIndicator, EMAIndicator, MACD
+from ta.momentum import RSIIndicator
 
 from ipc_protocol import read_request_payload, write_response
 from shared_utils import setup_engine_logging
@@ -24,34 +26,35 @@ def compute_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Calcula indicadores tecnicos basicos como columnas adicionales del DataFrame.
     Disenada para ser importada por otros engines directamente.
 
+    Usa la libreria 'ta' para calculos robustos y validados, evitando
+    reimplementaciones manuales propensas a errores de precision.
+
     Entrada: df con columna 'close' (string o numerico).
     Salida:  df enriquecido con SMA_14, EMA_14, RSI_14, MACD, MACD_signal.
     """
     df = df.copy()
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
 
-    df["SMA_14"] = df["close"].rolling(window=14).mean()
-    df["EMA_14"] = df["close"].ewm(span=14, adjust=False).mean()
+    close = df["close"]
 
-    delta = df["close"].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-    loss = (-delta).where(delta < 0, 0).rolling(window=14).mean()
-    rs = gain / loss
-    df["RSI_14"] = 100 - (100 / (1 + rs))
+    df["SMA_14"] = SMAIndicator(close=close, window=14).sma_indicator()
+    df["EMA_14"] = EMAIndicator(close=close, window=14).ema_indicator()
+    df["RSI_14"] = RSIIndicator(close=close, window=14).rsi()
 
-    ema_12 = df["close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["close"].ewm(span=26, adjust=False).mean()
-    df["MACD"] = ema_12 - ema_26
-    df["MACD_signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+    macd = MACD(close=close, window_fast=12, window_slow=26, window_sign=9)
+    df["MACD"] = macd.macd()
+    df["MACD_signal"] = macd.macd_signal()
 
     return df
 
 
 # Mapa indicador -> parametros para el payload IPC
+_PERIODO_14 = "periodo=14"
+
 _INDICATOR_PARAMS: dict[str, str] = {
-    "SMA_14": "periodo=14",
-    "EMA_14": "periodo=14",
-    "RSI_14": "periodo=14",
+    "SMA_14": _PERIODO_14,
+    "EMA_14": _PERIODO_14,
+    "RSI_14": _PERIODO_14,
     "MACD": "fast=12,slow=26",
     "MACD_signal": "signal=9",
 }

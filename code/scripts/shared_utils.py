@@ -252,3 +252,177 @@ def apply_strategy_features(
         y.value_counts(dropna=False).to_dict(),
     )
     return x_features, y
+
+
+# =============================================================================
+# MODELOS ML — FÁBRICA COMPARTIDA
+# =============================================================================
+
+def build_sklearn_model(model_type: str, params: dict[str, Any]) -> Any:
+    """
+    Instancia un modelo sklearn / XGBoost / LightGBM con los parámetros dados.
+
+    Filtra automáticamente los parámetros que no pertenecen a modelos sklearn
+    (epochs, batch_size, etc.) para que sean seguros de pasar desde Optuna.
+
+    Parámetros soportados: xgboost, lightgbm, gradient_boosting, svm,
+    logistic_regression, random_forest (fallback).
+    """
+    import joblib as _jl  # noqa: F401 — importado aquí para no añadir dep al nivel de módulo
+
+    try:
+        import xgboost as xgb
+        import lightgbm as lgb
+        from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.svm import SVC
+    except ImportError as exc:
+        raise ImportError(
+            f"Dependencia no instalada para build_sklearn_model: {exc}"
+        ) from exc
+
+    # Eliminar params propios de redes neuronales que no aplican a sklearn
+    nn_keys = {"epochs", "batch_size", "hidden_layers", "neurons",
+               "learning_rate", "dropout_rate"}
+    clean = {k: v for k, v in params.items() if k not in nn_keys}
+
+    if model_type == "xgboost":
+        clean.pop("use_label_encoder", None)  # clave obsoleta de versiones antiguas
+        base = {"n_estimators": 150, "learning_rate": 0.05,
+                "max_depth": 6, "random_state": 42, "eval_metric": "logloss"}
+        base.update(clean)
+        return xgb.XGBClassifier(**base)
+
+    if model_type == "lightgbm":
+        base = {"n_estimators": 150, "learning_rate": 0.05,
+                "max_depth": 6, "random_state": 42, "verbose": -1}
+        base.update(clean)
+        return lgb.LGBMClassifier(**base)
+
+    if model_type == "gradient_boosting":
+        base = {"n_estimators": 100, "learning_rate": 0.1,
+                "max_depth": 5, "random_state": 42}
+        base.update(clean)
+        return GradientBoostingClassifier(**base)
+
+    if model_type == "svm":
+        base = {"kernel": "rbf", "probability": True, "random_state": 42}
+        base.update(clean)
+        return SVC(**base)
+
+    if model_type == "logistic_regression":
+        base = {"max_iter": 1000, "random_state": 42}
+        base.update(clean)
+        return LogisticRegression(**base)
+
+    # random_forest y fallback
+    rf_keys = {"n_estimators", "max_depth", "min_samples_split",
+               "min_samples_leaf", "max_features", "random_state"}
+    rf_params = {k: v for k, v in clean.items() if k in rf_keys}
+    rf_base = {"n_estimators": 100, "random_state": 42, "max_depth": 10}
+    rf_base.update(rf_params)
+    return RandomForestClassifier(**rf_base)
+
+
+def build_and_train_neural_network(
+    X_train: "np.ndarray",
+    y_train: "np.ndarray",
+    X_test: "np.ndarray",
+    hyperparams: dict[str, Any],
+    n_classes: int = 2,
+) -> "tuple[Any, np.ndarray]":
+    """
+    Construye, entrena y evalúa una Red Neuronal Feed-Forward.
+
+    Soporta clasificación binaria (sigmoid) y multiclase (softmax) según n_classes.
+    La arquitectura es fija: Normalization → Dense(64) → Dropout → Dense(32) →
+    Dropout → Dense(16) → output. Para arquitecturas configurables (Optuna) usar
+    los helpers internos de engine_optimize.
+
+    Parámetros
+    ----------
+    X_train      : array de entrenamiento.
+    y_train      : labels de entrenamiento (enteros 0-indexed).
+    X_test       : array de evaluación.
+    hyperparams  : dict con keys epochs, batch_size, learning_rate, dropout_rate.
+    n_classes    : número de clases (2=binario, >2=multiclase).
+
+    Devuelve
+    --------
+    (model, y_pred) donde y_pred son las predicciones sobre X_test.
+    """
+    import numpy as np
+
+    _logger = logging.getLogger(__name__)
+    _logger.info("Importando TensorFlow/Keras para Deep Learning...")
+
+    try:
+        import tensorflow as tf  # noqa: F401
+        from tensorflow.keras.callbacks import Callback
+        from tensorflow.keras.layers import Dense, Dropout, Normalization
+        from tensorflow.keras.models import Sequential
+        from tensorflow.keras.optimizers import Adam
+    except ImportError as exc:
+        raise ImportError(
+            "TensorFlow no está disponible. Instalar con: pip install tensorflow"
+        ) from exc
+
+    epochs = int(hyperparams.get("epochs", 50))
+    batch_size = int(hyperparams.get("batch_size", 64))
+    learning_rate = float(hyperparams.get("learning_rate", 0.001))
+    dropout_rate = float(hyperparams.get("dropout_rate", 0.3))
+
+    is_multiclass = n_classes > 2
+    output_units = n_classes if is_multiclass else 1
+    output_activation = "softmax" if is_multiclass else "sigmoid"
+    loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
+
+    class _EpochLogger(Callback):
+        def on_epoch_end(self, epoch: int, logs: dict | None = None) -> None:
+            logs = logs or {}
+            _logger.info(
+                "Epoch %d/%d - loss=%.4f val_loss=%.4f acc=%.4f val_acc=%.4f",
+                epoch + 1, epochs,
+                float(logs.get("loss") or 0.0),
+                float(logs.get("val_loss") or 0.0),
+                float(logs.get("accuracy") or 0.0),
+                float(logs.get("val_accuracy") or 0.0),
+            )
+
+    norm_layer = Normalization()
+    norm_layer.adapt(X_train)
+
+    model = Sequential([
+        norm_layer,
+        Dense(64, activation="relu"),
+        Dropout(dropout_rate),
+        Dense(32, activation="relu"),
+        Dropout(max(0.0, dropout_rate - 0.1)),
+        Dense(16, activation="relu"),
+        Dense(output_units, activation=output_activation),
+    ])
+
+    model.compile(
+        optimizer=Adam(learning_rate=learning_rate),
+        loss=loss_fn,
+        metrics=["accuracy"],
+    )
+
+    _logger.info(
+        "Entrenando Red Neuronal: epocas=%d batch=%d lr=%s n_clases=%d loss=%s",
+        epochs, batch_size, learning_rate, n_classes, loss_fn,
+    )
+    model.fit(
+        X_train, y_train,
+        epochs=epochs, batch_size=batch_size,
+        validation_split=0.1, verbose=0,
+        callbacks=[_EpochLogger()],
+    )
+
+    if is_multiclass:
+        y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
+    else:
+        y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
+
+    return model, y_pred
+
