@@ -14,22 +14,19 @@ import warnings
 from datetime import datetime
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+import joblib
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.preprocessing import LabelEncoder
-from sklearn.svm import SVC
-import xgboost as xgb
-import lightgbm as lgb
 
 from ipc_protocol import read_request_payload, write_error, write_response
 from backtest_engine import run_backtest_with_predictions
 from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
+    build_and_train_neural_network,
+    build_sklearn_model,
     load_strategy_by_name,
     setup_engine_logging,
 )
@@ -37,133 +34,6 @@ from shared_utils import (
 warnings.filterwarnings("ignore", category=UserWarning)
 
 logger = setup_engine_logging("engine_train", stream=sys.stderr)
-
-
-# =============================================================================
-# MODELOS ML CLASICOS
-# =============================================================================
-
-def get_ml_model_instance(model_type: str, custom_params: dict) -> Any:
-    """Instancia un modelo ML clasico inyectando hiperparametros."""
-    if model_type == "xgboost":
-        params = {
-            "n_estimators": 150, "learning_rate": 0.05,
-            "max_depth": 6, "random_state": 42, "eval_metric": "logloss",
-        }
-        params.update(custom_params)
-        return xgb.XGBClassifier(**params)
-
-    if model_type == "lightgbm":
-        params = {
-            "n_estimators": 150, "learning_rate": 0.05,
-            "max_depth": 6, "random_state": 42, "verbose": -1,
-        }
-        params.update(custom_params)
-        return lgb.LGBMClassifier(**params)
-
-    if model_type == "gradient_boosting":
-        params = {
-            "n_estimators": 100, "learning_rate": 0.1,
-            "max_depth": 5, "random_state": 42,
-        }
-        params.update(custom_params)
-        return GradientBoostingClassifier(**params)
-
-    if model_type == "svm":
-        params = {"kernel": "rbf", "probability": True, "random_state": 42}
-        params.update(custom_params)
-        return SVC(**params)
-
-    if model_type == "logistic_regression":
-        params = {"max_iter": 1000, "random_state": 42}
-        params.update(custom_params)
-        return LogisticRegression(**params)
-
-    params = {"n_estimators": 100, "random_state": 42, "max_depth": 10}
-    params.update(custom_params)
-    return RandomForestClassifier(**params)
-
-
-# =============================================================================
-# RED NEURONAL - binaria Y multiclase (P1.2)
-# =============================================================================
-
-def build_and_train_neural_network(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_test: np.ndarray,
-    hyperparams: dict,
-    n_classes: int = 2,
-) -> tuple[Any, np.ndarray]:
-    """
-    Construye, entrena y evalua una Red Neuronal Feed-Forward.
-    Soporta clasificacion binaria (sigmoid) y multiclase (softmax) segun n_classes.
-    """
-    logger.info("Importando TensorFlow/Keras para Deep Learning...")
-    import tensorflow as tf  # noqa: F401
-    from tensorflow.keras.callbacks import Callback
-    from tensorflow.keras.layers import Dense, Dropout, Normalization
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.optimizers import Adam
-
-    epochs = int(hyperparams.get("epochs", 50))
-    batch_size = int(hyperparams.get("batch_size", 64))
-    learning_rate = float(hyperparams.get("learning_rate", 0.001))
-    dropout_rate = float(hyperparams.get("dropout_rate", 0.3))
-
-    is_multiclass = n_classes > 2
-    output_units = n_classes if is_multiclass else 1
-    output_activation = "softmax" if is_multiclass else "sigmoid"
-    loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
-
-    class EpochProgressLogger(Callback):
-        def on_epoch_end(self, epoch, logs=None):
-            logs = logs or {}
-            logger.info(
-                "Epoch %d/%d - loss=%.4f val_loss=%.4f acc=%.4f val_acc=%.4f",
-                epoch + 1, epochs,
-                float(logs.get("loss") or 0.0),
-                float(logs.get("val_loss") or 0.0),
-                float(logs.get("accuracy") or 0.0),
-                float(logs.get("val_accuracy") or 0.0),
-            )
-
-    norm_layer = Normalization()
-    norm_layer.adapt(X_train)
-
-    model = Sequential([
-        norm_layer,
-        Dense(64, activation="relu"),
-        Dropout(dropout_rate),
-        Dense(32, activation="relu"),
-        Dropout(max(0.0, dropout_rate - 0.1)),
-        Dense(16, activation="relu"),
-        Dense(output_units, activation=output_activation),
-    ])
-
-    model.compile(
-        optimizer=Adam(learning_rate=learning_rate),
-        loss=loss_fn,
-        metrics=["accuracy"],
-    )
-
-    logger.info(
-        "Entrenando Red Neuronal: epocas=%d batch=%d lr=%s n_clases=%d loss=%s",
-        epochs, batch_size, learning_rate, n_classes, loss_fn,
-    )
-    model.fit(
-        X_train, y_train,
-        epochs=epochs, batch_size=batch_size,
-        validation_split=0.1, verbose=0,
-        callbacks=[EpochProgressLogger()],
-    )
-
-    if is_multiclass:
-        y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
-    else:
-        y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
-
-    return model, y_pred
 
 
 # =============================================================================
@@ -200,8 +70,8 @@ def main() -> None:
 
         # Preparar DataFrame
         df_raw = pd.DataFrame(dataset)
-        df_raw.sort_values("timestamp", inplace=True)
-        df_raw.reset_index(drop=True, inplace=True)
+        df_raw = df_raw.sort_values("timestamp")
+        df_raw = df_raw.reset_index(drop=True)
 
         # Enriquecer con indicadores de la estrategia (una sola vez)
         strategy = load_strategy_by_name(strategy_name)
@@ -215,20 +85,20 @@ def main() -> None:
         )
 
         # Feature engineering (already_enriched=True: no repetir populate_indicators)
-        X_df, y_ser = apply_strategy_features(
+        x_df, y_ser = apply_strategy_features(
             df_enriched_full.copy(), strategy, warmup_candles, already_enriched=True
         )
-        feature_cols = list(X_df.columns)
-        total_rows_used = len(X_df)
+        feature_cols = list(x_df.columns)
+        total_rows_used = len(x_df)
 
         # Timestamps para recuperar la porcion de test del df enriquecido
-        timestamps_all = X_df.index.values.astype(np.int64)
-        X_np = X_df.values.astype(float)
+        timestamps_all = x_df.index.values.astype(np.int64)
+        x_np = x_df.values.astype(float)
         y_np = y_ser.values
 
         # Division 80/20
-        split_idx = int(len(X_np) * 0.8)
-        X_train, X_test = X_np[:split_idx], X_np[split_idx:]
+        split_idx = int(len(x_np) * 0.8)
+        X_train, X_test = x_np[:split_idx], x_np[split_idx:]
         y_train_raw, y_test_raw = y_np[:split_idx], y_np[split_idx:]
         timestamps_test = timestamps_all[split_idx:]
 
@@ -251,7 +121,7 @@ def main() -> None:
         )
 
         # Liberar matrices de features (P3.3: sin hack de globals())
-        del X_df, y_ser, X_np, y_np
+        del x_df, y_ser, x_np, y_np
         gc.collect()
 
         models_dir = os.path.join(PROJECT_ROOT, "models")
@@ -288,7 +158,7 @@ def main() -> None:
 
         else:
             logger.info("Seleccionado: Modelo ML clasico (%s)", model_type.upper())
-            model = get_ml_model_instance(model_type, hyperparams)
+            model = build_sklearn_model(model_type, hyperparams)
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
 

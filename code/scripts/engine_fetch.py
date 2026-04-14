@@ -11,32 +11,11 @@ from typing import Optional
 import pandas as pd
 import requests
 from ipc_protocol import write_response
+from shared_utils import setup_engine_logging
 
-# =========================
-# CONFIGURACIÓN DE LOGS
-# =========================
-# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_code_dir = os.path.dirname(_current_dir)
-_project_root = os.path.dirname(_code_dir)
-log_dir = os.path.join(_project_root, "logs")
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, "engine_fetch.log")
+logger = setup_engine_logging("engine_fetch")
 
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(
-    logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-
-stream_handler = logging.StreamHandler(sys.stderr)
-stream_handler.setLevel(logging.INFO)
-stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
-
-logging.basicConfig(level=logging.DEBUG,
-                    handlers=[file_handler, stream_handler])
-logger = logging.getLogger(__name__)
-
-URL_FETCH = "https://api.binance.com/api/v3/klines"
+URL_FETCH = "https://api.binance.com/api/v3/uiKlines"
 REQUEST_TIMEOUT_SECONDS = 20
 BINANCE_MAX_LIMIT = 1500
 MAX_PARALLEL_WORKERS = 5
@@ -247,6 +226,69 @@ def obtener_fecha_listado(symbol: str, timeframe: str) -> Optional[int]:
     return None
 
 
+def _descargar_chunks_paralelo(
+    chunks: list[tuple[int, int]],
+    symbol: str,
+    timeframe: str,
+    workers: int,
+) -> list[dict]:
+    """Descarga todos los chunks en paralelo y devuelve las velas ordenadas y deduplicadas."""
+    resultados: dict[int, list[dict]] = {}
+    completados = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_fetch_chunk, i, start, end, symbol, timeframe): i
+            for i, (start, end) in enumerate(chunks)
+        }
+        for future in as_completed(futures):
+            chunk_index, velas = future.result()
+            resultados[chunk_index] = velas
+            completados += 1
+            if completados % 10 == 0 or completados == len(chunks):
+                logger.info(
+                    "Descarga: %s/%s chunks completados (%s%%)",
+                    completados, len(chunks),
+                    round(completados / len(chunks) * 100),
+                )
+
+    todas: list[dict] = []
+    for i in range(len(chunks)):
+        todas.extend(resultados.get(i, []))
+
+    seen: set[int] = set()
+    unicas: list[dict] = []
+    for vela in todas:
+        if vela["openTime"] not in seen:
+            seen.add(vela["openTime"])
+            unicas.append(vela)
+
+    duplicados = len(todas) - len(unicas)
+    if duplicados > 0:
+        logger.info("Eliminados %s duplicados en bordes de chunk.", duplicados)
+    return unicas
+
+
+def _emitir_velas_ipc(velas: list[dict]) -> int:
+    """Emite las velas a Java en chunks IPC y devuelve el total de velas emitidas."""
+    total_emitidas = 0
+    for i in range(0, len(velas), EMIT_CHUNK_SIZE):
+        chunk_ipc = velas[i: i + EMIT_CHUNK_SIZE]
+        try:
+            write_response("FETCH_CHUNK", {"velas": chunk_ipc})
+        except BrokenPipeError:
+            logger.error(
+                "Broken pipe emitiendo chunk IPC (offset=%s, size=%s, emitidas=%s/%s). "
+                "El consumidor Java cerró stdout antes de finalizar.",
+                i, len(chunk_ipc), total_emitidas, len(velas),
+            )
+            raise
+        total_emitidas += len(chunk_ipc)
+        if total_emitidas % 50_000 == 0:
+            logger.info("Emitidas %s/%s velas a Java.", total_emitidas, len(velas))
+    return total_emitidas
+
+
 def obtener_datos_binance(
     symbol: str,
     timeframe: str,
@@ -268,69 +310,13 @@ def obtener_datos_binance(
     logger.info(
         "Iniciando descarga paralela: %s chunks x hasta %s velas, "
         "%s workers. Symbol=%s tf=%s",
-        len(chunks), BINANCE_MAX_LIMIT, workers, symbol, timeframe)
+        len(chunks), BINANCE_MAX_LIMIT, workers, symbol, timeframe,
+    )
 
-    resultados: dict[int, list[dict]] = {}
-    completados = 0
+    velas_unicas = _descargar_chunks_paralelo(chunks, symbol, timeframe, workers)
+    total_emitidas = _emitir_velas_ipc(velas_unicas)
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                _fetch_chunk, i, start, end, symbol, timeframe
-            ): i
-            for i, (start, end) in enumerate(chunks)
-        }
-
-        for future in as_completed(futures):
-            chunk_index, velas = future.result()
-            resultados[chunk_index] = velas
-            completados += 1
-
-            if completados % 10 == 0 or completados == len(chunks):
-                logger.info(
-                    "Descarga: %s/%s chunks completados (%s%%)",
-                    completados, len(chunks),
-                    round(completados / len(chunks) * 100))
-
-    todas_las_velas: list[dict] = []
-    for i in range(len(chunks)):
-        todas_las_velas.extend(resultados.get(i, []))
-
-    seen: set[int] = set()
-    velas_unicas: list[dict] = []
-    for vela in todas_las_velas:
-        if vela["openTime"] not in seen:
-            seen.add(vela["openTime"])
-            velas_unicas.append(vela)
-
-    duplicados = len(todas_las_velas) - len(velas_unicas)
-    if duplicados > 0:
-        logger.info("Eliminados %s duplicados en bordes de chunk.", duplicados)
-
-    total_emitidas = 0
-    for i in range(0, len(velas_unicas), EMIT_CHUNK_SIZE):
-        chunk_ipc = velas_unicas[i: i + EMIT_CHUNK_SIZE]
-        try:
-            write_response("FETCH_CHUNK", {"velas": chunk_ipc})
-        except BrokenPipeError:
-            logger.error(
-                "Broken pipe emitiendo chunk IPC (offset=%s, size=%s, emitidas=%s/%s). "
-                "El consumidor Java cerró stdout antes de finalizar.",
-                i,
-                len(chunk_ipc),
-                total_emitidas,
-                len(velas_unicas),
-            )
-            raise
-        total_emitidas += len(chunk_ipc)
-
-        if total_emitidas % 50_000 == 0:
-            logger.info(
-                "Emitidas %s/%s velas a Java.",
-                total_emitidas, len(velas_unicas))
-
-    logger.info(
-        "Descarga y emisión completadas: %s velas únicas.", total_emitidas)
+    logger.info("Descarga y emisión completadas: %s velas únicas.", total_emitidas)
     return total_emitidas
 
 

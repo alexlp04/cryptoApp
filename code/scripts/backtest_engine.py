@@ -46,6 +46,45 @@ _DEFAULT_RISK: float = 0.02
 
 
 # =============================================================================
+# HELPERS PRIVADOS DE GESTIÓN DE POSICIÓN
+# =============================================================================
+
+def _open_long(capital: float, risk_per_trade: float, price: float) -> float:
+    """Calcula el tamaño de posición al abrir un long."""
+    return (capital * risk_per_trade) / price
+
+
+def _close_long(
+    capital: float,
+    position_size: float,
+    entry_price: float,
+    exit_price: float,
+    op_ganadas: int,
+    op_perdidas: int,
+    pos_pnl: float,
+    neg_pnl: float,
+    peak_capital: float,
+    max_drawdown: float,
+) -> tuple[float, int, int, float, float, float, float, float]:
+    """
+    Cierra un long y actualiza todos los acumuladores del backtest.
+    Devuelve: (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
+               peak_capital, max_drawdown, pnl)
+    """
+    pnl = position_size * (exit_price - entry_price)
+    capital += pnl
+    peak_capital = max(peak_capital, capital)
+    max_drawdown = max(max_drawdown, peak_capital - capital)
+    if pnl > 0:
+        op_ganadas += 1
+        pos_pnl += pnl
+    elif pnl < 0:
+        op_perdidas += 1
+        neg_pnl += abs(pnl)
+    return capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown, pnl
+
+
+# =============================================================================
 # UTILIDADES DE CARPETA Y CSV
 # =============================================================================
 
@@ -116,11 +155,8 @@ def run_backtest(
     peak_capital = capital
     max_drawdown = 0.0
     trade_count = 0
-
-    op_ganadas = 0
-    op_perdidas = 0
-    pos_pnl = 0.0
-    neg_pnl = 0.0
+    op_ganadas = op_perdidas = 0
+    pos_pnl = neg_pnl = 0.0
 
     for row in df.itertuples(index=False):
         row_data = row._asdict()
@@ -130,36 +166,25 @@ def run_backtest(
         if not in_position and strategy.should_buy(row_data):
             in_position = True
             entry_price = price
-            current_position_size = (capital * risk_per_trade) / price
-
-            trade = {"symbol": symbol, "side": "BUY", "price": price, "timestamp": timestamp}
-            if escribir_trades and carpeta_estrategia and timeframe:
-                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe, trade)
+            current_position_size = _open_long(capital, risk_per_trade, price)
             trade_count += 1
+            if escribir_trades and carpeta_estrategia and timeframe:
+                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe,
+                                    {"symbol": symbol, "side": "BUY", "price": price, "timestamp": timestamp})
 
         elif in_position and strategy.should_sell(row_data):
             in_position = False
-            pnl = current_position_size * (price - entry_price)
-            capital += pnl
-
-            if pnl > 0:
-                op_ganadas += 1
-                pos_pnl += pnl
-            elif pnl < 0:
-                op_perdidas += 1
-                neg_pnl += abs(pnl)
-
-            trade = {
-                "symbol": symbol, "side": "SELL", "price": price,
-                "timestamp": timestamp, "pnl": pnl, "capital": capital,
-            }
-            if escribir_trades and carpeta_estrategia and timeframe:
-                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe, trade)
+            (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
+             peak_capital, max_drawdown, pnl) = _close_long(
+                capital, current_position_size, entry_price, price,
+                op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown,
+            )
             trade_count += 1
-
             capital_history.append(capital)
-            peak_capital = max(peak_capital, capital)
-            max_drawdown = max(max_drawdown, peak_capital - capital)
+            if escribir_trades and carpeta_estrategia and timeframe:
+                guardar_trade_a_csv(carpeta_estrategia, symbol, timeframe,
+                                    {"symbol": symbol, "side": "SELL", "price": price,
+                                     "timestamp": timestamp, "pnl": pnl, "capital": capital})
 
     stats = _calculate_backtest_stats(
         strategy, capital, capital_history, max_drawdown,
@@ -229,11 +254,8 @@ def run_backtest_with_predictions(
     peak_capital = capital
     max_drawdown = 0.0
     trade_count = 0
-
-    op_ganadas = 0
-    op_perdidas = 0
-    pos_pnl = 0.0
-    neg_pnl = 0.0
+    op_ganadas = op_perdidas = 0
+    pos_pnl = neg_pnl = 0.0
 
     for i, row in enumerate(df.itertuples(index=False)):
         row_data = row._asdict()
@@ -243,41 +265,29 @@ def run_backtest_with_predictions(
         if not in_position and pred == 1:
             in_position = True
             entry_price = price
-            current_position_size = (capital * risk_per_trade) / price
+            current_position_size = _open_long(capital, risk_per_trade, price)
             trade_count += 1
 
         elif in_position and (pred != 1 or strategy.should_close(row_data, entry_price)):
             in_position = False
-            pnl = current_position_size * (price - entry_price)
-            capital += pnl
-
-            if pnl > 0:
-                op_ganadas += 1
-                pos_pnl += pnl
-            elif pnl < 0:
-                op_perdidas += 1
-                neg_pnl += abs(pnl)
-
+            (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
+             peak_capital, max_drawdown, _) = _close_long(
+                capital, current_position_size, entry_price, price,
+                op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown,
+            )
             trade_count += 1
             capital_history.append(capital)
-            peak_capital = max(peak_capital, capital)
-            max_drawdown = max(max_drawdown, peak_capital - capital)
 
-    # Cerrar posición abierta al final
+    # Cerrar posición abierta al final del periodo
     if in_position and n_rows > 0:
         price = float(df.iloc[-1]["close"])
-        pnl = current_position_size * (price - entry_price)
-        capital += pnl
-        if pnl > 0:
-            op_ganadas += 1
-            pos_pnl += pnl
-        elif pnl < 0:
-            op_perdidas += 1
-            neg_pnl += abs(pnl)
+        (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
+         peak_capital, max_drawdown, _) = _close_long(
+            capital, current_position_size, entry_price, price,
+            op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown,
+        )
         trade_count += 1
         capital_history.append(capital)
-        peak_capital = max(peak_capital, capital)
-        max_drawdown = max(max_drawdown, peak_capital - capital)
 
     stats = _calculate_backtest_stats(
         strategy, capital, capital_history, max_drawdown,

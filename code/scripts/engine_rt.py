@@ -9,50 +9,44 @@ import logging
 from collections import deque
 from decimal import Decimal
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path
+from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
 
-# Logging dual: archivo para diagnostico y stdout para que Java consuma eventos.
-# current_dir  = .../code/scripts/ ; code_dir = .../code/ ; project_root = raíz del proyecto
-current_dir = os.path.dirname(os.path.abspath(__file__))
-code_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(code_dir)
-log_dir = os.path.join(project_root, "logs")
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, "engine_rt.log")
-
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-
-stream_handler = logging.StreamHandler(sys.stderr)
-stream_handler.setLevel(logging.INFO)
-stream_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    handlers=[file_handler, stream_handler]
-)
-
-logger = logging.getLogger(__name__)
+logger = setup_engine_logging("engine_rt")
 
 # Compatibilidad minima para entornos Windows donde falta modulo posix.
 if sys.platform == "win32":
     if "posix" not in sys.modules:
         sys.modules["posix"] = types.ModuleType("posix")
 
-if code_dir not in sys.path:
-    sys.path.append(code_dir)
+if CODE_DIR not in sys.path:
+    sys.path.append(CODE_DIR)
+
+
+def _build_rt_signal(
+    symbol: str, action: str, timeframe: str,
+    raw_close: str, row: "pd.Series", is_real: bool,
+) -> dict:
+    """Construye el diccionario de señal para enviar a Java por stdout."""
+    return {
+        "symbol": symbol,
+        "action": action,
+        "timeframe": timeframe,
+        "price": str(Decimal(raw_close)),
+        "timestamp": int(row["timestamp"]),
+        "is_real": is_real,
+    }
+
 
 async def run_symbol(
-    symbol,
-    timeframe,
-    strategy_path,
-    capital,
-    risk_per_trade,
-    is_real,
-    max_candles=100,
-    only_closed_candles=False,
-):
+    symbol: str,
+    timeframe: str,
+    strategy_path: str,
+    capital: float,
+    risk_per_trade: float,
+    is_real: bool,
+    max_candles: int = 100,
+    only_closed_candles: bool = False,
+) -> None:
     """Procesa stream kline de un simbolo y emite senales al runtime Java."""
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
@@ -106,15 +100,7 @@ async def run_symbol(
                         action = "SELL"
 
                     if action:
-                        signal = {
-                            "symbol": symbol,
-                            "action": action,
-                            "timeframe": timeframe,
-                            "price": str(Decimal(raw_close)),  # precisión total desde string Binance
-                            "timestamp": int(row["timestamp"]),
-                            "is_real": is_real
-                        }
-                        # Formato unico de intercambio con el runtime Java.
+                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
                         print("SIGNAL\t" + json.dumps(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
@@ -123,7 +109,7 @@ async def run_symbol(
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
 
-def main():
+def main() -> None:
     """Punto de entrada: recibe configuracion IPC y arranca tareas async."""
     logger.info("Motor Python RT iniciado. Esperando configuracion de Java...")
     try:
@@ -143,7 +129,15 @@ def main():
         logger.critical("Fallo catastrofico en el motor: %s", str(e), exc_info=True)
         sys.exit(1)
 
-async def run_all(symbols, timeframe, strategy_path, capital, risk_per_trade, is_real, only_closed_candles=False):
+async def run_all(
+    symbols: list[str],
+    timeframe: str,
+    strategy_path: str,
+    capital: float,
+    risk_per_trade: float,
+    is_real: bool,
+    only_closed_candles: bool = False,
+) -> None:
     """Lanza un task por simbolo y mantiene el proceso vivo mientras haya streams."""
     tasks = [
         run_symbol(

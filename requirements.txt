@@ -6,7 +6,7 @@
 # --- Datos y Análisis Técnico ---
 pandas>=2.0.0
 numpy>=1.24.0
-ta>=0.11.0                   # Librería de indicadores técnicos (alternativa a pandas-ta)
+ta>=0.11.0                   # Librería de indicadores técnicos (SMA, EMA, RSI, MACD, etc.)
 
 # --- Machine Learning Clásico ---
 scikit-learn>=1.3.0
