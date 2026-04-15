@@ -52,9 +52,8 @@ public final class FetchCommand implements CliCommand {
         }
 
         for (String symbol : args.getCoins()) {
-            context.println().accept("Full refresh para " + symbol + " [" + args.getTimeframe() + "]...");
+            context.println().accept("Iniciando descarga de " + symbol + " [" + args.getTimeframe() + "]...");
             context.fetchMarketDataService().fullRefresh(symbol, args.getTimeframe(), days);
-            context.println().accept("Sincronizacion completa para " + symbol + ".");
         }
     }
 

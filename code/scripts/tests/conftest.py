@@ -1,47 +1,38 @@
-"""
-Fixtures compartidas para tests de engines IPC.
-"""
+"""conftest.py — Fixtures compartidas para todos los tests de los engines Python."""
 from __future__ import annotations
 
-import struct
-from datetime import datetime, timedelta
+import os
+import sys
 
-import msgpack
 import numpy as np
 import pandas as pd
 import pytest
 
+# ── Path setup ──────────────────────────────────────────────────────────────
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_DIR = os.path.dirname(_TESTS_DIR)
+_CODE_DIR = os.path.dirname(_SCRIPTS_DIR)
 
-# =============================================================================
-# HELPERS DE FRAMING IPC
-# =============================================================================
-
-def _make_framed_request(payload: dict) -> bytes:
-    """Empaqueta un payload como MessagePack con framing 4-byte big-endian."""
-    body = msgpack.packb(payload, use_bin_type=True)
-    return struct.pack(">I", len(body)) + body
+for _p in (_CODE_DIR, _SCRIPTS_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
-# =============================================================================
-# FIXTURES DE DATOS DE MERCADO
-# =============================================================================
+# ── Fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def df_ohlcv_mock() -> pd.DataFrame:
-    """DataFrame OHLCV sintético de 200 velas para tests."""
+    """DataFrame OHLCV sintético de 200 velas (seed fija para reproducibilidad)."""
     n = 200
     rng = np.random.default_rng(seed=42)
-    base_price = 40_000.0
-    returns = rng.normal(0, 0.001, n)
-    close = base_price * np.exp(np.cumsum(returns))
-
-    start = datetime(2024, 1, 1)
-    timestamps = [
-        int((start + timedelta(hours=i)).timestamp() * 1000) for i in range(n)
-    ]
-
+    close = 40_000.0 + np.cumsum(rng.normal(0, 100, n))
     return pd.DataFrame({
-        "timestamp": timestamps,
+        "timestamp": np.arange(
+            1_700_000_000_000,
+            1_700_000_000_000 + n * 3_600_000,
+            3_600_000,
+            dtype=np.int64,
+        ),
         "open":   close * 0.999,
         "high":   close * 1.002,
         "low":    close * 0.998,
@@ -51,40 +42,7 @@ def df_ohlcv_mock() -> pd.DataFrame:
 
 
 @pytest.fixture
-def ohlcv_records(df_ohlcv_mock: pd.DataFrame) -> list[dict]:
-    """Lista de dicts OHLCV lista para incluir en payloads IPC."""
-    return df_ohlcv_mock.to_dict(orient="records")
-
-
-# =============================================================================
-# FIXTURES DE PAYLOADS IPC
-# =============================================================================
-
-@pytest.fixture
-def ipc_payload_fetch() -> dict:
-    """Payload MessagePack típico para FETCH_REQUEST."""
-    return {
-        "symbol": "BTCUSDT",
-        "timeframe": "1h",
-        "since_ms": 1_704_067_200_000,  # 2024-01-01
-    }
-
-
-@pytest.fixture
-def ipc_payload_indicators(ohlcv_records: list[dict]) -> dict:
-    """Payload MessagePack típico para INDICATORS_REQUEST."""
-    return {
-        "velas": ohlcv_records,
-    }
-
-
-@pytest.fixture
-def framed_fetch_request(ipc_payload_fetch: dict) -> bytes:
-    """Frame IPC binario listo para inyectar en stdin de engine_fetch."""
-    return _make_framed_request(ipc_payload_fetch)
-
-
-@pytest.fixture
-def framed_indicators_request(ipc_payload_indicators: dict) -> bytes:
-    """Frame IPC binario listo para inyectar en stdin de engine_indicators."""
-    return _make_framed_request(ipc_payload_indicators)
+def stress_strategy():
+    """Instancia de StressTestStrategy con capital y riesgo por defecto."""
+    from strategies.StressTestStrategy import StressTestStrategy
+    return StressTestStrategy(capital=10_000.0, risk_per_trade=0.02)

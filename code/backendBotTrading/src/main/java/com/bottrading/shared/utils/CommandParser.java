@@ -21,7 +21,9 @@ public class CommandParser {
     private final List<String> coins = new ArrayList<>();
     private final List<String> positionalArgs = new ArrayList<>();
     private Map<String, Object> hyperparams = new HashMap<>();
-    private Double minAccuracy = null;
+    private Double minComposite = null;
+    private Integer nTrials = null;
+    private Integer cvFolds = null;
 
     // Variables de control de errores
     private boolean errorSintaxis = false;
@@ -71,8 +73,16 @@ public class CommandParser {
                     parseParams(requireValue(parts, index));
                     index += 2;
                 }
-                case "-min-accuracy", "-ma" -> {
-                    parseMinAccuracy(requireValue(parts, index));
+                case "-min-composite", "-mc" -> {
+                    parseMinComposite(requireValue(parts, index));
+                    index += 2;
+                }
+                case "-n-trials", "-nt" -> {
+                    parseNTrials(requireValue(parts, index));
+                    index += 2;
+                }
+                case "-cv-folds", "-cv" -> {
+                    parseCvFolds(requireValue(parts, index));
                     index += 2;
                 }
                 default -> {
@@ -135,7 +145,11 @@ public class CommandParser {
 
     public Map<String, Object> getHyperparams() { return hyperparams; }
 
-    public Double getMinAccuracy() { return minAccuracy; }
+    public Double getMinComposite() { return minComposite; }
+
+    public Integer getNTrials() { return nTrials; }
+
+    public Integer getCvFolds() { return cvFolds; }
 
 
     private int parseCoins(String[] parts, int startIndex) {
@@ -156,18 +170,48 @@ public class CommandParser {
         }
     }
 
-    private void parseMinAccuracy(String value) {
+    private void parseMinComposite(String value) {
         try {
             double parsed = Double.parseDouble(value);
             if (parsed <= 0 || parsed > 100) {
                 this.errorSintaxis = true;
-                this.mensajeError = "Error de sintaxis: -min-accuracy debe estar entre 1 y 100.";
+                this.mensajeError = "Error de sintaxis: -min-composite debe estar entre 1 y 100.";
             } else {
-                this.minAccuracy = parsed;
+                this.minComposite = parsed;
             }
         } catch (NumberFormatException e) {
             this.errorSintaxis = true;
-            this.mensajeError = "Error de sintaxis: El valor para -min-accuracy debe ser un número (ej: 60)";
+            this.mensajeError = "Error de sintaxis: El valor para -min-composite debe ser un número (ej: 60)";
+        }
+    }
+
+    private void parseNTrials(String value) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed <= 0) {
+                this.errorSintaxis = true;
+                this.mensajeError = "Error de sintaxis: -n-trials debe ser un entero positivo.";
+            } else {
+                this.nTrials = parsed;
+            }
+        } catch (NumberFormatException e) {
+            this.errorSintaxis = true;
+            this.mensajeError = "Error de sintaxis: El valor para -n-trials debe ser un número entero (ej: 50)";
+        }
+    }
+
+    private void parseCvFolds(String value) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 2 || parsed > 20) {
+                this.errorSintaxis = true;
+                this.mensajeError = "Error de sintaxis: -cv-folds debe estar entre 2 y 20.";
+            } else {
+                this.cvFolds = parsed;
+            }
+        } catch (NumberFormatException e) {
+            this.errorSintaxis = true;
+            this.mensajeError = "Error de sintaxis: El valor para -cv-folds debe ser un número entero (ej: 5)";
         }
     }
 

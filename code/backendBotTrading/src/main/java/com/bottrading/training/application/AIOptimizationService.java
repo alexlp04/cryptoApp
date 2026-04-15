@@ -35,9 +35,10 @@ public class AIOptimizationService implements OptimizeModelUseCase {
 
     @Override
     public String optimizarHiperparametros(String nombreModelo, String timeframe, String symbol,
-            int dias, String strategyName, double minAccuracy) {
+            int dias, String strategyName, double minComposite,
+            int nTrials, int cvFolds) {
         try {
-            return ejecutarOptimizacion(nombreModelo, timeframe, symbol, dias, strategyName, minAccuracy);
+            return ejecutarOptimizacion(nombreModelo, timeframe, symbol, dias, strategyName, minComposite, nTrials, cvFolds);
         } catch (StrategyExecutionException e) {
             throw e;
         } catch (Exception e) {
@@ -47,7 +48,7 @@ public class AIOptimizationService implements OptimizeModelUseCase {
     }
 
     private String ejecutarOptimizacion(String nombreModelo, String timeframe, String symbol,
-            int dias, String strategyName, double minAccuracy) {
+            int dias, String strategyName, double minComposite, int nTrials, int cvFolds) {
         ConsoleLoader loader = ConsoleLoader.getInstance();
         if (strategyName == null || strategyName.isBlank()) {
             throw new StrategyExecutionException(
@@ -55,9 +56,9 @@ public class AIOptimizationService implements OptimizeModelUseCase {
                     + "Los indicadores se calculan siempre vía populate_indicators() de la estrategia.");
         }
 
-        loader.startSpinner("[OPTIMIZE] Validando estrategia y configuración inicial");
-        log.info("[optimize] Inicio optimización model={} symbol={} timeframe={} dias={} strategy={} minAccuracy={}%%",
-            nombreModelo, symbol, timeframe, dias, strategyName, minAccuracy);
+        loader.startSpinner("Validando estrategia y configuración inicial...");
+        log.info("[optimize] Inicio optimización model={} symbol={} timeframe={} dias={} strategy={} minComposite={}%%",
+            nombreModelo, symbol, timeframe, dias, strategyName, minComposite);
 
         long now = System.currentTimeMillis();
         final boolean useDynamicStrategy = true;
@@ -68,7 +69,7 @@ public class AIOptimizationService implements OptimizeModelUseCase {
 
         if (useDynamicStrategy) {
             try {
-                loader.updateMessage("[OPTIMIZE] Inspeccionando warmup y velas requeridas de la estrategia");
+                loader.updateMessage("Calculando ventana de datos necesaria para la estrategia...");
                 warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
                 int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
                 int candlesPerDay = resolveCandlesPerDay(timeframe);
@@ -83,46 +84,50 @@ public class AIOptimizationService implements OptimizeModelUseCase {
                     strategyName, warmupCandles, daysForPreparation);
         }
 
-            loader.updateMessage("[OPTIMIZE] Descargando/actualizando velas para optimización");
+        loader.updateMessage("Descargando y actualizando velas históricas...");
         fetchMarketDataUseCase.fetchIncremental(symbol, timeframe, daysForPreparation, now);
 
-            loader.updateMessage("[OPTIMIZE] Consultando velas en repositorio local");
+        // fetchIncremental detiene el ConsoleLoader internamente — reiniciamos el spinner
+        loader.startSpinner("Preparando dataset de entrenamiento...");
         long targetTimestamp = now - (daysForPreparation * 24L * 60L * 60L * 1000L);
         List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
                 symbol, timeframe, targetTimestamp);
 
-            log.info("[optimize] Velas disponibles tras fetch incremental: {}", velas.size());
+        log.info("[optimize] Velas disponibles tras fetch incremental: {}", velas.size());
 
         if (velas.isEmpty()) {
-                loader.stop("[OPTIMIZE] Sin datos suficientes para optimizar");
+            loader.stop("Sin datos suficientes para optimizar.");
             return "Error: No hay datos suficientes de " + symbol + " para optimizar.";
         }
 
         log.info("Enviando {} velas crudas al motor de optimización — modo: {}",
                 velas.size(), useDynamicStrategy ? "estrategia dinámica (" + strategyName + ")" : "legacy");
 
-        loader.updateMessage("[OPTIMIZE] Ejecutando engine_optimize.py (Optuna + backtest interno)");
+        loader.updateMessage("Buscando hiperparámetros óptimos ("
+                + velas.size() + " velas) — puede tardar varios minutos...");
 
         OptimizationResult result = optimizationEnginePort.ejecutarOptimizacion(
                 nombreModelo,
                 strategyPath,
                 Map.of(symbol, velas),
                 timeframe,
-                minAccuracy / 100.0,
-                warmupCandles);
+                minComposite / 100.0,
+                warmupCandles,
+                nTrials,
+                cvFolds);
 
         if (!result.success()) {
-            loader.stop("[OPTIMIZE] Falló la ejecución en engine_optimize.py");
+            loader.stop("La optimización no pudo completarse.");
             throw new StrategyExecutionException("Optimización IA falló: " + result.errorMessage());
         }
 
-        loader.updateMessage("[OPTIMIZE] Procesando respuesta y formateando salida");
+        loader.updateMessage("Procesando resultados...");
         log.info("[optimize] Optimización completada. status={} trials={}/{} best_cv={}%%",
                 result.resultData().getOrDefault("status", "unknown"),
                 result.resultData().getOrDefault("trials_completed", "?"),
                 result.resultData().getOrDefault("trials_total", "?"),
                 result.resultData().getOrDefault("best_accuracy_cv_pct", "?"));
-        loader.stop("[OPTIMIZE] Optimización finalizada");
+        loader.stop("✅ Optimización completada.");
 
         return formatearResultadoOptimizacion(result.resultData());
     }

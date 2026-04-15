@@ -12,6 +12,8 @@ public interface OptimizationEnginePort {
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
             String timeframe,
-            double minAccuracy,
-            Integer warmupCandles);
+            double minComposite,
+            Integer warmupCandles,
+            int nTrials,
+            int cvFolds);
 }

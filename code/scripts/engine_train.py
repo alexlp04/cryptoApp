@@ -135,8 +135,13 @@ def main() -> None:
             logger.info(
                 "Seleccionado: Red Neuronal Profunda (Deep Learning) - n_clases=%d", n_classes
             )
+            from sklearn.utils.class_weight import compute_class_weight
+            _cw = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
+            _cw_dict: dict[int, float] = dict(zip(np.unique(y_train).tolist(), _cw.tolist()))
+            logger.info("class_weight (NN train): %s", _cw_dict)
             model, y_pred = build_and_train_neural_network(
-                X_train, y_train, X_test, hyperparams, n_classes=n_classes
+                X_train, y_train, X_test, hyperparams, n_classes=n_classes,
+                class_weight=_cw_dict,
             )
             suffix = f"_{strategy_name}" if strategy_name else ""
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
@@ -159,6 +164,12 @@ def main() -> None:
         else:
             logger.info("Seleccionado: Modelo ML clasico (%s)", model_type.upper())
             model = build_sklearn_model(model_type, hyperparams)
+            from sklearn.utils.class_weight import compute_class_weight
+            _cw_sk = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
+            _cw_sk_dict: dict[int, float] = dict(zip(np.unique(y_train).tolist(), _cw_sk.tolist()))
+            logger.info("class_weight (sklearn train): %s", _cw_sk_dict)
+            if hasattr(model, "class_weight"):
+                model.set_params(class_weight=_cw_sk_dict)
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
 

@@ -7,8 +7,9 @@ from strategies.BaseStrategy import BaseStrategy
 class StressTestStrategy(BaseStrategy):
     WARMUP_PERIOD = 20
 
-    # Para velas de 1 minuto, 0.1% de movimiento ya es una señal clara
-    LABEL_RETURN_THRESHOLD: float = 0.001
+    # 0.4 % por vela de 1 minuto: cubre spread + comisión típicos y reduce ruido.
+    # Un threshold de 0.1 % generaba etiquetas triviales que el modelo memorizaba.
+    LABEL_RETURN_THRESHOLD: float = 0.004
 
     def __init__(self, capital=1000, risk_per_trade=0.02):
         super().__init__(capital, risk_per_trade)
@@ -66,10 +67,26 @@ class StressTestStrategy(BaseStrategy):
                 "atr_norm", "bb_pct", "roc_5"]
 
     def should_buy(self, row):
-        return row["ema_gap"] > 0 and row["rsi_fast"] < 65 and row["ret_1"] > -0.002
+        # Condiciones más estrictas para reducir señales falsas:
+        # - EMA gap significativo (> 0.001, no solo positivo)
+        # - RSI en zona media-baja (< 55, no solo < 65)
+        # - Momentum positivo en el último tick
+        # - Volumen por encima de la media (vol_z > 0.5)
+        return (
+            row["ema_gap"] > 0.001
+            and row["rsi_fast"] < 55
+            and row["ret_1"] > 0.0
+            and row["vol_z"] > 0.5
+        )
 
     def should_sell(self, row):
-        return row["ema_gap"] < 0 and row["rsi_fast"] > 35 and row["ret_1"] < 0.002
+        # Condiciones simétricas y estrictas para ventas
+        return (
+            row["ema_gap"] < -0.001
+            and row["rsi_fast"] > 45
+            and row["ret_1"] < 0.0
+            and row["vol_z"] > 0.5
+        )
 
     def get_stop_loss(self, entry_price: float, row) -> float:
         return entry_price * 0.997

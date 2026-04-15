@@ -65,11 +65,12 @@ public class FetchService implements FetchMarketDataUseCase {
     private static final int BATCH_INSERT_SIZE = 50000;
     private static final int MAX_RETRIES = 3;
         private static final int BINANCE_PAGE_LIMIT = 1000;
-        private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines";
+        private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/uiKlines";
         private static final Duration BINANCE_HTTP_TIMEOUT = Duration.ofSeconds(30);
         private static final String SQL_INSERT_VELA_PLAIN =
             "INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, "
-                + "taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                + "taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                + " ON DUPLICATE KEY UPDATE close = VALUES(close), volume = VALUES(volume)";
 
             private record PageProcessResult(long lastOpenTime, int inserted) {
             }
@@ -85,17 +86,19 @@ public class FetchService implements FetchMarketDataUseCase {
     }
 
     /**
-     * Coordina la descarga incremental de datos de mercado.
-     * Incluye detección de huecos en el rango histórico completo para evitar
-     * falsos "al día" cuando hay agujeros antiguos.
+     * Verifica el historial almacenado y lanza UNA SOLA descarga Python si faltan datos.
+     *
+     * Si existen huecos: llama a Python desde el primer punto faltante hasta "now".
+     *   → Python descarga en paralelo (5 workers). Los datos ya presentes entre huecos
+     *     se re-insertan por ON DUPLICATE KEY UPDATE (no-op, son velas cerradas inmutables).
+     * Si no hay huecos: solo descarga la cola nueva desde lastTimestamp+1.
      */
     @Override
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
-        ConsoleLoader.getInstance().startDots("Verificando historial local para " + symbol);
+        ConsoleLoader.getInstance().startDots("Verificando historial de " + symbol + " [" + interval + "]");
 
         Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
-
         if (lastTimestamp == null) {
             ConsoleLoader.getInstance().stopClear();
             log.info("No hay datos previos. Iniciando descarga completa...");
@@ -106,22 +109,25 @@ public class FetchService implements FetchMarketDataUseCase {
         long intervalMillis = getIntervalMillis(interval);
         long now = System.currentTimeMillis();
         Long minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
-        Long firstGap = null;
-        if (minTimestamp != null) {
-            firstGap = encontrarPrimerHueco(symbol, interval, minTimestamp, lastTimestamp, intervalMillis);
-        }
-
         ConsoleLoader.getInstance().stopClear();
 
-        if (firstGap != null) {
-            log.warn("Hueco histórico detectado para {} [{}]. Resincronizando desde {}", symbol, interval, firstGap);
-            callPythonAndSave(symbol, interval, firstGap);
-        } else if (now - lastTimestamp > intervalMillis) {
-            log.info("Datos desactualizados. Descargando desde: {}", lastTimestamp);
-            callPythonAndSave(symbol, interval, lastTimestamp + 1);
-        } else {
+        if (minTimestamp != null) {
+            Long firstMissing = findFirstMissingPoint(symbol, interval, minTimestamp, lastTimestamp, intervalMillis);
+            if (firstMissing != null) {
+                log.info("Hueco detectado para {} [{}] desde {}. Rellenando con descarga paralela.",
+                        symbol, interval, firstMissing);
+                callPythonAndSave(symbol, interval, firstMissing);
+                return;
+            }
+        }
+
+        long fetchFrom = lastTimestamp + intervalMillis;
+        if (fetchFrom > now) {
             ConsoleLoader.getInstance().stop("✅ Historial de " + symbol + " ya está actualizado.");
             log.info("Los datos ya están al día.");
+        } else {
+            log.info("Actualizando cola para {} [{}] desde: {}", symbol, interval, fetchFrom);
+            callPythonAndSave(symbol, interval, fetchFrom);
         }
     }
 
@@ -260,87 +266,77 @@ public class FetchService implements FetchMarketDataUseCase {
     }
 
     /**
-     * Coordina la descarga incremental inteligente.
+     * Descarga incremental para una ventana de N días.
+     *
+     * Caso 1: Sin datos o historial anterior a la ventana → descarga completa desde windowStart.
+     * Caso 2: Hay huecos → una sola llamada Python desde el primer punto faltante hasta "now".
+     *   Los datos ya presentes entre huecos se re-insertan con ON DUPLICATE KEY (no-op).
+     * Caso 3: Sin huecos → solo descarga cola nueva desde lastTimestamp+1.
+     *
+     * La detección de huecos usa findFirstInternalGapOpenTime (continuidad SQL),
+     * sin comparación de conteos que genera falsos positivos con timestamps no alineados.
      */
     @Override
     public long fetchIncremental(String symbol, String interval, int dias, long now) {
         long millisPerDay = 24L * 60L * 60L * 1000L;
-        long targetTimestamp = now - dias * millisPerDay;
-
-        ConsoleLoader.getInstance().startDots("Analizando brechas de datos para " + symbol);
-        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        long windowStart = now - (long) dias * millisPerDay;
         long intervalMillis = getIntervalMillis(interval);
-        long fetchFromTimestamp;
 
-        if (lastTimestamp != null && lastTimestamp > targetTimestamp) {
-            Long firstGap = encontrarPrimerHueco(symbol, interval, targetTimestamp, lastTimestamp, intervalMillis);
-            if (firstGap != null) {
-                fetchFromTimestamp = firstGap;
-                log.warn("Hueco detectado en ventana de entrenamiento ({} días). Resincronizando desde {}", dias,
-                        fetchFromTimestamp);
-            } else {
-                fetchFromTimestamp = lastTimestamp;
-                log.info("Historial detectado sin huecos. Descargando solo nuevas velas desde: {}", lastTimestamp);
-            }
-        } else {
-            fetchFromTimestamp = targetTimestamp;
-            log.info("Historial incompleto. Descargando {} días completos desde: {}", dias, targetTimestamp);
+        ConsoleLoader.getInstance().startDots("Analizando datos para " + symbol + " [" + interval + "]");
+        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        ConsoleLoader.getInstance().stopClear();
+
+        // Caso 1: Sin datos o historial insuficiente — descarga desde el inicio de la ventana
+        if (lastTimestamp == null || lastTimestamp < windowStart) {
+            long fetchFrom = (lastTimestamp != null) ? lastTimestamp + intervalMillis : windowStart;
+            log.info("Sin historial suficiente para ventana de {} días. Descargando desde: {}", dias, fetchFrom);
+            callPythonAndSave(symbol, interval, fetchFrom);
+            return fetchFrom;
         }
 
-        ConsoleLoader.getInstance().stopClear();
-        ConsoleLoader.getInstance().startSpinner("Limpiando datos residuales de " + symbol);
-        
-        indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
-        velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, fetchFromTimestamp);
+        // Caso 2: Detectar primer hueco — una sola llamada Python cubre huecos + cola
+        Long firstMissing = findFirstMissingPoint(symbol, interval, windowStart, lastTimestamp, intervalMillis);
+        if (firstMissing != null) {
+            log.info("Huecos detectados para {} [{}] desde {}. Descarga paralela hasta now (ON DUPLICATE KEY).",
+                    symbol, interval, firstMissing);
+            callPythonAndSave(symbol, interval, firstMissing);
+            return firstMissing;
+        }
 
-        ConsoleLoader.getInstance().stopClear();
-        
-        callPythonAndSave(symbol, interval, fetchFromTimestamp);
+        // Caso 3: Sin huecos — solo descargar cola nueva
+        long fetchFrom = lastTimestamp + intervalMillis;
+        if (fetchFrom > now) {
+            log.info("Historial completo y al día para {} [{}].", symbol, interval);
+            return lastTimestamp;
+        }
 
-        return fetchFromTimestamp;
+        log.info("Sin huecos. Descargando cola nueva para {} [{}] desde: {}", symbol, interval, fetchFrom);
+        callPythonAndSave(symbol, interval, fetchFrom);
+        return fetchFrom;
     }
 
     /**
-     * Encuentra el primer hueco de velas en [fromTimestamp, toTimestamp].
-     * Si no hay huecos, devuelve null.
+     * Devuelve el primer timestamp faltante en [windowStart, lastTimestamp],
+     * o null si toda la ventana tiene datos continuos.
+     *
+     * Tolerancia: si el primer dato existente está a ≤ 1 intervalo de windowStart,
+     * se trata como desfase de alineación normal, no como hueco real.
      */
-    private Long encontrarPrimerHueco(String symbol, String interval, long fromTimestamp, long toTimestamp,
-            long intervalMillis) {
-        if (toTimestamp < fromTimestamp) {
-            return null;
+    private Long findFirstMissingPoint(String symbol, String interval,
+            long windowStart, long lastTimestamp, long intervalMillis) {
+        Long firstExisting = velaRepo.findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                symbol, interval, windowStart, lastTimestamp);
+
+        if (firstExisting == null) {
+            return windowStart;
         }
 
-        long expected = ((toTimestamp - fromTimestamp) / intervalMillis) + 1;
-        long actual = velaRepo.countBySymbolAndIntervalAndOpenTimeBetween(symbol, interval, fromTimestamp, toTimestamp);
-
-        if (actual >= expected) {
-            return null;
+        if (firstExisting > windowStart + intervalMillis) {
+            return windowStart;
         }
 
-        Long firstInRange = velaRepo.findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(symbol, interval,
-                fromTimestamp, toTimestamp);
-        if (firstInRange == null) {
-            return fromTimestamp;
-        }
-
-        if (firstInRange > fromTimestamp) {
-            return fromTimestamp;
-        }
-
-        Long internalGap = velaRepo.findFirstInternalGapOpenTime(symbol, interval, fromTimestamp, toTimestamp,
-                intervalMillis);
-        if (internalGap != null) {
-            return internalGap;
-        }
-
-        Long maxInRange = velaRepo.findMaxOpenTimeBySymbolAndIntervalAndOpenTimeBetween(symbol, interval,
-                fromTimestamp, toTimestamp);
-        if (maxInRange != null && maxInRange + intervalMillis <= toTimestamp) {
-            return maxInRange + intervalMillis;
-        }
-
-        // Fallback defensivo si el conteo detectó inconsistencia pero no se pudo localizar.
-        return fromTimestamp;
+        return velaRepo.findFirstInternalGapOpenTime(
+                symbol, interval, firstExisting, lastTimestamp, intervalMillis);
     }
 
     /**
@@ -357,7 +353,7 @@ public class FetchService implements FetchMarketDataUseCase {
 
     private void ejecutarIntentoFetch(String symbol, String interval, Long fromTimestamp)
             throws PythonBridgeExecutionException {
-        ConsoleLoader.getInstance().startSpinner("Sincronizando velas con MessagePack para " + symbol);
+        ConsoleLoader.getInstance().startSpinner("Descargando velas de Binance: " + symbol + " [" + interval + "]");
         try {
             List<String> args = new ArrayList<>();
             args.add(symbol);
@@ -378,7 +374,7 @@ public class FetchService implements FetchMarketDataUseCase {
 
             int totalGuardadas = pythonBridgeFacade.execute(request);
 
-            ConsoleLoader.getInstance().stop("✅ Sincronización completa para " + symbol + ". Velas: " + totalGuardadas);
+            ConsoleLoader.getInstance().stop("✅ " + symbol + " [" + interval + "] — " + totalGuardadas + " velas sincronizadas");
             log.info("Fetch completado para {}. Total guardado: {}", symbol, totalGuardadas);
         } catch (PythonBridgeExecutionException e) {
             ConsoleLoader.getInstance().stopClear();
@@ -403,6 +399,8 @@ public class FetchService implements FetchMarketDataUseCase {
             List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
             if (!velasChunk.isEmpty()) {
                 totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
+                ConsoleLoader.getInstance().updateMessage(
+                        "Descargando " + symbol + " [" + interval + "] — " + totalGuardadas + " velas");
             }
         }
 
