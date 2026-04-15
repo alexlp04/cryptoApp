@@ -10,7 +10,9 @@ import com.bottrading.shared.utils.CommandParser;
  */
 public final class OptimizeCommand implements CliCommand {
 
-    private static final double DEFAULT_MIN_ACCURACY = 55.0;
+    private static final double DEFAULT_MIN_COMPOSITE = 55.0;
+    private static final int DEFAULT_N_TRIALS = 100;
+    private static final int DEFAULT_CV_FOLDS = 5;
 
     @Override
     public String name() {
@@ -30,15 +32,18 @@ public final class OptimizeCommand implements CliCommand {
         }
 
         if (args.getModelo() == null || args.getTimeframe() == null || args.getCoins().isEmpty()) {
-            context.println().accept("Uso: optimize -model <modelo> -tf <timeframe> -coins <coin> [-d <dias>] [-strategy <nombre>] [-min-accuracy <porcentaje>]");
-            context.println().accept("Ejemplo: optimize -model xgboost -tf 1h -coins BTCUSDT -d 365 -strategy RSISMAStrategy -min-accuracy 60");
+            context.println().accept("Uso: optimize -model <modelo> -tf <timeframe> -coins <coin> [-d <dias>] [-strategy <nombre>] [-min-composite <porcentaje>] [-n-trials <numero>] [-cv-folds <numero>]");
+            context.println().accept("Ejemplo: optimize -model xgboost -tf 1h -coins BTCUSDT -d 365 -strategy RSISMAStrategy -min-composite 60 -n-trials 100 -cv-folds 5");
             return;
         }
 
-        double minAccuracy = resolverMinAccuracy(args, context);
-        if (minAccuracy < 0) {
+        double minComposite = resolverMinComposite(args, context);
+        if (minComposite < 0) {
             return;
         }
+
+        int nTrials = args.getNTrials() != null ? args.getNTrials() : DEFAULT_N_TRIALS;
+        int cvFolds = args.getCvFolds() != null ? args.getCvFolds() : DEFAULT_CV_FOLDS;
 
         String coin = args.getCoins().get(0);
         int diasEntrenamiento = validarYCalcularDias(args.getTimeframe(), args.getDays(), context);
@@ -49,7 +54,7 @@ public final class OptimizeCommand implements CliCommand {
 
         context.println().accept("Iniciando optimizacion de hiperparametros...");
         context.println().accept("Buscando configuracion optima para " + args.getModelo().toUpperCase()
-                + " en " + coin + "/" + args.getTimeframe() + " (100 trials)...");
+                + " en " + coin + "/" + args.getTimeframe() + " (" + nTrials + " trials, " + cvFolds + " folds)...");
 
         String resultado = context.aiOptimizationService().optimizarHiperparametros(
                 args.getModelo(),
@@ -57,22 +62,24 @@ public final class OptimizeCommand implements CliCommand {
                 coin,
                 diasEntrenamiento,
                 args.getEstrategia(),
-                minAccuracy);
+                minComposite,
+                nTrials,
+                cvFolds);
 
         context.println().accept("\n--- RESULTADO OPTIMIZACION ---");
         context.println().accept(resultado);
         context.println().accept("------------------------------");
     }
 
-    private double resolverMinAccuracy(CommandParser args, CliCommandContext context) {
-        if (args.getMinAccuracy() == null) {
-            context.println().accept("No se especifico -min-accuracy. Usando valor por defecto: "
-                    + DEFAULT_MIN_ACCURACY + "%");
-            return DEFAULT_MIN_ACCURACY;
+    private double resolverMinComposite(CommandParser args, CliCommandContext context) {
+        if (args.getMinComposite() == null) {
+            context.println().accept("No se especifico -min-composite. Usando valor por defecto: "
+                    + DEFAULT_MIN_COMPOSITE + "%");
+            return DEFAULT_MIN_COMPOSITE;
         }
-        double val = args.getMinAccuracy();
+        double val = args.getMinComposite();
         if (val <= 0 || val > 100) {
-            context.println().accept("Error: -min-accuracy debe estar entre 1 y 100.");
+            context.println().accept("Error: -min-composite debe estar entre 1 y 100.");
             return -1;
         }
         return val;

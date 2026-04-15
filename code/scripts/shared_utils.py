@@ -330,6 +330,7 @@ def build_and_train_neural_network(
     X_test: "np.ndarray",
     hyperparams: dict[str, Any],
     n_classes: int = 2,
+    class_weight: dict[int, float] | None = None,
 ) -> "tuple[Any, np.ndarray]":
     """
     Construye, entrena y evalúa una Red Neuronal Feed-Forward.
@@ -358,7 +359,7 @@ def build_and_train_neural_network(
 
     try:
         import tensorflow as tf  # noqa: F401
-        from tensorflow.keras.callbacks import Callback
+        from tensorflow.keras.callbacks import Callback, EarlyStopping
         from tensorflow.keras.layers import Dense, Dropout, Normalization
         from tensorflow.keras.models import Sequential
         from tensorflow.keras.optimizers import Adam
@@ -412,11 +413,15 @@ def build_and_train_neural_network(
         "Entrenando Red Neuronal: epocas=%d batch=%d lr=%s n_clases=%d loss=%s",
         epochs, batch_size, learning_rate, n_classes, loss_fn,
     )
+    es = EarlyStopping(
+        monitor="val_loss", patience=5, restore_best_weights=True, verbose=0
+    )
     model.fit(
         X_train, y_train,
         epochs=epochs, batch_size=batch_size,
         validation_split=0.1, verbose=0,
-        callbacks=[_EpochLogger()],
+        callbacks=[_EpochLogger(), es],
+        class_weight=class_weight,
     )
 
     if is_multiclass:

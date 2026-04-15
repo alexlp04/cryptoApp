@@ -59,8 +59,9 @@ import pandas as pd
 from optuna.pruners import MedianPruner
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 import lightgbm as lgb
 import xgboost as xgb
 
@@ -91,6 +92,9 @@ DEFAULT_CV_FOLDS: int = 5
 DEFAULT_MIN_COMPOSITE: float = 0.55
 MIN_SAMPLES_REQUIRED: int = 50
 RESULTS_SUBDIR: str = "optimize"
+# Máximo de filas usadas durante la búsqueda con Optuna para modelos NN.
+# El entrenamiento final siempre usa el dataset completo.
+OPTUNA_NN_MAX_SAMPLES: int = 50_000
 
 
 # =============================================================================
@@ -205,14 +209,30 @@ _SUGGEST_FN: dict[str, Any] = {
 # =============================================================================
 
 def _build_and_eval_neural_network(
-    X: np.ndarray, y: np.ndarray, params: dict[str, Any], cv_folds: int
-) -> tuple[float, float]:
+    X: np.ndarray,
+    y: np.ndarray,
+    params: dict[str, Any],
+    cv_folds: int,
+    df_enriched: pd.DataFrame | None = None,
+    strategy: Any | None = None,
+    timestamps: np.ndarray | None = None,
+    label_encoder: Any = None,
+    symbol: str = "UNKNOWN",
+    optuna_max_samples: int = OPTUNA_NN_MAX_SAMPLES,
+) -> tuple[float, float, float, float, float, float]:
     """
     Entrena una red neuronal con los parámetros dados y devuelve
-    (cv_accuracy_mean, train_accuracy).
+    (cv_accuracy_mean, train_accuracy, f1_cv, win_rate_cv, pf_norm_cv, sharpe_norm_cv).
     No usa cross_val_score (Keras no es compatible) → hace k-fold manual.
+    Cuando se proporcionan df_enriched, strategy, timestamps y label_encoder,
+    ejecuta un backtest por fold para obtener métricas de trading reales.
+
+    Para la fase de búsqueda Optuna usa como máximo `optuna_max_samples` filas
+    (muestra estratificada de las últimas filas) para reducir el tiempo del trial.
+    El entrenamiento final llama a esta función con el dataset completo.
     """
     import tensorflow as tf  # importación diferida para evitar overhead cuando no se usa
+    from tensorflow.keras.callbacks import EarlyStopping
     from tensorflow.keras.layers import Dense, Dropout, Normalization
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.optimizers import Adam
@@ -224,18 +244,52 @@ def _build_and_eval_neural_network(
     hidden_layers = int(params.get("hidden_layers", 2))
     neurons = int(params.get("neurons", 64))
 
+    # Submuestreo estratégico para acelerar la fase de búsqueda Optuna.
+    # Las últimas filas son más representativas del periodo reciente.
+    if len(X) > optuna_max_samples:
+        logger.debug(
+            "Subsampling NN Optuna: %d → %d filas (optuna_max_samples)",
+            len(X), optuna_max_samples,
+        )
+        X = X[-optuna_max_samples:]
+        y = y[-optuna_max_samples:]
+        if timestamps is not None:
+            timestamps = timestamps[-optuna_max_samples:]
+
     n_classes_nn = len(np.unique(y))
     is_multiclass = n_classes_nn > 2
     output_units = n_classes_nn if is_multiclass else 1
     output_activation = "softmax" if is_multiclass else "sigmoid"
     loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
 
-    # shuffle=False preserva el orden temporal para validación realista de series temporales
-    # random_state no aplica cuando shuffle=False (scikit-learn lo rechaza)
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
-    cv_scores: list[float] = []
+    # class_weight para compensar el desbalanceo de etiquetas (problema 1)
+    raw_classes = np.unique(y)
+    cw = compute_class_weight("balanced", classes=raw_classes, y=y)
+    class_weight_dict = dict(zip(raw_classes.tolist(), cw.tolist()))
+    logger.debug("class_weight (NN): %s", class_weight_dict)
 
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    # TimeSeriesSplit garantiza que cada fold de validación es siempre posterior
+    # al conjunto de entrenamiento, respetando la causalidad de las series temporales.
+    tss = TimeSeriesSplit(n_splits=cv_folds)
+    cv_scores: list[float] = []
+    cv_f1_scores: list[float] = []
+    cv_win_rates: list[float] = []
+    cv_pf_norms: list[float] = []
+    cv_sharpe_norms: list[float] = []
+    has_backtest_data = (
+        df_enriched is not None
+        and strategy is not None
+        and timestamps is not None
+        and label_encoder is not None
+    )
+    n_classes_nn_cur = len(np.unique(y))
+    avg_mode_nn = "binary" if n_classes_nn_cur <= 2 else "weighted"
+
+    # Guardamos las predicciones del último fold para ejecutar UN SOLO backtest al final
+    last_y_pred_fold: np.ndarray | None = None
+    last_val_idx_nn: np.ndarray | None = None
+
+    for fold_idx, (train_idx, val_idx) in enumerate(tss.split(X)):
         x_tr, x_val = X[train_idx], X[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
 
@@ -254,15 +308,50 @@ def _build_and_eval_neural_network(
             loss=loss_fn,
             metrics=["accuracy"],
         )
-        model.fit(x_tr, y_tr, epochs=epochs, batch_size=batch_size,
-                  verbose=0, validation_split=0.0)
+        # EarlyStopping para evitar sobreentrenamiento y reducir tiempo por trial
+        es_fold = EarlyStopping(
+            monitor="val_loss", patience=5, restore_best_weights=True, verbose=0
+        )
+        model.fit(
+            x_tr, y_tr,
+            epochs=epochs, batch_size=batch_size,
+            validation_split=0.1,
+            callbacks=[es_fold],
+            class_weight=class_weight_dict,
+            verbose=0,
+        )
         if is_multiclass:
             y_pred_fold = np.argmax(model.predict(x_val, verbose=0), axis=1)
         else:
             y_pred_fold = (model.predict(x_val, verbose=0) > 0.5).astype(int).flatten()
-        cv_scores.append(float(accuracy_score(y_val, y_pred_fold)))
+
+        fold_acc = float(accuracy_score(y_val, y_pred_fold))
+        fold_f1 = float(f1_score(y_val, y_pred_fold, average=avg_mode_nn, zero_division=0))
+        cv_scores.append(fold_acc)
+        cv_f1_scores.append(fold_f1)
+        last_y_pred_fold = y_pred_fold
+        last_val_idx_nn = val_idx
+
+        logger.debug("NN fold %d/%d — val_acc=%.4f f1=%.4f", fold_idx + 1, cv_folds, fold_acc, fold_f1)
         tf.keras.backend.clear_session()
-        logger.debug("NN fold %d/%d — val_acc=%.4f", fold_idx + 1, cv_folds, cv_scores[-1])
+        del x_tr, x_val, y_tr, y_val
+        gc.collect()
+
+    # Backtest UNA VEZ sobre el último fold (datos más recientes — respeta causalidad)
+    if has_backtest_data and last_y_pred_fold is not None and last_val_idx_nn is not None:
+        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)  # type: ignore[union-attr]
+        val_timestamps = timestamps[last_val_idx_nn]  # type: ignore[index]
+        df_val = df_enriched[
+            df_enriched["timestamp"].isin(set(val_timestamps.tolist()))  # type: ignore[index]
+        ].sort_values("timestamp").reset_index(drop=True)
+        sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
+        cv_win_rates.append(sim["win_rate"] / 100.0)
+        cv_pf_norms.append(min(sim["profit_factor"], 5.0) / 5.0)
+        cv_sharpe_norms.append(max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0)))
+        logger.debug(
+            "  NN backtest (último fold) — win_rate=%.2f%% pf=%.4f sharpe=%.4f",
+            sim["win_rate"], sim["profit_factor"], sim.get("sharpe", 0.0),
+        )
 
     cv_mean = float(np.mean(cv_scores))
 
@@ -280,7 +369,17 @@ def _build_and_eval_neural_network(
         loss=loss_fn,
         metrics=["accuracy"],
     )
-    model_full.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0)
+    es_full = EarlyStopping(
+        monitor="val_loss", patience=5, restore_best_weights=True, verbose=0
+    )
+    model_full.fit(
+        X, y,
+        epochs=epochs, batch_size=batch_size,
+        validation_split=0.1,
+        callbacks=[es_full],
+        class_weight=class_weight_dict,
+        verbose=0,
+    )
     if is_multiclass:
         y_train_pred = np.argmax(model_full.predict(X, verbose=0), axis=1)
     else:
@@ -288,7 +387,12 @@ def _build_and_eval_neural_network(
     train_acc = float(accuracy_score(y, y_train_pred))
     tf.keras.backend.clear_session()
 
-    return cv_mean, train_acc
+    f1_cv_result = float(np.mean(cv_f1_scores)) if cv_f1_scores else cv_mean
+    win_rate_cv_result = float(np.mean(cv_win_rates)) if cv_win_rates else 0.5
+    pf_norm_cv_result = float(np.mean(cv_pf_norms)) if cv_pf_norms else 0.5
+    sharpe_norm_cv_result = float(np.mean(cv_sharpe_norms)) if cv_sharpe_norms else 0.5
+
+    return cv_mean, train_acc, f1_cv_result, win_rate_cv_result, pf_norm_cv_result, sharpe_norm_cv_result
 
 
 # =============================================================================
@@ -306,6 +410,7 @@ def _make_objective(
     cv_folds: int,
     trial_log: list[dict[str, Any]],
     label_encoder: Any,
+    optuna_max_samples: int = OPTUNA_NN_MAX_SAMPLES,
 ) -> Any:
     """
     Cierra sobre X, y, df_enriched, strategy, timestamps y devuelve la función
@@ -320,9 +425,8 @@ def _make_objective(
     """
     suggest_fn = _SUGGEST_FN.get(model_type, _suggest_random_forest)
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
-    # shuffle=False preserva el orden temporal para validación realista de series temporales
-    # random_state no aplica cuando shuffle=False (scikit-learn lo rechaza)
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=False)
+    # TimeSeriesSplit garantiza que la validación siempre es posterior al entrenamiento
+    tss = TimeSeriesSplit(n_splits=cv_folds)
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
@@ -336,17 +440,33 @@ def _make_objective(
             cv_sharpe_norms: list[float] = []
 
             if is_neural:
-                cv_acc, train_acc = _build_and_eval_neural_network(X, y, params, cv_folds)
-                f1_cv = cv_acc
-                win_rate_cv = cv_acc
-                pf_norm_cv = cv_acc
-                sharpe_norm_cv = cv_acc
+                (
+                    cv_acc, train_acc, f1_cv, win_rate_cv, pf_norm_cv, sharpe_norm_cv
+                ) = _build_and_eval_neural_network(
+                    X, y, params, cv_folds,
+                    df_enriched=df_enriched,
+                    strategy=strategy,
+                    timestamps=timestamps,
+                    label_encoder=label_encoder,
+                    symbol=symbol,
+                    optuna_max_samples=optuna_max_samples,
+                )
             else:
-                for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+                # Guardamos predicciones del último fold para backtest único al final
+                last_y_pred_sk: np.ndarray | None = None
+                last_val_idx_sk: np.ndarray | None = None
+
+                for fold_idx, (train_idx, val_idx) in enumerate(tss.split(X)):
                     x_tr, x_val = X[train_idx], X[val_idx]
                     y_tr, y_val = y[train_idx], y[val_idx]
 
                     model_fold = build_sklearn_model(model_type, params)
+                    # class_weight para compensar desbalanceo (problema 1)
+                    n_classes_fold = len(np.unique(y))
+                    cw_fold = compute_class_weight("balanced", classes=np.unique(y), y=y)
+                    cw_fold_dict = dict(zip(np.unique(y).tolist(), cw_fold.tolist()))
+                    if hasattr(model_fold, "class_weight"):
+                        model_fold.set_params(class_weight=cw_fold_dict)
                     model_fold.fit(x_tr, y_tr)
                     y_pred_val = model_fold.predict(x_val)
 
@@ -356,10 +476,20 @@ def _make_objective(
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
+                    last_y_pred_sk = y_pred_val
+                    last_val_idx_sk = val_idx
 
-                    # Backtest real sobre el fold de validación con predicciones inversas
-                    y_pred_original = label_encoder.inverse_transform(y_pred_val)
-                    val_timestamps = timestamps[val_idx]
+                    logger.debug(
+                        "  fold %d/%d | f1=%.4f acc=%.4f",
+                        fold_idx + 1, cv_folds, fold_f1, fold_acc,
+                    )
+                    del x_tr, x_val, y_tr, y_val, model_fold, y_pred_val
+                    gc.collect()
+
+                # Backtest UNA VEZ sobre el último fold (datos más recientes)
+                if last_y_pred_sk is not None and last_val_idx_sk is not None:
+                    y_pred_original = label_encoder.inverse_transform(last_y_pred_sk)
+                    val_timestamps = timestamps[last_val_idx_sk]
                     df_val = df_enriched[
                         df_enriched["timestamp"].isin(set(val_timestamps.tolist()))
                     ].sort_values("timestamp").reset_index(drop=True)
@@ -374,8 +504,7 @@ def _make_objective(
                     cv_pf_norms.append(pf_norm)
                     cv_sharpe_norms.append(sharpe_norm)
                     logger.debug(
-                        "  fold %d/%d | f1=%.4f acc=%.4f win_rate=%.2f%% pf=%.4f sharpe=%.4f",
-                        fold_idx + 1, cv_folds, fold_f1, fold_acc,
+                        "  backtest (último fold) | win_rate=%.2f%% pf=%.4f sharpe=%.4f",
                         sim["win_rate"], sim["profit_factor"], sim.get("sharpe", 0.0),
                     )
 
@@ -676,51 +805,78 @@ def _preparar_dataset(
     if "timestamp" not in df_raw.columns:
         df_raw["timestamp"] = df_raw.index
 
-    logger.info("Iniciando populate_indicators para estrategia '%s'", strategy_name)
-    t0 = datetime.now()
-    df_enriched_full = strategy.populate_indicators(df_raw.copy())
+    # ── Split ANTES de calcular indicadores ──────────────────────────────────────
+    # Los indicadores backward-looking (EMA, RSI, Bollinger…) son seguros calculados
+    # sobre el dataset completo, pero separar aquí garantiza rigor metodológico y
+    # previene leakage ante cualquier indicador con componente global en el futuro.
+    raw_split_idx = int(len(df_raw) * 0.8)
+    lookback_buffer = strategy.get_warmup_period()
+    buffer_start = max(0, raw_split_idx - lookback_buffer)
+
+    df_train_raw = df_raw.iloc[:raw_split_idx].reset_index(drop=True)
+    df_test_buffer_raw = df_raw.iloc[buffer_start:].reset_index(drop=True)
     logger.info(
-        "populate_indicators finalizado en %.2fs (filas=%d)",
-        (datetime.now() - t0).total_seconds(),
-        len(df_enriched_full),
+        "Split previo a indicadores: train=%d filas, test+buffer=%d filas (buffer=%d velas)",
+        len(df_train_raw), len(df_test_buffer_raw), raw_split_idx - buffer_start,
     )
 
-    x_df, y_ser = apply_strategy_features(
-        df_enriched_full.copy(), strategy, int(warmup_candles or 0),
+    logger.info("Calculando indicadores — conjunto TRAIN...")
+    t0 = datetime.now()
+    df_train_enriched = strategy.populate_indicators(df_train_raw.copy())
+    logger.info("populate_indicators TRAIN: %.2fs (%d filas)",
+                (datetime.now() - t0).total_seconds(), len(df_train_enriched))
+
+    logger.info("Calculando indicadores — conjunto TEST (con buffer de calentamiento)...")
+    t1 = datetime.now()
+    df_test_enriched_buf = strategy.populate_indicators(df_test_buffer_raw.copy())
+    buffer_rows = raw_split_idx - buffer_start
+    df_test_enriched = df_test_enriched_buf.iloc[buffer_rows:].reset_index(drop=True)
+    logger.info("populate_indicators TEST: %.2fs (%d filas)",
+                (datetime.now() - t1).total_seconds(), len(df_test_enriched))
+
+    del df_train_raw, df_test_buffer_raw, df_test_enriched_buf
+
+    x_df_train, y_ser_train = apply_strategy_features(
+        df_train_enriched.copy(), strategy, int(warmup_candles or 0),
         already_enriched=True,
     )
-    feature_cols = list(x_df.columns)
-    x_np = x_df.values.astype(float)
-    y_np = y_ser.values
-    timestamps_all = x_df.index.values.astype(np.int64)
+    x_df_test, y_ser_test = apply_strategy_features(
+        df_test_enriched.copy(), strategy, 0,
+        already_enriched=True,
+    )
+
+    feature_cols = list(x_df_train.columns)
+    x_train_full = x_df_train.values.astype(float)
+    y_train_full_raw = y_ser_train.values
+    X_test = x_df_test.values.astype(float)
+    y_test_raw = y_ser_test.values
+    timestamps_train = x_df_train.index.values.astype(np.int64)
+    timestamps_test = x_df_test.index.values.astype(np.int64)
 
     label_distribution = {
         str(k): int(v)
-        for k, v in y_ser.value_counts(dropna=False).to_dict().items()
+        for k, v in y_ser_train.value_counts(dropna=False).to_dict().items()
     }
     logger.info(
-        "Dataset listo: %d filas, %d features, distribución labels=%s",
-        len(x_np), len(feature_cols), label_distribution,
+        "Dataset listo: train=%d filas, test=%d filas, features=%d, distribución labels=%s",
+        len(x_train_full), len(X_test), len(feature_cols), label_distribution,
     )
 
-    split_idx = int(len(x_np) * 0.8)
-    x_train_full = x_np[:split_idx]
-    y_train_full = y_np[:split_idx]
-    X_test = x_np[split_idx:]
-    y_test = y_np[split_idx:]
-    timestamps_train = timestamps_all[:split_idx]
-    timestamps_test = timestamps_all[split_idx:]
+    # df_enriched_full para backtests finales (train + test enriquecidos)
+    df_enriched_full = pd.concat(
+        [df_train_enriched, df_test_enriched], ignore_index=True
+    ).sort_values("timestamp").reset_index(drop=True)
 
     label_encoder = LabelEncoder()
-    y_train_full = label_encoder.fit_transform(y_train_full)
-    y_test = label_encoder.transform(y_test)
+    y_train_full = label_encoder.fit_transform(y_train_full_raw)
+    y_test = label_encoder.transform(y_test_raw)
     logger.info(
         "Labels codificados: %s → índices 0..%d",
         label_encoder.classes_.tolist(),
         len(label_encoder.classes_) - 1,
     )
 
-    del df, x_df, y_ser, timestamps_all
+    del df, df_raw, x_df_train, x_df_test, y_ser_train, y_ser_test
     gc.collect()
 
     return (
@@ -736,6 +892,7 @@ def _preparar_dataset(
 def _construir_payload_respuesta(
     status: str,
     model_filename: str,
+    model_type_used: str,
     best_params: dict[str, Any],
     best_composite: float,
     best_f1_cv: float,
@@ -770,6 +927,7 @@ def _construir_payload_respuesta(
     return {
         "status": status,
         "model_saved_at": model_filename,
+        "model_type_used": model_type_used,
         "best_params": serializable_best_params,
         "best_composite_score": round(best_composite, 6),
         "best_f1_cv": round(best_f1_cv, 6),
@@ -867,11 +1025,10 @@ def main() -> None:
         x_np = np.concatenate([x_train_full, X_test])
 
         if _SUGGEST_FN.get(model_type) is None:
-            logger.warning(
-                "Tipo de modelo '%s' no reconocido. Usando random_forest como fallback.",
-                model_type,
+            raise ValueError(
+                f"Tipo de modelo no reconocido: '{model_type}'. "
+                f"Válidos: {sorted(_SUGGEST_FN.keys())}"
             )
-            model_type = "random_forest"
 
         logger.info(
             "Iniciando Optuna study: %d trials, pruner=MedianPruner, cv=%d folds",
@@ -892,6 +1049,7 @@ def main() -> None:
                 model_type, x_train_full, y_train_full,
                 df_enriched_full, strategy, timestamps_train,
                 symbol, cv_folds, trial_log, label_encoder,
+                optuna_max_samples=OPTUNA_NN_MAX_SAMPLES,
             ),
             n_trials=n_trials,
             show_progress_bar=False,
@@ -974,6 +1132,7 @@ def main() -> None:
         resultado = _construir_payload_respuesta(
             status=status,
             model_filename=model_filename,
+            model_type_used=model_type,
             best_params=best_params,
             best_composite=best_composite,
             best_f1_cv=best_f1_cv,

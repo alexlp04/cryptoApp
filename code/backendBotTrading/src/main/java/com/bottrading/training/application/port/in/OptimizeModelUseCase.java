@@ -6,5 +6,6 @@ package com.bottrading.training.application.port.in;
 public interface OptimizeModelUseCase {
 
     String optimizarHiperparametros(String nombreModelo, String timeframe, String symbol,
-                                    int dias, String strategyName, double minAccuracy);
+                                    int dias, String strategyName, double minComposite,
+                                    int nTrials, int cvFolds);
 }

@@ -42,11 +42,14 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
             String timeframe,
-            double minAccuracy,
-            Integer warmupCandles) {
+            double minComposite,
+            Integer warmupCandles,
+            int nTrials,
+            int cvFolds) {
         try {
             Map<String, Object> payload = construirPayload(
-                    modelType, strategyPath, symbolCandles, timeframe, minAccuracy, warmupCandles);
+                    modelType, strategyPath, symbolCandles, timeframe, minComposite, warmupCandles,
+                    nTrials, cvFolds);
 
             PythonBridgeRequest<OptimizationResult> request = PythonBridgeRequest
                     .<OptimizationResult>builder(PathConfig.ENGINE_OPTIMIZE_PATH)
@@ -74,8 +77,10 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
             String timeframe,
-            double minAccuracy,
-            Integer warmupCandles) {
+            double minComposite,
+            Integer warmupCandles,
+            int nTrials,
+            int cvFolds) {
         Map<String, Object> payload = new LinkedHashMap<>();
         String primarySymbol = symbolCandles.keySet().stream().findFirst().orElse("UNKNOWN");
 
@@ -83,9 +88,9 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
         payload.put("symbol", primarySymbol);
         payload.put("timeframe", timeframe);
         payload.put("dataset", serializarVelas(symbolCandles));
-        payload.put("min_accuracy", minAccuracy);
-        payload.put("n_trials", DEFAULT_N_TRIALS);
-        payload.put("cv_folds", DEFAULT_CV_FOLDS);
+        payload.put("min_composite", minComposite);
+        payload.put("n_trials", nTrials);
+        payload.put("cv_folds", cvFolds);
 
         if (strategyPath != null && !strategyPath.isBlank()) {
             payload.put("strategy_path", strategyPath);

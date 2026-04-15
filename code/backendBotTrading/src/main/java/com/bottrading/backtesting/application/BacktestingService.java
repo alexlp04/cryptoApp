@@ -57,7 +57,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             backtestPersistencePort.limpiarResultadosPrevios(nombreEstra);
         }
 
-        ConsoleLoader.getInstance().startDots("Preparando datos para backtest");
+        ConsoleLoader.getInstance().startDots("Cargando datos históricos del portfolio...");
         Map<String, List<Vela>> velasPorSimbolo = cargarDatosHistoricos(coins, tf);
 
         if (velasPorSimbolo.isEmpty()) {
@@ -101,7 +101,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk,
             boolean guardarTrades)
             throws StrategyExecutionException {
-        ConsoleLoader.getInstance().startDots("Transformando datos");
+        ConsoleLoader.getInstance().startDots("Serializando velas para el motor de backtest...");
         Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
@@ -157,7 +157,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             long startTime = System.currentTimeMillis();
             log.debug("Iniciando backtest con payload de {} bytes", jsonPayload.length());
 
-            ConsoleLoader.getInstance().startSpinner("Ejecutando backtest");
+            ConsoleLoader.getInstance().startSpinner("Ejecutando backtest, por favor espera...");
             PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_BACKTEST_PATH)
                     .operationName("backtest")
                     .noTimeout()

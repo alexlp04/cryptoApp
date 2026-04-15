@@ -54,20 +54,21 @@ public class AITrainingService implements TrainModelUseCase {
                     + "Los indicadores se calculan siempre vía populate_indicators() de la estrategia.");
         }
 
-        loader.startSpinner("[TRAIN] Validando estrategia y calculando ventana de datos");
+        loader.startSpinner("Validando estrategia y calculando ventana de datos...");
         log.info("[train] Inicio entrenamiento model={} symbol={} timeframe={} dias={} strategy={}",
             nombreModelo, symbol, timeframe, dias, strategyName);
 
         long now = System.currentTimeMillis();
         TrainingWindow trainingWindow = resolverVentanaEntrenamiento(strategyName, timeframe, dias);
 
-        loader.updateMessage("[TRAIN] Descargando/actualizando velas desde mercado");
+        loader.updateMessage("Descargando y actualizando velas históricas...");
         log.info("[train] Ventana resuelta: dias_efectivos={} strategy_path={}",
             trainingWindow.daysForPreparation(), trainingWindow.strategyPath());
 
         fetchMarketDataUseCase.fetchIncremental(symbol, timeframe, trainingWindow.daysForPreparation(), now);
 
-        loader.updateMessage("[TRAIN] Consultando velas en base de datos local");
+        // fetchIncremental detiene el ConsoleLoader internamente — reiniciamos el spinner
+        loader.startSpinner("Preparando dataset de entrenamiento...");
         long targetTimestamp = now - (trainingWindow.daysForPreparation() * 24L * 60L * 60L * 1000L);
         List<Vela> velas = velaRepository.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
                 symbol, timeframe, targetTimestamp);
@@ -75,7 +76,7 @@ public class AITrainingService implements TrainModelUseCase {
         log.info("[train] Velas disponibles tras fetch incremental: {}", velas.size());
 
         if (velas.isEmpty()) {
-            loader.stop("[TRAIN] Sin datos suficientes para entrenar");
+            loader.stop("Sin datos suficientes para entrenar.");
             return "Error: No hay datos suficientes de " + symbol + " para entrenar.";
         }
 
@@ -89,7 +90,7 @@ public class AITrainingService implements TrainModelUseCase {
                 timeframe,
                 strategyPath == null ? "" : " usando estrategia " + strategyName);
 
-            loader.updateMessage("[TRAIN] Enviando dataset al engine_train.py");
+        loader.updateMessage("Entrenando modelo con " + velas.size() + " velas — puede tardar varios minutos...");
 
         TrainingResult result = trainingEnginePort.ejecutarEntrenamiento(
                 nombreModelo,
@@ -99,15 +100,15 @@ public class AITrainingService implements TrainModelUseCase {
                 timeframe);
 
         if (!result.success()) {
-                loader.stop("[TRAIN] Entrenamiento fallido en engine_train.py");
+            loader.stop("El entrenamiento no pudo completarse.");
             throw new StrategyExecutionException("Entrenamiento IA falló: " + result.errorMessage());
         }
 
-            loader.updateMessage("[TRAIN] Procesando métricas y construyendo respuesta");
-            log.info("[train] Entrenamiento finalizado con éxito. model_path={} metrics_keys={}",
+        loader.updateMessage("Procesando métricas y construyendo respuesta...");
+        log.info("[train] Entrenamiento finalizado con éxito. model_path={} metrics_keys={}",
                 result.modelPath(),
                 result.metrics() == null ? "[]" : result.metrics().keySet());
-            loader.stop("[TRAIN] Entrenamiento finalizado con éxito");
+        loader.stop("✅ Entrenamiento completado con éxito.");
 
         return formatearResultado(nombreModelo, symbol, timeframe, velas.size(), result);
     }
