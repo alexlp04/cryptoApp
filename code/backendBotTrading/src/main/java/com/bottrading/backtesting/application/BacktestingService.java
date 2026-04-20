@@ -49,7 +49,8 @@ public class BacktestingService implements ExecuteBacktestUseCase {
     }
 
     @Override
-    public void ejecutarBacktest(String nombreEstra, String tf, List<String> coins,
+    @SuppressWarnings("java:S107")
+    public void ejecutarBacktest(String nombreEstra, String modelName, String tf, List<String> coins,
             BigDecimal capitalAsignado, BigDecimal risk, boolean limpiarBacktestsPrevios,
             boolean guardarTrades) {
 
@@ -68,7 +69,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
         ConsoleLoader.getInstance().stopClear();
 
-        String jsonResultado = ejecutarMotorBacktest(strategyPath, nombreEstra, tf, velasPorSimbolo,
+        String jsonResultado = ejecutarMotorBacktest(strategyPath, nombreEstra, modelName, tf, velasPorSimbolo,
                 capitalAsignado, risk, guardarTrades);
 
         if (jsonResultado != null && !jsonResultado.isEmpty()) {
@@ -97,16 +98,17 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         return velasPorSimbolo;
     }
 
-    private String ejecutarMotorBacktest(String rutaEstrategia, String nombreEstrategia, String timeframe,
-            Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado, BigDecimal risk,
-            boolean guardarTrades)
+    @SuppressWarnings("java:S107")
+    private String ejecutarMotorBacktest(String rutaEstrategia, String nombreEstrategia, String modelName,
+            String timeframe, Map<String, List<Vela>> velasPorSimbolo, BigDecimal capitalAsignado,
+            BigDecimal risk, boolean guardarTrades)
             throws StrategyExecutionException {
         ConsoleLoader.getInstance().startDots("Serializando velas para el motor de backtest...");
         Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
         String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
-                nombreEstrategia, guardarTrades);
+                nombreEstrategia, modelName, guardarTrades);
 
         return invocarMotorPythonConRetries(payload);
     }
@@ -135,8 +137,10 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         return m;
     }
 
+    @SuppressWarnings("java:S107")
     private String construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
-            BigDecimal capitalAsignado, BigDecimal risk, String nombreEstrategia, boolean guardarTrades) {
+            BigDecimal capitalAsignado, BigDecimal risk, String nombreEstrategia, String modelName,
+            boolean guardarTrades) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("strategy_path", ruta);
         payload.put("strategy_name", nombreEstrategia);
@@ -145,6 +149,9 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         payload.put("capital", capitalAsignado);
         payload.put("risk_per_trade", risk);
         payload.put("escribir_trades", guardarTrades);
+        if (modelName != null && !modelName.isBlank()) {
+            payload.put("model_name", modelName);
+        }
         return gson.toJson(payload);
     }
 

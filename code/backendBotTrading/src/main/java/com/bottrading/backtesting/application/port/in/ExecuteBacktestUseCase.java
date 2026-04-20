@@ -8,7 +8,8 @@ import java.util.List;
  */
 public interface ExecuteBacktestUseCase {
 
-    void ejecutarBacktest(String nombreEstra, String tf, List<String> coins,
+    @SuppressWarnings("java:S107")
+    void ejecutarBacktest(String nombreEstra, String modelName, String tf, List<String> coins,
                           BigDecimal capitalAsignado, BigDecimal risk,
                           boolean limpiarBacktestsPrevios, boolean guardarTrades);
 }
