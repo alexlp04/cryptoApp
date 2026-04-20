@@ -1,0 +1,161 @@
+\section{Tecnologías y Herramientas Utilizadas}
+
+La elección de las tecnologías empleadas responde a la necesidad de crear un 
+sistema híbrido que combine la robustez transaccional con la agilidad en el 
+análisis de datos \parencite{hilpisch_python_2018}. A continuación, se detallan 
+las herramientas principales y su justificación técnica:
+
+\begin{description}
+    \item[Java 21 y Spring Boot 3:] Se ha seleccionado como lenguaje de 
+    \textit{orquestador Java} principal debido a su fuerte tipado y su modelo de 
+    concurrencia multihilo, esencial para gestionar múltiples estrategias de 
+    trading simultáneas sin errores de memoria \parencite{treleaven_algorithmic_2013}. 
+    El ecosistema \textbf{Spring Boot 3} facilita la creación de una arquitectura 
+    modular mediante la inyección de dependencias y simplifica la persistencia 
+    de datos con \textbf{Spring Data JPA} \parencite{pivotal_springboot_2024}. 
+    La adopción de Java 21 permite el uso de \textit{Virtual Threads} (Project 
+    Loom) \parencite{goetz_jep444_2023}, una innovación de la plataforma que 
+    proporciona millones de hilos ligeros sin el \textit{overhead} de los hilos 
+    del sistema operativo tradicionales.
+
+    \item[Python 3.11+:] Es el estándar de facto en la industria para la ciencia 
+    de datos y el \textit{Machine Learning} \parencite{goodfellow_deep_2016}. Su 
+    sintaxis flexible permite iterar rápidamente en el diseño de estrategias 
+    lógicas \parencite{hilpisch_python_2018}. En este proyecto, Python actúa 
+    como el motor de cálculo matemático, delegando en él las tareas de 
+    procesamiento de señales, descarga de datos de mercado y entrenamiento de 
+    modelos \parencite{mckinney_python_2022}.
+
+    \item[Apache Maven:] Utilizado como gestor de dependencias y herramienta de 
+    construcción para el componente Java. Permite estandarizar el ciclo de vida 
+    del proyecto, garantizando que todas las librerías se gestionen de forma 
+    centralizada y reproducible \parencite{pivotal_springboot_2024}.
+
+    \item[MySQL 8.0+:] Como sistema de gestión de bases de datos relacionales 
+    (RDBMS). Su elección se justifica por su madurez y su excelente soporte para 
+    transacciones ACID \parencite{oracle_mysql_acid_2024}, lo cual es crítico 
+    para asegurar que el \textit{Ledger} y los saldos de las \textit{wallets} 
+    nunca queden en un estado inconsistente tras una operación técnica 
+    \parencite{oracle_mysql_2024}.
+
+    \item[MessagePack:] Formato binario de serialización utilizado para la 
+    comunicación inter-proceso (IPC) entre Java y Python. A diferencia de JSON, MessagePack ofrece 
+    un tamaño de mensaje sustancialmente menor y permite el uso de 
+    \textit{framing length-prefixed}, garantizando que los límites de los mensajes 
+    sean explícitos y no se corra el riesgo de lecturas incompletas o solapadas 
+    en tuberías de comunicación \parencite{furuhashi_msgpack_2013}.
+\end{description}
+
+\section{Librerías Críticas}
+
+Para alcanzar los objetivos del proyecto, se han integrado librerías 
+especializadas que extienden las capacidades de los lenguajes base 
+\parencite{richards_software_2022}.
+
+\subsection{Stack Java}
+
+\begin{itemize}
+    \item \textbf{Spring Data JPA:} Proporciona una capa de abstracción sobre 
+    Hibernate, permitiendo el uso del patrón Repository \parencite{gamma_design_1994} 
+    para consultas y persistencia sin escribir SQL manual en la mayoría de casos 
+    \parencite{spring_data_jpa_2024}.
+
+    \item \textbf{Lombok:} Utilizada para reducir el código repetitivo 
+    (\textit{boilerplate}) en las entidades y DTOs, mejorando la legibilidad y 
+    el mantenimiento del código fuente mediante anotaciones como \texttt{@Data}, 
+    \texttt{@Slf4j} y \texttt{@NoArgsConstructor} \parencite{richards_software_2022,lombok_project_2024}.
+
+    \item \textbf{MessagePack for Jackson:} Integración entre Jackson (el 
+    serializador por defecto de Spring) y el formato MessagePack 
+    \parencite{furuhashi_msgpack_2013}, permitiendo serializar y deserializar 
+    el protocolo IPC de forma eficiente \parencite{pivotal_springboot_2024}.
+
+    \item \textbf{Dotenv-java:} Permite la gestión segura de variables de 
+    entorno, separando la configuración sensible (credenciales de base de datos 
+    o claves de API) del código fuente \parencite{owasp_password_2024}.
+
+    \item \textbf{CLI con \texttt{CommandLineRunner}:} La interfaz de línea de
+    comandos interactiva se implementa directamente sobre el contrato
+    \texttt{CommandLineRunner} de Spring Boot 3 \parencite{pivotal_springboot_2024},
+    ejecutando un bucle \textit{readline} con \texttt{java.util.Scanner} que
+    parsea comandos en texto plano. Esta aproximación prescinde de frameworks
+    CLI adicionales, reduciendo dependencias externas y manteniendo el control
+    total sobre el ciclo de vida de la sesión interactiva.
+
+    \item \textbf{HikariCP:} Pool de conexiones a base de datos de alto 
+    rendimiento, optimizado para aplicaciones de baja latencia 
+    \parencite{wooldridge_hikaricp_2024}.
+\end{itemize}
+
+\subsection{Stack Python}
+
+\begin{itemize}
+    \item \textbf{Pandas y NumPy:} Fundamentales para la manipulación eficiente 
+    de las series temporales de precios (\textit{DataFrames}) 
+    \parencite{mckinney_python_2022}. Permiten realizar operaciones vectorizadas 
+    sobre miles de velas en milisegundos, algo vital para el \textit{backtesting} 
+    \parencite{treleaven_algorithmic_2013}.
+
+    \item \textbf{Scikit-Learn, XGBoost y LightGBM:} Proporcionan las 
+    implementaciones del estado del arte para los modelos predictivos 
+    \parencite{pedregosa_scikit_2011}. XGBoost, en particular, se utiliza por 
+    su capacidad de regularización para filtrar indicadores ruidosos 
+    \parencite{chen_xgboost_2016}. LightGBM complementa el catálogo permitiendo 
+    entrenamientos más rápidos en datasets de gran volumen 
+    \parencite{ke_lightgbm_2017}.
+
+    \item \textbf{TensorFlow/Keras:} Framework de Deep Learning opcional para 
+    la exploración de arquitecturas neuronales en modelos de predicción de series 
+    temporales \parencite{goodfellow_deep_2016}.
+
+    \item \textbf{Requests:} Librería de cliente HTTP utilizada para consultar 
+    la API REST de Binance al descargar datos históricos de mercado 
+    \parencite{binance_rest_api_2024,requests_python_2024}.
+
+    \item \textbf{MessagePack:} Librería de serialización correspondiente a 
+    Python, permitiendo la comunicación simétrica con el lado Java 
+    \parencite{furuhashi_msgpack_2013}.
+
+    \item \textbf{Pandas TA:} Proporciona implementaciones optimizadas de 
+    indicadores técnicos clásicos como el RSI y las medias móviles 
+    \parencite{murphy_technical_1999}, integradas directamente sobre 
+    \texttt{DataFrame} de Pandas \parencite{mckinney_python_2022} sin 
+    dependencias nativas de compilación \parencite{pandas_ta_2024}.
+
+\end{itemize}
+
+\subsection{Herramientas de Calidad y Asistencia al Desarrollo}
+
+\begin{itemize}
+    \item \textbf{GitHub Copilot:} Asistente de programación basado en
+    inteligencia artificial desarrollado por GitHub (Microsoft)
+    \parencite{github_copilot_2024}. Durante el desarrollo del proyecto se ha
+    utilizado para la generación asistida de código repetitivo, la propuesta
+    de tests unitarios y la exploración de variantes de implementación, siempre
+    bajo supervisión del desarrollador para garantizar la corrección semántica
+    y la coherencia con la arquitectura hexagonal establecida.
+
+    \item \textbf{SonarLint:} Plugin de análisis estático para el entorno de
+    desarrollo integrado \parencite{sonarsource_sonarlint_2024}. Proporciona
+    retroalimentación en tiempo real sobre \textit{code smells},
+    vulnerabilidades y violaciones de buenas prácticas Java directamente en
+    el editor, adelantando la detección de problemas al momento de escritura
+    del código antes de la fase de construcción del proyecto.
+
+    \item \textbf{Checkstyle, PMD y SpotBugs:} Suite de herramientas de
+    análisis estático integradas en el ciclo de construcción Maven.
+    Checkstyle (v10.17.0) verifica la consistencia del estilo de codificación;
+    PMD (v3.24.0) detecta fragmentos de código potencialmente problemáticos
+    mediante análisis del árbol sintáctico abstracto; SpotBugs (v4.8.6)
+    identifica patrones de \textit{bugs} conocidos mediante análisis de
+    \textit{bytecode} \parencite{owasp_password_2024}. Estas herramientas se
+    configuran como barreras de calidad (\textit{quality gates}) en la fase
+    \texttt{verify} de Maven, impidiendo que código con violaciones supere la
+    construcción.
+
+    \item \textbf{JaCoCo:} Plugin Maven de medición de cobertura de tests
+    (v0.8.12) que genera informes de cobertura por rama e instrucción tras
+    cada ejecución de la suite de pruebas, permitiendo identificar áreas del
+    sistema no ejercitadas por los tests automatizados.
+
+\end{itemize}

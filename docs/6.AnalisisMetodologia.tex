@@ -1,0 +1,42 @@
+\chapter{Análisis y Metodología}
+\label{chap:metodologia}
+
+\section{Vinculación con la Problemática Inicial}
+
+En el Capítulo \ref{chap:introduccion} se establecieron tres problemas de partida que
+justifican el desarrollo de la plataforma: (P1) dificultad de reacción del
+inversor minorista ante un mercado cripto continuo y altamente volátil,
+(P2) barrera técnica para adoptar trading algorítmico de forma segura,
+y (P3) sesgo emocional en la toma de decisiones de inversión.
+
+La metodología de este capítulo se estructura para responder de forma explícita
+a dichos ejes. En primer lugar, la arquitectura por capas y el orquestador Java
+abordan P2 al desacoplar responsabilidades y reducir la complejidad operativa
+del sistema para su uso académico. En segundo lugar, el pipeline ETL,
+la persistencia masiva y la gestión de concurrencia permiten tratar P1,
+al sostener la ingesta continua de datos y el procesamiento oportuno de velas
+de mercado. Por último, los módulos de backtesting, \textit{paper trading} e IA
+se orientan a mitigar P3, al desplazar decisiones discrecionales hacia reglas
+reproducibles y validables con evidencia empírica.
+
+En coherencia con los objetivos específicos definidos en el Capítulo
+\ref{chap:objetivos}, este capítulo establece el marco técnico cuya evidencia
+de implementación se presenta en el Capítulo \ref{chap:desarrollo}, y cuyo
+cierre evaluativo se sintetiza en el Capítulo \ref{chap:conclusiones}.
+
+\input{6.AnalisisMetodologia/6.1.AnalisisMetodologia.tex}
+\input{6.AnalisisMetodologia/6.2.TecnologiasYHerramientas.tex}
+\input{6.AnalisisMetodologia/6.3.ArquitecturaGeneral.tex}
+\input{6.AnalisisMetodologia/6.4.VentajasyDesventajas.tex}
+\input{6.AnalisisMetodologia/6.5.Justificacion.tex}
+\input{6.AnalisisMetodologia/6.7.DescripcionClases.tex}
+\input{6.AnalisisMetodologia/6.8.Patrones.tex}
+\input{6.AnalisisMetodologia/6.9.ProtocoloIPC.tex}
+\input{6.AnalisisMetodologia/6.10.ConcurrenciaGestionProcesos.tex}
+\input{6.AnalisisMetodologia/6.11.PipelineETLPersistenciaMasiva.tex}
+\input{6.AnalisisMetodologia/6.12.DisenoDatosConsistencia.tex}
+\input{6.AnalisisMetodologia/6.14.IndicadoresTecnicosImplementados.tex}
+\input{6.AnalisisMetodologia/6.13.ModuloIAValidacionExperimental.tex}
+\input{6.AnalisisMetodologia/6.15.SeguridadOperativa.tex}
+\input{6.AnalisisMetodologia/6.16.DecisionesIngenieriaTradeoffs.tex}
+\input{6.AnalisisMetodologia/6.17.DiagramasFlujo.tex}
