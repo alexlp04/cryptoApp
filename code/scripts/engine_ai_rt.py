@@ -41,45 +41,66 @@ def _find_model_path(base_filename: str, models_dir: str, extensions: tuple[str,
     return None
 
 
+def _load_label_classes(model_path: str) -> list[int] | None:
+    """Lee label_classes del .metadata.json junto al modelo. Devuelve None si no existe."""
+    metadata_path = os.path.splitext(model_path)[0] + ".metadata.json"
+    if not os.path.exists(metadata_path):
+        # intentar .metadata.json si la extensión era .h5
+        metadata_path = model_path + ".metadata.json"
+    if os.path.exists(metadata_path):
+        import json as _json
+        with open(metadata_path, encoding="utf-8") as f:
+            meta = _json.load(f)
+        classes = meta.get("label_classes")
+        if classes is not None:
+            logger.info("Metadata cargada: label_classes=%s", classes)
+            return [int(c) for c in classes]
+    return None
+
+
 # =========================
 # CARGA DE MODELO IA UNIVERSAL
 # =========================
-def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str]:
+def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, list[int] | None]:
     """
     Carga dinámicamente diferentes tipos de modelos basados en su extensión y librería.
     Soporta Scikit-Learn, XGBoost, LightGBM (.pkl) y TensorFlow/Keras (.h5 / .keras).
+    Devuelve (modelo, tipo, label_classes) donde label_classes es la lista original
+    de clases [-1, 0, 1] leída del .metadata.json (o None si no existe).
     """
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     base_filename = f"{model_name}_{timeframe}_{symbol}"
-    
+
     # 0. Buscar por nombre libre (el usuario ha renombrado el modelo)
     for ext in (".pkl", ".keras", ".h5"):
         bare_path = os.path.join(models_dir, f"{model_name}{ext}")
         if os.path.exists(bare_path):
             if ext == ".pkl":
                 logger.info("Cargando modelo (nombre libre, PKL): %s", bare_path)
-                return joblib.load(bare_path), "ml_standard"
+                loaded = joblib.load(bare_path)
+                lc = getattr(loaded, "label_encoder", None)
+                lc = list(lc.classes_) if lc is not None else None
+                return loaded, "ml_standard", lc
             else:
                 logger.info("Cargando modelo (nombre libre, Keras/TF): %s", bare_path)
                 from tensorflow.keras.models import load_model as load_keras_model
-                return load_keras_model(bare_path), "deep_learning"
+                return load_keras_model(bare_path), "deep_learning", _load_label_classes(bare_path)
 
     # 1. Buscar modelos estándar (Scikit-Learn, XGBoost, LightGBM)
     pkl_path = os.path.join(models_dir, f"{base_filename}.pkl")
     if os.path.exists(pkl_path):
         logger.info("Cargando modelo clasico (PKL): %s", pkl_path)
-        return joblib.load(pkl_path), "ml_standard"
+        loaded = joblib.load(pkl_path)
+        lc = getattr(loaded, "label_encoder", None)
+        lc = list(lc.classes_) if lc is not None else None
+        return loaded, "ml_standard", lc
 
     # 2. Buscar modelos de Deep Learning (TensorFlow / Keras)
-    keras_path = os.path.join(models_dir, f"{base_filename}.keras")
-    h5_path = os.path.join(models_dir, f"{base_filename}.h5")
-
     dl_path = _find_model_path(base_filename, models_dir, (".keras", ".h5"))
-
     if dl_path:
         logger.info("Cargando modelo de Red Neuronal (Keras/TF): %s", dl_path)
         from tensorflow.keras.models import load_model as load_keras_model
-        return load_keras_model(dl_path), "deep_learning"
+        return load_keras_model(dl_path), "deep_learning", _load_label_classes(dl_path)
 
     # 3. Buscar variantes con sufijo de estrategia: {base_filename}_{strategy}.ext
     for fname in os.listdir(models_dir):
@@ -87,11 +108,14 @@ def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str]:
             candidate = os.path.join(models_dir, fname)
             if fname.endswith(".pkl"):
                 logger.info("Cargando modelo con sufijo de estrategia (PKL): %s", candidate)
-                return joblib.load(candidate), "ml_standard"
+                loaded = joblib.load(candidate)
+                lc = getattr(loaded, "label_encoder", None)
+                lc = list(lc.classes_) if lc is not None else None
+                return loaded, "ml_standard", lc
             else:
                 logger.info("Cargando modelo con sufijo de estrategia (Keras/TF): %s", candidate)
                 from tensorflow.keras.models import load_model as load_keras_model
-                return load_keras_model(candidate), "deep_learning"
+                return load_keras_model(candidate), "deep_learning", _load_label_classes(candidate)
 
     raise FileNotFoundError(
         f"No se encontró ningún modelo para '{model_name}' "
@@ -197,15 +221,52 @@ def _predict_ml_standard(model, x_pred, model_name: str, symbol: str) -> str | N
     return None
 
 
-def _predict_deep_learning(model, x_pred, model_name: str, symbol: str) -> str | None:
-    """Ejecuta predicción con modelos TensorFlow/Keras y devuelve la acción."""
-    prediccion_cruda = model.predict(x_pred, verbose=0)[0][0]
-    logger.info("[%s] RED NEURONAL Predice: %.2f%% confianza alcista", symbol, prediccion_cruda * 100)
-    if prediccion_cruda >= 0.55:
-        return "BUY"
-    if prediccion_cruda <= 0.45:
-        return "SELL"
-    return None
+def _predict_deep_learning(
+    model,
+    x_pred,
+    model_name: str,
+    symbol: str,
+    label_classes: list[int] | None = None,
+) -> str | None:
+    """Ejecuta predicción con modelos TensorFlow/Keras y devuelve la acción.
+
+    Soporta tanto modelos binarios (sigmoid escalar) como multiclase (softmax).
+    Usa label_classes para decodificar el índice predicho al espacio original.
+    """
+    raw = model.predict(x_pred, verbose=0)
+
+    if raw.ndim == 2 and raw.shape[1] > 1:
+        # Multiclase softmax — el caso de neural_network entrenado con 3 clases
+        probs = raw[0]
+        encoded_idx = int(np.argmax(probs))
+        if label_classes is not None:
+            original = int(label_classes[encoded_idx])
+        else:
+            # fallback: 3 clases {0→-1, 1→0, 2→1}
+            original = encoded_idx - (len(probs) // 2)
+
+        prob_str = ", ".join(
+            f"{cls}:{p:.1%}" for cls, p in zip(
+                label_classes if label_classes is not None else range(len(probs)), probs
+            )
+        )
+        logger.info("[%s] RED NEURONAL (multiclase) Predice: %d [%s]", symbol, original, prob_str)
+
+        if original == 1:
+            return "BUY"
+        if original == -1:
+            return "SELL"
+        return None
+
+    else:
+        # Binario sigmoid escalar
+        prob = float(raw[0][0])
+        logger.info("[%s] RED NEURONAL (binario) Predice: %.2f%% confianza alcísta", symbol, prob * 100)
+        if prob >= 0.55:
+            return "BUY"
+        if prob <= 0.45:
+            return "SELL"
+        return None
 
 
 def _emit_signal(
@@ -245,7 +306,7 @@ async def run_symbol(
 
     logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
-    model, model_type = load_model(model_name, timeframe, symbol)
+    model, model_type, label_classes = load_model(model_name, timeframe, symbol)
     df_buffer: deque = deque(maxlen=max_candles)
     last_processed_event_id = 0
     feature_cols: list[str] = []
@@ -291,7 +352,7 @@ async def run_symbol(
                     if model_type == "ml_standard":
                         action = _predict_ml_standard(model, x_pred, model_name, symbol)
                     elif model_type == "deep_learning":
-                        action = _predict_deep_learning(model, x_pred, model_name, symbol)
+                        action = _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
                     else:
                         action = None
 

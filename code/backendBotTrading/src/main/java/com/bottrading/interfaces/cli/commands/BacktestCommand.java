@@ -25,7 +25,12 @@ public final class BacktestCommand implements CliCommand {
         }
 
         if (!CliInputValidator.requireStrategyTimeframeAndCoins(args,
-                "Uso: backtest -strategy <nombre> -tf <timeframe> -coins <coin1> [coin2...]", context)) {
+                "Uso: backtest -strategy <nombre> [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]",
+                context)) {
+            return;
+        }
+
+        if (!validarModelo(args, context)) {
             return;
         }
 
@@ -44,10 +49,15 @@ public final class BacktestCommand implements CliCommand {
 
         boolean guardarTrades = CliInputValidator.readYesNo(context, "Guardar trades del backtest en CSV? (s/n): ");
 
-        context.println().accept("Iniciando Backtest...");
+        String modoMsg = args.getModelo() != null
+                ? "Iniciando Backtest con modelo IA: " + args.getModelo() + "..."
+                : "Iniciando Backtest clásico...";
+        context.println().accept(modoMsg);
+
         try {
-                context.executeBacktestUseCase().ejecutarBacktest(
+            context.executeBacktestUseCase().ejecutarBacktest(
                     args.getEstrategia(),
+                    args.getModelo(),
                     args.getTimeframe(),
                     args.getCoins(),
                     capitalAsignado,
@@ -58,5 +68,15 @@ public final class BacktestCommand implements CliCommand {
         } catch (Exception e) {
             context.println().accept("Error: " + e.getMessage());
         }
+    }
+
+    private boolean validarModelo(CommandParser args, CliCommandContext context) {
+        if (args.getModelo() != null && args.getEstrategia() == null) {
+            context.println().accept("Error: -model requiere también -strategy para calcular indicadores.");
+            context.println().accept(
+                    "Uso: backtest -strategy <nombre> -model <nombre> -tf <timeframe> -coins <coin1> [coin2...]");
+            return false;
+        }
+        return true;
     }
 }

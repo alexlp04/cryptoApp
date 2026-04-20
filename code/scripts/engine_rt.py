@@ -86,7 +86,8 @@ async def run_symbol(
                         "volume": float(k["v"]),
                     })
 
-                    if len(buffer) < 2:
+                    min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
+                    if len(buffer) < min_candles:
                         continue
 
                     df = pd.DataFrame(list(buffer))

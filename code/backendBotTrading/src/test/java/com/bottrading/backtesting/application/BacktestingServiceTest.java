@@ -130,7 +130,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, true, false);
 
                 verify(backtestPersistencePort, times(1))
@@ -153,7 +153,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(backtestPersistencePort, never())
@@ -177,7 +177,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(otraEstrategia, TIMEFRAME,
+                backtestingService.ejecutarBacktest(otraEstrategia, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, true, false);
 
                 verify(backtestPersistencePort).limpiarResultadosPrevios(otraEstrategia);
@@ -199,7 +199,7 @@ class BacktestingServiceTest {
             try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class)) {
                 consoleStatic.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         Collections.emptyList(), CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, never()).execute(any());
@@ -223,7 +223,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         coins, CAPITAL, RISK, false, false);
 
                 verify(velaRepository, times(3))
@@ -248,7 +248,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, tf,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, tf,
                         List.of(symbol), CAPITAL, RISK, false, false);
 
                 verify(velaRepository)
@@ -272,7 +272,7 @@ class BacktestingServiceTest {
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
                 // El mapa tendrá entrada para BTCUSDT (lista vacía), por lo que no está vacío
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, times(1)).execute(any());
@@ -302,7 +302,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, times(1))
@@ -327,7 +327,7 @@ class BacktestingServiceTest {
                         .when(pythonBridgeFacade).execute(any());
 
                 assertThrows(StrategyExecutionException.class, () ->
-                        backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                        backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                                 List.of("BTCUSDT"), CAPITAL, RISK, false, false));
             }
         }
@@ -349,7 +349,7 @@ class BacktestingServiceTest {
                         .when(pythonBridgeFacade).execute(any());
 
                 assertThrows(StrategyExecutionException.class, () ->
-                        backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                        backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                                 List.of("BTCUSDT"), CAPITAL, RISK, false, false));
             }
         }
@@ -369,7 +369,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(null).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, never())
@@ -400,7 +400,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, times(1))
@@ -423,7 +423,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn("").when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, never())
@@ -448,7 +448,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(estrategia, tf,
+                backtestingService.ejecutarBacktest(estrategia, null, tf,
                         List.of("ETHUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository)
@@ -481,7 +481,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT", "ETHUSDT"), CAPITAL, RISK, false, false);
 
                 verify(velaRepository).findBySymbolAndIntervalOrderByOpenTimeAsc("BTCUSDT", TIMEFRAME);
@@ -505,7 +505,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         coins, CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, times(1)).execute(any());
@@ -529,7 +529,7 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, TIMEFRAME,
+                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
                         List.of("BTCUSDT", "UNKNOWNUSDT"), CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, times(1)).execute(any());
