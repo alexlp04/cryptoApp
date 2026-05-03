@@ -1,0 +1,31 @@
+\babel@toc {spanish}{}\relax 
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {7.1}{\ignorespaces Trazabilidad de objetivos específicos con evidencia del desarrollo\relax }}{53}{table.caption.13}%
+\contentsline {table}{\numberline {7.2}{\ignorespaces Referencia de comandos: cuenta, cartera, datos y simulación histórica\relax }}{56}{table.caption.14}%
+\contentsline {table}{\numberline {7.3}{\ignorespaces Referencia de comandos: negociación en tiempo real e inteligencia artificial\relax }}{57}{table.caption.15}%
+\contentsline {table}{\numberline {7.4}{\ignorespaces Resumen de suites de tests automáticos\relax }}{59}{table.caption.16}%
+\contentsline {table}{\numberline {7.5}{\ignorespaces Cobertura de tests por módulo funcional\relax }}{60}{table.caption.17}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {B.1}{\ignorespaces Columnas de la tabla \texttt {usuario}.\relax }}{72}{table.caption.18}%
+\contentsline {table}{\numberline {B.2}{\ignorespaces Columnas de la tabla \texttt {vela}.\relax }}{73}{table.caption.19}%
+\contentsline {table}{\numberline {B.3}{\ignorespaces Columnas de la tabla \texttt {wallet}.\relax }}{74}{table.caption.20}%
+\contentsline {table}{\numberline {B.4}{\ignorespaces Columnas de la tabla \texttt {instancia\_estrategia}.\relax }}{75}{table.caption.21}%
+\contentsline {table}{\numberline {B.5}{\ignorespaces Columnas de la tabla \texttt {instancia\_simbolos}.\relax }}{75}{table.caption.22}%
+\contentsline {table}{\numberline {B.6}{\ignorespaces Columnas de la tabla \texttt {posicion}.\relax }}{76}{table.caption.23}%
+\contentsline {table}{\numberline {B.7}{\ignorespaces Columnas de la tabla \texttt {ledger\_entry}.\relax }}{76}{table.caption.24}%
+\contentsline {table}{\numberline {B.8}{\ignorespaces Columnas de la tabla \texttt {indicador\_tecnico}.\relax }}{76}{table.caption.25}%
+\contentsline {table}{\numberline {B.9}{\ignorespaces Columnas de la tabla \texttt {capital\_reservado}.\relax }}{77}{table.caption.26}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {C.1}{\ignorespaces Campos del objeto envolvente \texttt {IpcEnvelope}.\relax }}{78}{table.caption.27}%
+\contentsline {table}{\numberline {C.2}{\ignorespaces Tipos de mensaje del protocolo IPC, agrupados por dominio.\relax }}{79}{table.caption.28}%
+\contentsline {table}{\numberline {C.3}{\ignorespaces Códigos de salida de los motores Python.\relax }}{79}{table.caption.29}%
+\addvspace {10\p@ }
+\contentsline {table}{\numberline {D.1}{\ignorespaces Rangos de búsqueda de hiperparámetros por familia de modelo\relax }}{80}{table.caption.30}%

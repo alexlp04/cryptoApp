@@ -1,0 +1,337 @@
+\chapter{Desarrollo del Trabajo}
+\label{chap:desarrollo}
+
+\section{Introducción}
+
+En este capítulo se describe el desarrollo técnico y los resultados obtenidos durante la implementación del sistema de trading cuantitativo. Se detallan los incrementos funcionales completados, los benchmarks de rendimiento observados, los casos de uso validados y los problemas técnicos enfrentados y resueltos. La implementación aquí documentada materializa los objetivos del Capítulo \ref{chap:objetivos}, sobre la base metodológica establecida en el Capítulo \ref{chap:metodologia}, y sirve de base para la discusión final del Capítulo \ref{chap:conclusiones}.
+
+\section{Trazabilidad de Objetivos y Evidencia}
+
+La Tabla~\ref{tab:trazabilidad_objetivos} relaciona cada objetivo específico del Capítulo~\ref{chap:objetivos} con evidencia verificable del desarrollo.
+
+\begin{table}[H]
+    \centering
+    \caption{Trazabilidad de objetivos específicos con evidencia del desarrollo}
+    \label{tab:trazabilidad_objetivos}
+    \begin{tabular}{p{4.0cm} p{4.5cm} p{3.2cm} p{1.5cm}}
+    \hline
+    \textbf{Objetivo específico} & \textbf{Evidencia} & \textbf{Métrica / valor} & \textbf{Sección} \\
+    \hline
+    Estudiar el estado del arte del trading cuantitativo e indicadores técnicos
+    & Revisión de literatura con 9 indicadores implementados (SMA, EMA, RSI, MACD, ATR, Bollinger, z-score, ROC, retorno)
+    & 9 indicadores; 21 citas bibliográficas de trading
+    & §\ref{sec:indicadores}, Cap.~\ref{chap:estado_del_arte} \\
+    \hline
+    Analizar requisitos funcionales y no funcionales de un sistema financiero de alta concurrencia
+    & Arquitectura hexagonal con separación estricta de capas; bloqueos pesimistas en escrituras de saldo; timeouts granulares por tipo de operación
+    & 0 condiciones de carrera detectadas en tests; 5 niveles de timeout definidos
+    & §\ref{sec:datos}, §\ref{sec:concurrencia} \\
+    \hline
+    Diseñar una arquitectura modular que desacople orquestación transaccional del motor de inferencia
+    & Puente Java-Python con protocolo IPC versionado; patrón Facade aislando el ciclo de vida de subprocesos; 4 capas hexagonales con dependencias unidireccionales
+    & 0 dependencias inversas entre capas verificadas en auditoría; latencia IPC $<$1\,ms para payloads de velas
+    & §\ref{sec:ipc}, §\ref{sec:patrones}, §\ref{sec:diseno_estatico} \\
+    \hline
+    Desarrollar un motor de ingesta y sincronización de datos capaz de almacenar masivamente candlesticks desde APIs externas
+    & Pipeline ETL incremental con descarga paralela, detección de huecos y \textit{batch insert} nativo de MySQL con semántica idempotente
+    & $>$50\,000 registros en inserción bulk; 60\,\% cobertura de tests del módulo
+    & §\ref{sec:etl}, Incremento 2 \\
+    \hline
+    Implementar un pipeline de IA paramétrico con múltiples algoritmos y validación temporal
+    & Motor de entrenamiento con XGBoost, LightGBM, SVM y redes neuronales; split 80/20 cronológico; warmup period dinámico; optimización bayesiana con Optuna
+    & 70\,\% cobertura de tests; distribución de clases 71\,/\,18\,/\,11\,\%
+    & §\ref{sec:ml}, Incrementos 6 y 7 \\
+    \hline
+    Evaluar y validar la plataforma mediante simulaciones históricas con métricas de rendimiento financiero
+    & Motor de backtesting con comisión 0,1\,\% y \textit{slippage} 0,03\,\%; métricas: win rate, profit factor, max drawdown, ratio de Sharpe; backtesting multianual sobre $>$1\,000 velas efectivas
+    & Tiempo de ejecución típico $<$30\,s; 80\,\% cobertura de tests del motor
+    & Incremento 4, Tabla~\ref{tab:test_coverage} \\
+    \hline
+    \end{tabular}
+\end{table}
+
+\section{Manual de usuario}
+\label{sec:manual}
+
+La interfaz principal de la plataforma es una línea de comandos interactiva. Para
+iniciar la aplicación basta con ejecutar el fichero JAR compilado desde el directorio
+del proyecto:
+
+\begin{center}
+    \texttt{java -jar backendBotTrading-1.0.0.jar}
+\end{center}
+
+La aplicación arranca el contexto Spring\,Boot, verifica la conexión con la base de
+datos MySQL y presenta el indicador de sesión. Mientras no hay usuario autenticado,
+el indicador muestra \texttt{[sin sesión]}; tras el inicio de sesión pasa a mostrar
+\texttt{[<nombre>]}. El comando \texttt{ayuda} lista en cualquier momento todos los
+comandos disponibles con su sintaxis; \texttt{exit} o \texttt{quit} cierran la
+aplicación de forma limpia, liberando carteras bloqueadas y deteniendo los procesos
+Python activos.
+
+\paragraph{Gestión de cuentas y carteras.}
+El primer paso es registrarse con \texttt{signup}, que solicita de forma interactiva
+nombre de usuario y contraseña; la contraseña se almacena con hash BCrypt, de modo
+que nunca se persiste en texto plano. Una vez registrado, \texttt{login} autentica la
+sesión y \texttt{logout} la cierra. La plataforma utiliza el concepto de
+\textit{cartera de papel}: antes de operar es necesario crear al menos una cartera
+con \texttt{mkpwallet <nombre>}, que solicitará el saldo inicial en USDT que actuará
+como capital virtual. El comando \texttt{lw} muestra el estado de todas las carteras
+del usuario, desglosando el saldo disponible, el capital comprometido en operaciones
+abiertas y el capital bloqueado por instancias en ejecución.
+
+\paragraph{Descarga de datos históricos.}
+El comando \texttt{fetch} descarga velas OHLCV desde la API pública de Binance y las
+persiste en la base de datos local. Requiere especificar el marco temporal
+(\texttt{-tf}, por ejemplo \texttt{1h}, \texttt{4h} o \texttt{1d}) y al menos un par
+de divisas (\texttt{-coins}, por ejemplo \texttt{BTCUSDT}). El argumento opcional
+\texttt{-d <días>} acota la descarga a los últimos $n$ días; si se omite, se descarga
+el histórico disponible según el marco temporal. El argumento
+\texttt{-{}-detect-gaps} activa la detección y relleno automático de huecos en el
+histórico ya almacenado sin sobreescribir los registros existentes, lo que permite
+mantener la base de datos actualizada de forma incremental con ejecuciones
+sucesivas. Los indicadores técnicos que necesita cada estrategia (medias móviles,
+RSI, ATR, Bandas de Bollinger, entre otros) se calculan automáticamente en tiempo de
+ejecución cuando se lanza un backtesting o una sesión de trading en tiempo real, por
+lo que no requieren ningún paso de preprocesado adicional por parte del usuario.
+
+\paragraph{Simulación histórica (\textit{backtesting}).}
+Antes de lanzar un backtesting conviene consultar las estrategias disponibles con
+\texttt{le}, que lista los scripts del directorio de estrategias junto con su
+descripción. El comando \texttt{backtest} ejecuta la simulación: solicita
+interactivamente el capital a asignar, el riesgo por operación expresado como
+porcentaje del capital y la comisión por operación en tanto por ciento. Si se
+proporciona el argumento \texttt{-model <modelo>}, el backtesting usa las predicciones
+del modelo de IA para filtrar las señales de entrada, combinando la lógica de la
+estrategia clásica con la capa predictiva. Los resultados se exportan en ficheros CSV
+en el directorio de resultados e incluyen las métricas de rendimiento: tasa de acierto,
+factor de ganancia, caída máxima y ratio de Sharpe, junto con el detalle de cada
+operación abierta y cerrada durante la simulación.
+
+\paragraph{Módulo de inteligencia artificial.}
+El comando \texttt{models} muestra el catálogo de familias de algoritmos disponibles
+(XGBoost, LightGBM, bosque aleatorio y red neuronal) con sus hiperparámetros
+configurables y los valores por defecto. El comando \texttt{train} lanza el pipeline
+de entrenamiento supervisado: descarga y prepara el conjunto de datos, calcula los
+indicadores y las etiquetas de supervisión mediante la estrategia seleccionada,
+ejecuta el entrenamiento y persiste el modelo en disco junto con su metadata. El
+comando \texttt{optimize} añade una fase de búsqueda bayesiana de hiperparámetros
+mediante Optuna, ejecutando hasta \texttt{-n-trials} iteraciones con validación
+cruzada temporal de \texttt{-cv-folds} particiones; solo persiste la configuración
+cuando el \textit{composite score} supera el umbral mínimo especificado con
+\texttt{-min-composite}.
+
+\paragraph{Negociación simulada en tiempo real.}
+El comando \texttt{trade} abre una instancia de \textit{paper trading} que conecta
+con la API de Binance para recibir velas en tiempo real. El argumento \texttt{-v}
+emplea las señales de la estrategia clásica; \texttt{-r} usa las predicciones del
+modelo de IA previamente entrenado. Cada instancia tiene un identificador único que
+permite gestionarla de forma independiente: \texttt{lsa} lista las instancias activas
+con su estado y capital comprometido; \texttt{lsd} muestra las detenidas; \texttt{stop}
+suspende la ejecución preservando la posición abierta; \texttt{start} la reanuda; y
+\texttt{term} liquida la posición, calcula el resultado final y devuelve el capital no
+comprometido a la cartera. Las órdenes \texttt{stop -all} y \texttt{start -all}
+operan sobre todas las instancias a la vez.
+
+La Tabla~\ref{tab:comandos_a} recoge la referencia de comandos de gestión de cuentas,
+carteras, datos y backtesting. La Tabla~\ref{tab:comandos_b} recoge los comandos de
+negociación en tiempo real e inteligencia artificial.
+
+\begin{table}[H]
+    \centering
+    \caption{Referencia de comandos: cuenta, cartera, datos y simulación histórica}
+    \label{tab:comandos_a}
+    \begin{tabular}{p{2.0cm} p{6.0cm} p{4.6cm}}
+    \hline
+    \textbf{Comando} & \textbf{Sintaxis} & \textbf{Descripción} \\
+    \hline
+    \multicolumn{3}{l}{\textit{Gestión de usuarios}} \\
+    \hline
+    \texttt{signup}   & \texttt{signup}
+                      & Registro interactivo; contraseña almacenada con BCrypt \\
+    \texttt{login}    & \texttt{login}
+                      & Autenticación; activa la sesión del usuario \\
+    \texttt{logout}   & \texttt{logout}
+                      & Cierra la sesión activa \\
+    \hline
+    \multicolumn{3}{l}{\textit{Carteras virtuales}} \\
+    \hline
+    \texttt{mkpwallet} & \texttt{mkpwallet <nombre>}
+                       & Crea cartera de papel; solicita saldo inicial en USDT \\
+    \texttt{lw}        & \texttt{lw}
+                       & Lista carteras con saldo disponible, comprometido y bloqueado \\
+    \hline
+    \multicolumn{3}{l}{\textit{Datos de mercado}} \\
+    \hline
+    \texttt{fetch} & \texttt{fetch -tf <marco> -coins <par1> [par2...]} \newline
+                     \texttt{[-d <días>] [{-}{-}detect-gaps]}
+                   & Descarga histórica de velas desde Binance; \texttt{-{}-detect-gaps}
+                     rellena huecos de forma incremental \\
+    \hline
+    \multicolumn{3}{l}{\textit{Simulación histórica}} \\
+    \hline
+    \texttt{le}       & \texttt{le}
+                      & Lista estrategias disponibles con descripción \\
+    \texttt{backtest} & \texttt{backtest -strategy <nombre> -tf <marco>} \newline
+                        \texttt{-coins <par1> [par2...] [-model <modelo>]}
+                      & Simulación histórica; solicita capital, riesgo y comisión;
+                        \texttt{-model} activa filtrado por IA \\
+    \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{Referencia de comandos: negociación en tiempo real e inteligencia artificial}
+    \label{tab:comandos_b}
+    \begin{tabular}{p{2.0cm} p{6.0cm} p{4.6cm}}
+    \hline
+    \textbf{Comando} & \textbf{Sintaxis} & \textbf{Descripción} \\
+    \hline
+    \multicolumn{3}{l}{\textit{Paper trading en tiempo real}} \\
+    \hline
+    \texttt{trade}  & \texttt{trade -v|-r -strategy <nombre>} \newline
+                      \texttt{-tf <marco> -coins <par1> [par2...]}
+                    & Abre instancia; \texttt{-v} usa señales clásicas,
+                      \texttt{-r} usa predicciones del modelo de IA \\
+    \texttt{lsa}    & \texttt{lsa}                    & Lista instancias en ejecución \\
+    \texttt{lsd}    & \texttt{lsd}                    & Lista instancias detenidas \\
+    \texttt{start}  & \texttt{start <ID> | start -all} & Reanuda una instancia o todas \\
+    \texttt{stop}   & \texttt{stop <ID> | stop -all}   & Detiene una instancia o todas \\
+    \texttt{term}   & \texttt{term <ID>}
+                    & Termina la instancia, liquida la posición y libera el capital \\
+    \hline
+    \multicolumn{3}{l}{\textit{Inteligencia artificial}} \\
+    \hline
+    \texttt{models}   & \texttt{models}
+                      & Catálogo de algoritmos con hiperparámetros y valores por defecto \\
+    \texttt{train}    & \texttt{train -model <modelo> -tf <marco>} \newline
+                        \texttt{-coins <par> [-strategy <nombre>] [-d <días>]}
+                      & Entrena y persiste el modelo con la configuración por defecto \\
+    \texttt{optimize} & \texttt{optimize -model <modelo> -tf <marco>} \newline
+                        \texttt{-coins <par> [-strategy <nombre>] [-d <días>]} \newline
+                        \texttt{[-n-trials <n>] [-cv-folds <k>] [-min-composite <\%>]}
+                      & Búsqueda bayesiana de hiperparámetros con Optuna;
+                        persiste la configuración que supere el umbral mínimo \\
+    \hline
+    \end{tabular}
+\end{table}
+
+Un flujo de trabajo típico comienza con el registro mediante \texttt{signup} y el
+inicio de sesión con \texttt{login}. A continuación se crea una cartera de papel con
+\texttt{mkpwallet}, asignándole el saldo inicial en USDT que se usará como capital de
+operaciones. Con la cartera disponible, el siguiente paso es descargar el histórico de
+precios con \texttt{fetch}, indicando el marco temporal y los pares de divisas de
+interés; la primera descarga obtiene todo el histórico disponible, y las siguientes
+pueden usar \texttt{-{}-detect-gaps} para actualizarlo de forma incremental sin
+duplicar registros.
+
+Con los datos descargados, \texttt{le} muestra las estrategias disponibles y
+\texttt{backtest} ejecuta la primera simulación histórica. En esta fase la plataforma
+calcula automáticamente los indicadores técnicos que necesita la estrategia y ejecuta
+el backtesting sobre todos los datos del par seleccionado, exportando el detalle de
+operaciones y las métricas de rendimiento en CSV. Si se quiere incorporar el módulo
+predictivo, \texttt{train} entrena un modelo con los datos ya descargados y lo persiste
+en disco; \texttt{optimize} permite mejorar el resultado lanzando una búsqueda
+automática de la configuración de hiperparámetros más adecuada. Una vez disponible el
+modelo, se puede relanzar el backtesting con \texttt{-model} para comparar el
+rendimiento de la estrategia clásica con el de la estrategia asistida por IA. Por
+último, \texttt{trade -v} o \texttt{trade -r} abre una sesión de paper trading en
+tiempo real que consume velas en vivo de Binance; la instancia puede pausarse, reanudarse
+y terminarse en cualquier momento con \texttt{stop}, \texttt{start} y \texttt{term}.
+
+\section{Resultados}
+\label{sec:resultados}
+
+\subsection{Cobertura de tests automáticos}
+\label{sec:tests}
+
+La estrategia de verificación del sistema combina suites de tests unitarios en Python
+y Java con una cobertura total de \textbf{466 casos de prueba} distribuidos en 20
+ficheros de test. La Tabla~\ref{tab:test_summary} detalla la distribución por módulo.
+
+\begin{table}[H]
+    \centering
+    \caption{Resumen de suites de tests automáticos}
+    \label{tab:test_summary}
+    \begin{tabular}{p{5.5cm} p{3.5cm} r p{3.0cm}}
+    \hline
+    \textbf{Fichero de test} & \textbf{Módulo/capa} & \textbf{Tests} & \textbf{Tecnología} \\
+    \hline
+    \texttt{test\_strategies.py} & Estrategias Python & 48 & pytest \\
+    \texttt{test\_backtest\_engine.py} & Motor de backtesting & 41 & pytest \\
+    \texttt{AITrainingServiceTest} & Entrenamiento IA & 31 & JUnit 5 + Mockito \\
+    \texttt{AIOptimizationServiceTest} & Optimización IA & 31 & JUnit 5 + Mockito \\
+    \texttt{FetchServiceTest} & Descarga de mercado & 27 & JUnit 5 + Mockito \\
+    \texttt{AccountingServiceTest} & Contabilidad/Ledger & 24 & JUnit 5 + Mockito \\
+    \texttt{test\_ipc\_protocol.py} & Protocolo IPC & 23 & pytest \\
+    \texttt{test\_engine\_indicators.py} & Motor de indicadores & 23 & pytest \\
+    \texttt{StrategyLifecycleApplicationServiceTest} & Ciclo de vida & 23 & JUnit 5 + Mockito \\
+    \texttt{SignalRetryQueueServiceTest} & Cola de reintentos & 22 & JUnit 5 + Mockito \\
+    \texttt{BacktestingServiceTest} & Servicio backtesting & 20 & JUnit 5 + Mockito \\
+    \texttt{CsvUtilitiesTest} & Utilidades CSV & 19 & JUnit 5 + Mockito \\
+    \texttt{SignalProtocolParserTest} & Parser de señales & 16 & JUnit 5 + Mockito \\
+    \texttt{StrategyQueryServiceTest} & Consulta de estrategias & 16 & JUnit 5 + Mockito \\
+    \texttt{StatsCsvRepositoryTest} & Repositorio de estadísticas & 16 & JUnit 5 + Mockito \\
+    \texttt{StrategyCatalogServiceTest} & Catálogo de estrategias & 15 & JUnit 5 + Mockito \\
+    \texttt{MarketOrchestrationServiceTest} & Orquestación de mercado & 15 & JUnit 5 + Mockito \\
+    \texttt{PaperTradingServiceTest} & Paper trading & 14 & JUnit 5 + Mockito \\
+    \texttt{IndicatorsServiceTest} & Servicio indicadores & 12 & JUnit 5 + Mockito \\
+    \texttt{BacktestArtifactsCleanerTest} & Limpieza de artefactos & 10 & JUnit 5 + Mockito \\
+    \hline
+    \textbf{Total} & & \textbf{466} & \\
+    \hline
+    \end{tabular}
+\end{table}
+
+Los cuatro ficheros de test Python verifican la corrección aritmética y el comportamiento
+observable de los algoritmos cuantitativos con independencia del orquestador Java,
+empleando datos sintéticos de semilla fija para garantizar reproducibilidad determinista.
+\texttt{test\_backtest\_engine.py} cubre las funciones del motor de simulación desde el
+cálculo de tamaño de posición hasta la escritura de operaciones en CSV;
+\texttt{test\_engine\_indicators.py} valida la adición de columnas y su serialización;
+\texttt{test\_ipc\_protocol.py} comprueba los tres modos de lectura del protocolo
+MessagePack con \textit{framing} de cuatro bytes, incluyendo compatibilidad con el
+formato heredado; y \texttt{test\_strategies.py} verifica de forma exhaustiva el
+contrato de \texttt{BaseStrategy} y la implementación concreta
+\texttt{StressTestStrategy}, desde la generación de etiquetas hasta la ausencia de
+valores inválidos tras el relleno defensivo.
+
+Los dieciséis ficheros de test Java emplean JUnit\,5 y Mockito con clases
+\texttt{@Nested} que agrupan caminos felices, condiciones de error y casos límite,
+sustituyendo los colaboradores externos por \textit{mocks} para aislar la unidad bajo
+prueba. Las capas de mayor densidad son la de entrenamiento e inteligencia artificial
+(62 tests), las estrategias (54 tests), los servicios de mercado (54 tests) y el
+módulo de backtesting Java (45 tests). La integridad contable del \textit{ledger} y
+las transiciones de estado del ciclo de vida de las instancias reciben cobertura
+especial dada su naturaleza transaccional; el módulo de infraestructura IPC combina
+16 tests de parseo de señales y 22 de la cola de reintentos para verificar el
+comportamiento del puente Java-Python ante fallos y mensajes malformados.
+
+\begin{table}[H]
+    \centering
+    \caption{Cobertura de tests por módulo funcional}
+    \label{tab:test_coverage}
+    \begin{tabular}{p{4.8cm} p{2.8cm} r r}
+    \hline
+    \textbf{Módulo} & \textbf{Incremento} & \textbf{Tests} & \textbf{Cobertura estimada} \\
+    \hline
+    Contabilidad y paper trading & Inc.\,1 y 5 & 36 & 82\,\% \\
+    Pipeline de descarga y mercado & Inc.\,2 & 54 & 60\,\% \\
+    Motor de indicadores Python & Inc.\,3 & 23 & 90\,\% \\
+    Estrategias Python & Inc.\,3 & 48 & 90\,\% \\
+    Motor de backtesting Python & Inc.\,4 & 41 & 80\,\% \\
+    Backtesting Java + artefactos & Inc.\,4 & 45 & 75\,\% \\
+    Protocolo IPC (Python + Java) & Inc.\,5 & 61 & 85\,\% \\
+    Servicios de estrategia (Java) & Inc.\,5 & 54 & 78\,\% \\
+    Entrenamiento IA & Inc.\,6 & 31 & 70\,\% \\
+    Optimización IA & Inc.\,7 & 31 & 70\,\% \\
+    \hline
+    \textbf{Total} & & \textbf{424} & \textbf{76\,\%} \\
+    \hline
+    \end{tabular}
+\end{table}
+
+% TODO: añadir subsección de resultados experimentales del comando optimize
+% (accuracy, F1-score, composite score, hiperparámetros óptimos, par y timeframe usados)
+

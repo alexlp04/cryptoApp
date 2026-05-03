@@ -1,0 +1,107 @@
+\section{Indicadores Técnicos Implementados}
+\label{sec:indicadores}
+
+Los indicadores técnicos son herramientas matemáticas que transforman la acción del precio en señales interpretables, con el objetivo de identificar tendencias, medir impulso y detectar condiciones extremas del mercado. Murphy los clasifica en dos grandes familias \parencite{murphy_technical_1999}: los \textit{seguidores de tendencia} (\textit{trend-following}), como las medias móviles, que funcionan mejor en mercados con dirección definida; y los \textit{osciladores}, como el RSI y el MACD, que resultan más útiles en mercados laterales o para confirmar el agotamiento de una tendencia. El proyecto implementa los representantes más canónicos de ambas familias.
+
+La razón fundamental para incorporar indicadores técnicos en un sistema de trading algorítmico es que permiten convertir una observación subjetiva del mercado en una regla matemática objetiva y reproducible. Un analista humano podría intuir que el precio ``lleva demasiado tiempo subiendo'', pero un algoritmo necesita una condición numérica precisa para actuar: RSI $> 70$, cruce del MACD, o precio por debajo de su SMA. Los indicadores son, en este sentido, el lenguaje común entre el análisis financiero y el código \parencite{chan_algorithmic_2013}.
+
+\subsection{La Estrategia Base del Sistema}
+
+El proyecto estructura las estrategias de trading mediante una jerarquía de clases Python basada en una clase abstracta (\textit{Abstract Base Class}) que define el contrato formal que toda estrategia debe satisfacer. La clase declara cinco métodos abstractos obligatorios: una función que recibe el conjunto de datos de velas y lo devuelve enriquecido con los indicadores calculados; dos funciones que evalúan las condiciones de apertura y cierre de posición en una vela concreta; y dos funciones que determinan los niveles de gestión del riesgo. Esta abstracción permite que los motores de \textit{backtesting}, tiempo real, entrenamiento y optimización operen de forma genérica con cualquier estrategia registrada sin conocer sus detalles internos.
+
+La implementación concreta de referencia tiene como propósito verificar que el pipeline completo del sistema funcione de extremo a extremo con una estrategia funcional y representativa. Define un período de calentamiento de 20 velas y calcula ocho indicadores mediante la función de cálculo de indicadores, agrupados en dos familias según su función:
+
+\begin{description}
+    \item[Señales de trading (reglas clásicas)] Evaluadas directamente por las funciones de apertura y cierre de posición: la brecha relativa entre EMA rápida y lenta, el RSI de período 6, el retorno del último \textit{tick} y el \textit{z-score} del volumen.
+    \item[Contexto de mercado para ML] Usados exclusivamente como \textit{features} en el módulo de entrenamiento y optimización: el retorno de tres velas, el ATR normalizado, el \textit{Percent B} de Bollinger y la tasa de cambio de 5 períodos.
+\end{description}
+
+Los indicadores de ambas familias se describen en las subsecciones siguientes.
+
+\subsection{Indicador: Media Móvil Simple (SMA)}
+
+La Media Móvil Simple es, según Murphy, el indicador técnico más ampliamente utilizado y el punto de partida para cualquier análisis de tendencia \parencite{murphy_technical_1999}. Su funcionamiento se basa en suavizar la acción del precio calculando el promedio aritmético de los últimos $n$ precios de cierre, eliminando el ruido de las fluctuaciones diarias y revelando la dirección subyacente del mercado:
+
+$$\text{SMA}_n(t) = \frac{1}{n} \sum_{i=0}^{n-1} \text{close}(t-i)$$
+
+\textbf{Por qué es una buena idea usarla.} La SMA cumple una función esencial en cualquier sistema algorítmico: actúa como filtro de tendencia. Operar en la dirección de la tendencia es uno de los principios más consolidados del trading; la SMA permite cuantificarlo de forma objetiva. Cuando el precio se mantiene por encima de su media, el sistema restringe las operaciones bajistas y favorece las alcistas, evitando que el algoritmo opere ``contra la corriente''. Además, su cálculo es computacionalmente trivial, lo que la hace ideal para su uso en tiempo real sobre grandes volúmenes de velas sin impacto en la latencia.
+
+La interpretación operativa es directa: cuando el precio cotiza por encima de su media móvil, la tendencia es alcista; cuando cotiza por debajo, es bajista. Murphy enfatiza especialmente el valor de los cruces entre dos medias de distinto período como señales de entrada y salida: el cruce de la media de 50 períodos por encima de la de 200 (\textit{Golden Cross}) marca el inicio potencial de una tendencia alcista sostenida, mientras que el cruce inverso (\textit{Death Cross}) anticipa una tendencia bajista \parencite{murphy_technical_1999}.
+
+La limitación inherente de la SMA es su \textit{time lag}: al asignar igual peso a todas las observaciones de la ventana, reacciona con cierto retraso ante los giros del mercado. A mayor período $n$, mayor suavizado pero también mayor retardo en la señal.
+
+\subsection{Indicador: Media Móvil Exponencial (EMA)}
+
+La Media Móvil Exponencial surge como respuesta directa a la limitación de retardo de la SMA. A diferencia de ésta, la EMA asigna un peso exponencialmente decreciente a las observaciones pasadas, otorgando mayor relevancia a los precios más recientes y reaccionando con mayor agilidad ante los cambios de tendencia \parencite{murphy_technical_1999}:
+
+$$\text{EMA}_n(t) = \alpha \cdot \text{close}(t) + (1-\alpha) \cdot \text{EMA}_n(t-1)$$
+
+donde el factor de suavizado $\alpha = \frac{2}{n+1}$ controla la velocidad de adaptación: valores altos de $\alpha$ (períodos cortos) producen una EMA más reactiva pero más ruidosa, mientras que valores bajos (períodos largos) generan una curva más suave pero más lenta. La EMA aborda este problema priorizando matemáticamente los datos recientes, lo que la hace especialmente valiosa en mercados de alta volatilidad como las criptomonedas \parencite{katsiampa_volatility_2017}.
+
+\textbf{Por qué es una buena idea usarla.} En un sistema de trading en tiempo real, la velocidad de reacción ante un cambio de tendencia tiene un impacto directo en la rentabilidad: entrar tarde en una tendencia implica asumir más riesgo y capturar menos beneficio. La EMA aborda este problema priorizando matemáticamente los datos recientes, lo que la hace especialmente valiosa en mercados de alta volatilidad como las criptomonedas, donde los movimientos bruscos son frecuentes y una media lenta puede generar señales obsoletas. En el contexto del proyecto, la EMA es además el bloque constructivo del MACD, por lo que su correcta implementación es un requisito previo para el indicador de impulso más utilizado del sistema.
+
+En la estrategia de referencia del sistema, la EMA se implementa con dos períodos deliberadamente cortos: EMA rápida (período 3) y EMA lenta (período 8). Su diferencia relativa, denominada brecha entre medias exponenciales, se define como:
+$$\text{ema\_gap}(t) = \frac{\text{EMA}_3(t) - \text{EMA}_8(t)}{\text{close}(t)}$$
+Un valor positivo de esta métrica indica impulso alcista a corto plazo.
+La condición de que dicha brecha supere $0{,}001$ exige que este impulso supere el 0.1\%
+del precio, filtrando cruces espurios de escaso recorrido.
+
+\subsection{Indicador: Relative Strength Index (RSI)}
+
+El RSI fue desarrollado por J. Welles Wilder y presentado en su obra \textit{New Concepts in Technical Trading Systems} (1978). Murphy lo incorpora como el oscilador de referencia para medir la \textit{velocidad y magnitud} de los movimientos de precio, evaluando si un activo se encuentra en zona de sobrecompra o sobreventa \parencite{murphy_technical_1999}. A diferencia de las medias móviles, el RSI no sigue la tendencia sino que la cuestiona cuando alcanza niveles extremos.
+
+Su cálculo se basa en la relación entre las ganancias medias y las pérdidas medias durante una ventana de $n$ períodos:
+
+$$\text{RSI} = 100 - \frac{100}{1 + \text{RS}}, \quad \text{donde} \quad \text{RS} = \frac{\overline{\text{ganancias}_n}}{\overline{\text{pérdidas}_n}}$$
+
+El oscilador se mueve en el rango $[0, 100]$ y su interpretación operativa sigue los umbrales canónicos establecidos por Wilder y refrendados por Murphy: una lectura por encima de 70 indica que el activo está \textbf{sobrecomprado} (\textit{overbought}), sugiriendo que la presión compradora puede estar agotándose y que podría producirse una corrección a la baja; una lectura por debajo de 30 señala \textbf{sobreventa} (\textit{oversold}), indicando que la presión vendedora puede estar llegando a su límite y que podría producirse un rebote.
+
+\textbf{Por qué es una buena idea usarlo.} El RSI resuelve un problema fundamental del trading algorítmico: evitar comprar en máximos y vender en mínimos. Las medias móviles por sí solas son ciegas ante el agotamiento de una tendencia; pueden señalar ``tendencia alcista'' incluso cuando el precio lleva semanas subiendo de forma casi vertical y una corrección es estadísticamente probable. El RSI introduce una dimensión temporal de fatiga del mercado que las medias no capturan. En la estrategia de referencia del sistema, el RSI se calcula con un período de 6 velas en lugar del estándar de 14 propuesto por Wilder, priorizando la reactividad ante cambios rápidos de impulso típicos de \textit{timeframes} cortos en criptomonedas. Este RSI de corto plazo actúa como condición de filtro: solo se permite abrir una posición de compra si no ha superado el umbral de 55 (zona neutral-alta), reduciendo la probabilidad de entrar en un movimiento alcista ya avanzado. Adicionalmente, Murphy destaca el fenómeno de la \textbf{divergencia} como una de las señales más fiables del indicador: cuando el precio marca un nuevo máximo pero el RSI no logra superarlo, se produce una divergencia bajista que advierte de una posible pérdida de impulso y reversión de tendencia, incluso antes de que el precio lo confirme \parencite{murphy_technical_1999}.
+
+\subsection{Indicador: Moving Average Convergence Divergence (MACD)}
+
+El MACD, desarrollado por Gerald Appel, es el oscilador de impulso por excelencia y ocupa un lugar central en el análisis técnico moderno tal y como lo describe Murphy \parencite{murphy_technical_1999}. Combina las propiedades de seguimiento de tendencia de las medias móviles con la sensibilidad de un oscilador, ofreciendo así información tanto sobre la dirección como sobre la fuerza del movimiento.
+
+El indicador se construye en tres componentes:
+
+\begin{itemize}
+    \item \textbf{Línea MACD:} diferencia entre la EMA de 12 y la EMA de 26 períodos. Mide la convergencia o divergencia entre ambas medias; cuando es positiva, la EMA rápida está por encima de la lenta (impulso alcista), y cuando es negativa, ocurre lo contrario.
+    \item \textbf{Línea de señal:} EMA de 9 períodos aplicada sobre la propia línea MACD. Actúa como suavizador y genera las señales operativas.
+    \item \textbf{Histograma MACD:} diferencia entre la línea MACD y la señal. Su utilidad principal es anticipar los cruces antes de que se produzcan: cuando las barras del histograma se reducen, un cruce de señal es inminente.
+\end{itemize}
+
+$$\text{MACD}(t) = \text{EMA}_{12}(t) - \text{EMA}_{26}(t)$$
+$$\text{Signal}(t) = \text{EMA}_9\bigl(\text{MACD}\bigr)(t)$$
+$$\text{Histograma}(t) = \text{MACD}(t) - \text{Signal}(t)$$
+
+\subsection{Indicador: \textit{Z-score} de Volumen}
+
+El volumen de negociación es el indicador más directo de la participación del mercado en un movimiento de precio: un movimiento acompañado de volumen alto refleja mayor consenso entre participantes y es estadísticamente más significativo que el mismo movimiento con volumen escaso \parencite{murphy_technical_1999}.
+
+El sistema normaliza el volumen mediante el \textit{z-score} respecto a su distribución en las últimas 20 velas: $$\text{vol\_z}(t) = \frac{V(t) - \overline{V}_{20}(t)}{\sigma_{V_{20}}(t)}$$ Un valor del \textit{z-score} de volumen superior a cero indica que el volumen supera su media histórica reciente. En la estrategia de referencia, la condición de apertura exige que este \textit{z-score} supere $0{,}5$, requiriendo que el volumen supere la media en al menos medio punto de desviación típica para confirmar la señal.
+
+\subsection{Indicador: ATR Normalizado}
+
+El \textit{Average True Range} (ATR), propuesto por Wilder, es el indicador de volatilidad realizada de referencia en el análisis técnico \parencite{murphy_technical_1999}. Mide el rango de movimiento real de cada vela, considerando posibles huecos (\textit{gaps}) entre sesiones: $$\text{TR}(t) = \max\bigl(\text{high}_t - \text{low}_t,\;|\text{high}_t - \text{close}_{t-1}|,\; |\text{low}_t - \text{close}_{t-1}|\bigr)$$ $$\text{ATR}_n(t) = \frac{1}{n}\sum_{i=0}^{n-1}\text{TR}(t-i)$$ En la estrategia de referencia, el ATR de 14 períodos se normaliza dividiendo entre el precio de cierre, obteniendo una medida de volatilidad relativa comparable entre activos y niveles de precio. Este indicador no interviene en las reglas clásicas de apertura, sino que aporta contexto de volatilidad como \textit{feature} para el módulo de ML.
+
+\subsection{Indicador: Bandas de Bollinger}
+
+Las Bandas de Bollinger posicionan el precio actual dentro de su distribución estadística reciente, definiendo bandas superior e inferior a $k$ desviaciones típicas de la media móvil de $n$ períodos \parencite{murphy_technical_1999}: $$\text{Banda}_{\pm}(t) = \text{SMA}_n(t) \pm k\,\sigma_n(t)$$ El \textit{Percent B} cuantifica la posición relativa del precio dentro de las bandas, normalizado en el intervalo $[0, 1]$: $$\text{bb\_pct}(t) = \frac{\text{close}(t) - \text{Banda}_{-}(t)}{\text{Banda}_{+}(t) - \text{Banda}_{-}(t)}$$ Un valor cercano a 0 indica que el precio se aproxima a la banda inferior (posible sobreventa), mientras que un valor cercano a 1 sugiere proximidad a la banda superior (posible sobrecompra). En la estrategia de referencia se emplean los parámetros estándar ($n=20$, $k=2$). El indicador se usa exclusivamente como \textit{feature} de ML.
+
+\subsection{Indicador: Tasa de Cambio (ROC)}
+
+La Tasa de Cambio cuantifica el porcentaje de variación del precio respecto a $n$ períodos anteriores, midiendo directamente la velocidad del movimiento \parencite{murphy_technical_1999}: $$\text{ROC}_n(t) = \frac{\text{close}(t) - \text{close}(t-n)}{\text{close}(t-n)} \times 100$$ En la estrategia de referencia se calcula la tasa de cambio de 5 períodos, que captura el impulso acumulado en los últimos cinco \textit{ticks}. A diferencia del retorno de un solo período, el ROC proporciona una visión del movimiento sostenido en un horizonte más amplio, lo que resulta especialmente útil para que el modelo de ML distinga entre impulsos sostenidos y fluctuaciones puntuales.
+
+\subsection{Relación entre Indicadores y Uso Combinado}
+
+Murphy insiste en que ningún indicador debe emplearse de forma aislada \parencite{murphy_technical_1999}. La práctica profesional consiste en combinar indicadores de distintas familias para obtener confirmación cruzada: una señal de compra del MACD gana fiabilidad cuando el RSI se encuentra por debajo de 50 (sin llegar a sobreventa) y el precio ha superado su SMA, ya que los tres instrumentos coinciden en señalar impulso alcista desde diferentes perspectivas matemáticas. Esta filosofía de confirmación múltiple es precisamente la base sobre la que se diseñan las estrategias implementadas en este proyecto \parencite{murphy_technical_1999}.
+
+Cada indicador es, individualmente, propenso a generar falsas señales en determinadas condiciones de mercado: la SMA las genera en mercados laterales, el RSI puede permanecer en zona de sobrecompra durante tendencias alcistas prolongadas, y el MACD puede producir cruces frecuentes en períodos de baja volatilidad. La combinación de indicadores actúa como un sistema de votación: solo se ejecuta una orden cuando varios instrumentos independientes coinciden, reduciendo drásticamente la tasa de falsas señales a costa de perder algunas oportunidades. En la estrategia de referencia, la apertura de una posición de compra requiere que cuatro condiciones independientes se cumplan simultáneamente: una brecha entre medias exponenciales superior a $0{,}001$ (tendencia alcista de corto plazo), un RSI de corto plazo inferior a $55$ (impulso no agotado), un retorno positivo en el último \textit{tick} y un \textit{z-score} de volumen superior a $0{,}5$ (volumen por encima de su media histórica reciente). Las condiciones de venta son simétricas. Esta exigencia de confirmación múltiple es la razón por la que la función de cálculo de indicadores de la clase base está diseñada para acoger múltiples indicadores simultáneamente \parencite{murphy_technical_1999}.
+
+\subsection{Período de Calentamiento}
+
+Todos los indicadores descritos requieren un número mínimo de velas históricas antes de poder generar valores válidos. Este período inicial, conocido como \textit{warmup period}, produce valores indefinidos que deben descartarse antes de cualquier análisis o entrenamiento de modelos, ya que su inclusión introduciría ruido en el pipeline de ML y podría sesgar las métricas de evaluación.
+
+El período de calentamiento del sistema se fija en el máximo entre todos los indicadores activos. En la estrategia de referencia, dicho período está fijado en 20 velas, valor que cubre la ventana de estabilización de las medias de volumen y de las Bandas de Bollinger (ambas con ventana de 20 períodos). La clase base dispone de una función que calcula automáticamente el período máximo a partir de las constantes de período definidas en cada estrategia. Las filas de calentamiento se descartan antes de cualquier análisis o entrenamiento:
+
+Esto garantiza que todos los indicadores son matemáticamente válidos en el DataFrame que alimenta los motores de backtesting y entrenamiento de modelos \parencite{mckinney_python_2022}.
