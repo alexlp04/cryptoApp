@@ -1,0 +1,85 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/24.7.17 Chrome/128.0.6613.36 Electron/32.0.1 Safari/537.36" version="24.7.17">
+  <diagram name="Página-1" id="train_diagram">
+    <mxGraphModel dx="1364" dy="843" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="bg_python" value="" style="whiteSpace=wrap;strokeWidth=2;fillColor=#FF99FF;strokeColor=#F359FF;fontSize=16;" parent="1" vertex="1">
+          <mxGeometry x="30" y="560" width="760" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_python" value="&lt;font style=&quot;font-size:20px;font-weight:bold;&quot;&gt;Motor Python&lt;/font&gt;" style="text;html=1;align=left;verticalAlign=top;resizable=0;points=[];autosize=1;" parent="1" vertex="1">
+          <mxGeometry x="42" y="566" width="200" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="start" value="&lt;font style=&quot;font-size:25px;&quot;&gt;Inicio&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#60a917;fontColor=#ffffff;strokeColor=#2D7600;" parent="1" vertex="1">
+          <mxGeometry x="323" y="150" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="Validar Argumentos" style="whiteSpace=wrap;strokeWidth=2;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="290" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="NXuhYTS6R46p9-NOwNuo-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="n2" target="p1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="Recuperar Velas Históricas" style="whiteSpace=wrap;strokeWidth=2;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="430" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p1" value="Construir DataFrame" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="610" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="Generar indicadores" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="740" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="Descartar Warmup / NaN" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="870" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" value="Generar Etiquetas" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="1000" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p5" value="Split 80% Train / 20% Test" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="1130" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p6" value="Entrenar Modelo" style="whiteSpace=wrap;strokeWidth=2;fillColor=#6A00FF;fontColor=#ffffff;strokeColor=#3700CC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="1260" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="NXuhYTS6R46p9-NOwNuo-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="p7_db" target="n5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p7_db" value="Serializar Modelo" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=#fa6800;fontColor=#000000;strokeColor=#C73500;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="263" y="1390" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="n5" value="Mostrar Métricas en CLI" style="whiteSpace=wrap;strokeWidth=2;fillColor=#0050ef;fontColor=#ffffff;strokeColor=#001DBC;fontSize=33;" parent="1" vertex="1">
+          <mxGeometry x="233" y="1550" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="end" value="&lt;font style=&quot;font-size:25px;&quot;&gt;Fin&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#60a917;fontColor=#ffffff;strokeColor=#2D7600;" parent="1" vertex="1">
+          <mxGeometry x="323" y="1690" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="e_s_n1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="start" target="n1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n1_n2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="n1" target="n2" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p1_p2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p1" target="p2" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p2_p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p2" target="p3" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p3_p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p3" target="p4" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p4_p5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p4" target="p5" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p5_p6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p5" target="p6" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p6_p7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="p6" target="p7_db" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n5_end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="n5" target="end" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

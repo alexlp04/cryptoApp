@@ -1,0 +1,227 @@
+\chapter{Esquema de la base de datos}
+\label{anx:sql}
+
+Este anexo describe la estructura de las nueve tablas que componen el esquema relacional del sistema, tal como queda definida en el repositorio del proyecto. Las decisiones de tipos reflejan los criterios descritos en el capítulo~\ref{sec:diseno_estatico}: \texttt{DECIMAL(18,8)} para todos los valores financieros, \texttt{BIGINT} para las marcas temporales expresadas en milisegundos de época, y la columna \texttt{eliminado} de tipo \texttt{BIT(1)} como mecanismo de borrado lógico uniforme. Las columnas de volumen cotizado emplean \texttt{DECIMAL(20,8)} para acomodar cifras de mayor magnitud sin pérdida de precisión.
+
+\section*{Tabla \texttt{usuario}}
+
+Almacena las credenciales de acceso y el estado de cada cuenta registrada en la plataforma.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{usuario}.}
+\label{tab:sql-usuario}
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}             & \texttt{BIGINT}       & Clave primaria autoincrementada \\
+\texttt{nombre}         & \texttt{VARCHAR(255)} & Nombre de usuario; único y obligatorio \\
+\texttt{password\_hash} & \texttt{VARCHAR(255)} & Contraseña cifrada con BCrypt \\
+\texttt{fecha\_creacion}& \texttt{DATETIME(6)}  & Marca temporal de registro \\
+\texttt{eliminado}      & \texttt{BIT(1)}       & Indicador de borrado lógico; valor por defecto 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{vela}}
+
+Registra los datos OHLCV descargados de Binance para cada símbolo e intervalo temporal. La clave única compuesta por símbolo, intervalo y marca temporal de apertura garantiza la idempotencia de las inserciones masivas.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{vela}.}
+\label{tab:sql-vela}
+\begin{tabular}{@{}llp{6cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}                  & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{symbol}              & \texttt{VARCHAR(10)}   & Par de mercado (p.\ ej.\ BTCUSDT) \\
+\texttt{time\_interval}      & \texttt{VARCHAR(10)}   & Marco temporal (p.\ ej.\ 1h, 4h) \\
+\texttt{open\_time}          & \texttt{BIGINT}        & Apertura de la vela en milisegundos de época \\
+\texttt{close\_time}         & \texttt{BIGINT}        & Cierre de la vela en milisegundos de época \\
+\texttt{open}                & \texttt{DECIMAL(18,8)} & Precio de apertura \\
+\texttt{high}                & \texttt{DECIMAL(18,8)} & Precio máximo \\
+\texttt{low}                 & \texttt{DECIMAL(18,8)} & Precio mínimo \\
+\texttt{close}               & \texttt{DECIMAL(18,8)} & Precio de cierre \\
+\texttt{volume}              & \texttt{DECIMAL(18,8)} & Volumen negociado en activo base \\
+\texttt{quote\_volume}       & \texttt{DECIMAL(20,8)} & Volumen negociado en activo cotizado \\
+\texttt{trades}              & \texttt{INT}           & Número de transacciones en la vela \\
+\texttt{taker\_base\_volume}  & \texttt{DECIMAL(18,8)} & Volumen tomador en activo base \\
+\texttt{taker\_quote\_volume} & \texttt{DECIMAL(20,8)} & Volumen tomador en activo cotizado \\
+\texttt{fecha\_creacion}     & \texttt{DATETIME(6)}   & Marca temporal de inserción \\
+\texttt{eliminado}           & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{wallet}}
+
+Representa una cartera digital perteneciente a un usuario. El doble saldo entre balance real y balance disponible impide que varias estrategias activas simultáneas puedan comprometer el mismo capital.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{wallet}.}
+\label{tab:sql-wallet}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}                  & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{nombre}              & \texttt{VARCHAR(255)}  & Nombre descriptivo de la cartera \\
+\texttt{usuario\_id}         & \texttt{BIGINT}        & Referencia a \texttt{usuario(id)} \\
+\texttt{balance\_real}       & \texttt{DECIMAL(18,8)} & Patrimonio total, incluyendo capital comprometido \\
+\texttt{balance\_disponible} & \texttt{DECIMAL(18,8)} & Capital libre para nuevas operaciones \\
+\texttt{type}                & \texttt{VARCHAR(50)}   & Tipo de cartera (simulada o real) \\
+\texttt{is\_active}          & \texttt{BIT(1)}        & Indica si la cartera está operativa \\
+\texttt{fecha\_creacion}     & \texttt{DATETIME(6)}   & Marca temporal de creación \\
+\texttt{eliminado}           & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{instancia\_estrategia}}
+
+Cada fila representa una configuración activa de ejecución de una estrategia, con su capital asignado, parámetros de riesgo y estado de ciclo de vida.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{instancia\_estrategia}.}
+\label{tab:sql-instancia}
+\begin{tabular}{@{}llp{5.8cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}                   & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{nombre\_estrategia}   & \texttt{VARCHAR(255)}  & Identificador de la clase de estrategia \\
+\texttt{wallet\_asociada}     & \texttt{BIGINT}        & Referencia a la cartera digital \\
+\texttt{timeframe}            & \texttt{VARCHAR(20)}   & Marco temporal de ejecución \\
+\texttt{capital\_asignado}    & \texttt{DECIMAL(18,8)} & Capital total destinado a la instancia \\
+\texttt{risk\_per\_trade}      & \texttt{DECIMAL(18,8)} & Riesgo máximo por operación \\
+\texttt{capital\_reservado}   & \texttt{DECIMAL(18,8)} & Capital bloqueado al activar la instancia \\
+\texttt{capital\_comprometido}& \texttt{DECIMAL(18,8)} & Capital en uso en posiciones abiertas \\
+\texttt{riesgo\_abierto}      & \texttt{DECIMAL(18,8)} & Riesgo acumulado en posiciones vigentes \\
+\texttt{es\_real}             & \texttt{BIT(1)}        & Diferencia operativa real de simulada \\
+\texttt{estado}               & \texttt{VARCHAR(50)}   & Estado del ciclo de vida (activa, pausada, terminada) \\
+\texttt{fecha\_creacion}      & \texttt{DATETIME(6)}   & Marca temporal de creación \\
+\texttt{eliminado}            & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{instancia\_simbolos}}
+
+Relación de los pares de mercado vigilados por una instancia de estrategia. Una misma instancia puede operar sobre varios símbolos simultáneamente.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{instancia\_simbolos}.}
+\label{tab:sql-simbolos}
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{instancia\_id} & \texttt{BIGINT}       & Referencia a \texttt{instancia\_estrategia(id)} \\
+\texttt{simbolo}       & \texttt{VARCHAR(255)} & Par de mercado supervisado (p.\ ej.\ ETHUSDT) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{posicion}}
+
+Registra cada operación de mercado individual, con el precio de entrada exacto y el margen comprometido. El campo \texttt{abierta} permite al motor evitar órdenes duplicadas sobre el mismo par mientras la posición sigue vigente.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{posicion}.}
+\label{tab:sql-posicion}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}               & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{simbolo}          & \texttt{VARCHAR(20)}   & Par de mercado de la operación \\
+\texttt{precio\_entrada}  & \texttt{DECIMAL(18,8)} & Precio de entrada con precisión decimal completa \\
+\texttt{margen\_invertido}& \texttt{DECIMAL(18,8)} & Capital comprometido como margen \\
+\texttt{abierta}          & \texttt{BIT(1)}        & Indica si la posición sigue activa \\
+\texttt{instancia\_id}    & \texttt{BIGINT}        & Referencia a \texttt{instancia\_estrategia(id)} \\
+\texttt{fecha\_creacion}  & \texttt{DATETIME(6)}   & Marca temporal de apertura \\
+\texttt{eliminado}        & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{ledger\_entry}}
+
+Constituye el libro mayor inmutable del sistema. Cada fila registra un movimiento de capital con su tipo, importe, saldo resultante y referencia descriptiva. Las entradas no se modifican ni eliminan físicamente, lo que permite reconstruir el estado financiero de cualquier cartera en cualquier instante histórico.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{ledger\_entry}.}
+\label{tab:sql-ledger}
+\begin{tabular}{@{}llp{6.2cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}             & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{wallet\_id}     & \texttt{BIGINT}        & Cartera afectada por el movimiento \\
+\texttt{estrategia\_id} & \texttt{BIGINT}        & Instancia de estrategia relacionada \\
+\texttt{type}           & \texttt{VARCHAR(50)}   & Tipo de movimiento (véase sección~\ref{sec:diseno_estatico}) \\
+\texttt{amount}         & \texttt{DECIMAL(18,8)} & Importe del movimiento \\
+\texttt{balance\_after} & \texttt{DECIMAL(18,8)} & Saldo de la cartera tras el movimiento \\
+\texttt{reference}      & \texttt{VARCHAR(255)}  & Descripción textual del concepto \\
+\texttt{timestamp}      & \texttt{DATETIME(6)}   & Instante exacto del movimiento \\
+\texttt{fecha\_creacion}& \texttt{DATETIME(6)}   & Marca temporal de inserción \\
+\texttt{eliminado}      & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{indicador\_tecnico}}
+
+Asociar cada vela almacenada con los valores de los indicadores técnicos calculados sobre ella por el motor Python. El campo \texttt{parametros} permite distinguir variantes del mismo tipo de indicador con periodos distintos.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{indicador\_tecnico}.}
+\label{tab:sql-indicador}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}             & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{vela\_id}       & \texttt{BIGINT}        & Referencia a \texttt{vela(id)}; obligatoria \\
+\texttt{tipo}           & \texttt{VARCHAR(50)}   & Tipo de indicador (RSI, EMA, SMA, etc.) \\
+\texttt{parametros}     & \texttt{VARCHAR(100)}  & Parámetros de cálculo (p.\ ej.\ periodo=14) \\
+\texttt{valor}          & \texttt{DECIMAL(20,8)} & Valor calculado del indicador \\
+\texttt{fecha\_creacion}& \texttt{DATETIME(6)}   & Marca temporal de inserción \\
+\texttt{eliminado}      & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Tabla \texttt{capital\_reservado}}
+
+Desglosa por instancia de estrategia el capital bloqueado en cada cartera, permitiendo conciliar en todo momento los distintos estados del capital sin depender únicamente del libro mayor.
+
+\begin{table}[h]
+\centering
+\caption{Columnas de la tabla \texttt{capital\_reservado}.}
+\label{tab:sql-capital}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id}             & \texttt{BIGINT}        & Clave primaria autoincrementada \\
+\texttt{wallet\_id}     & \texttt{BIGINT}        & Cartera a la que pertenece el registro \\
+\texttt{estrategia\_id} & \texttt{BIGINT}        & Instancia de estrategia asociada \\
+\texttt{reservado}      & \texttt{DECIMAL(18,8)} & Capital bloqueado al activar la estrategia \\
+\texttt{comprometido}   & \texttt{DECIMAL(18,8)} & Capital actualmente en uso en posiciones \\
+\texttt{riesgo\_abierto}& \texttt{DECIMAL(18,8)} & Riesgo acumulado en posiciones vigentes \\
+\texttt{fecha\_creacion}& \texttt{DATETIME(6)}   & Marca temporal de inserción \\
+\texttt{eliminado}      & \texttt{BIT(1)}        & Indicador de borrado lógico \\
+\bottomrule
+\end{tabular}
+\end{table}
+

@@ -1,0 +1,71 @@
+\babel@toc {spanish}{}\relax 
+\contentsline {chapter}{Índice de figuras}{4}{chapter*.2}%
+\contentsline {chapter}{Índice de tablas}{5}{chapter*.3}%
+\contentsline {chapter}{\numberline {1}Resumen}{6}{chapter.1}%
+\contentsline {chapter}{\numberline {2}Extended Abstract}{7}{chapter.2}%
+\contentsline {chapter}{\numberline {3}Introducción}{8}{chapter.3}%
+\contentsline {chapter}{\numberline {4}Objetivos}{10}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Objetivo General}{10}{section.4.1}%
+\contentsline {section}{\numberline {4.2}Objetivos Específicos}{10}{section.4.2}%
+\contentsline {chapter}{\numberline {5}Estado del Arte}{11}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Evolución del Trading Algorítmico}{11}{section.5.1}%
+\contentsline {section}{\numberline {5.2}Datos y Modelos Predictivos}{11}{section.5.2}%
+\contentsline {section}{\numberline {5.3}Arquitecturas de Software para Sistemas de Trading}{13}{section.5.3}%
+\contentsline {section}{\numberline {5.4}Posicionamiento del Trabajo}{13}{section.5.4}%
+\contentsline {chapter}{\numberline {6}Análisis y Metodología}{15}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Vinculación con la Problemática Inicial}{15}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Metodología de Desarrollo}{15}{section.6.2}%
+\contentsline {subsection}{\numberline {6.2.1}Incrementos de Implementación}{16}{subsection.6.2.1}%
+\contentsline {section}{\numberline {6.3}Tecnologías y Herramientas Utilizadas}{18}{section.6.3}%
+\contentsline {subsection}{\numberline {6.3.1}Librerías Críticas}{18}{subsection.6.3.1}%
+\contentsline {subsubsection}{Stack Java}{19}{subsection.6.3.1}%
+\contentsline {subsubsection}{Stack Python}{19}{subsection.6.3.1}%
+\contentsline {subsubsection}{Herramientas de Calidad y Asistencia al Desarrollo}{20}{subsection.6.3.1}%
+\contentsline {section}{\numberline {6.4}Arquitectura General}{21}{section.6.4}%
+\contentsline {subsection}{\numberline {6.4.1}Estructura y componentes del sistema}{21}{subsection.6.4.1}%
+\contentsline {subsubsection}{Módulos del backend Java}{21}{subsection.6.4.1}%
+\contentsline {subsubsection}{Patrones de diseño aplicados}{24}{subsection.6.4.1}%
+\contentsline {subsubsection}{Motor Python}{24}{subsection.6.4.1}%
+\contentsline {subsection}{\numberline {6.4.2}Comunicación entre procesos}{25}{subsection.6.4.2}%
+\contentsline {subsection}{\numberline {6.4.3}Ventajas y desventajas de la arquitectura}{26}{subsection.6.4.3}%
+\contentsline {section}{\numberline {6.5}Indicadores Técnicos Implementados}{26}{section.6.5}%
+\contentsline {subsection}{\numberline {6.5.1}La Estrategia Base del Sistema}{27}{subsection.6.5.1}%
+\contentsline {subsection}{\numberline {6.5.2}Indicador: Media Móvil Simple (SMA)}{27}{subsection.6.5.2}%
+\contentsline {subsection}{\numberline {6.5.3}Indicador: Media Móvil Exponencial (EMA)}{28}{subsection.6.5.3}%
+\contentsline {subsection}{\numberline {6.5.4}Indicador: Relative Strength Index (RSI)}{29}{subsection.6.5.4}%
+\contentsline {subsection}{\numberline {6.5.5}Indicador: Moving Average Convergence Divergence (MACD)}{30}{subsection.6.5.5}%
+\contentsline {subsection}{\numberline {6.5.6}Indicador: \textit {Z-score} de Volumen}{30}{subsection.6.5.6}%
+\contentsline {subsection}{\numberline {6.5.7}Indicador: ATR Normalizado}{31}{subsection.6.5.7}%
+\contentsline {subsection}{\numberline {6.5.8}Indicador: Bandas de Bollinger}{31}{subsection.6.5.8}%
+\contentsline {subsection}{\numberline {6.5.9}Indicador: Tasa de Cambio (ROC)}{31}{subsection.6.5.9}%
+\contentsline {subsection}{\numberline {6.5.10}Relación entre Indicadores y Uso Combinado}{32}{subsection.6.5.10}%
+\contentsline {subsection}{\numberline {6.5.11}Período de Calentamiento}{32}{subsection.6.5.11}%
+\contentsline {section}{\numberline {6.6}Módulo de Inteligencia Artificial y Validación Experimental}{33}{section.6.6}%
+\contentsline {subsection}{\numberline {6.6.1}Ingeniería de características y generación de etiquetas}{33}{subsection.6.6.1}%
+\contentsline {subsection}{\numberline {6.6.2}Preparación del conjunto de datos}{34}{subsection.6.6.2}%
+\contentsline {subsection}{\numberline {6.6.3}Algoritmos soportados y optimización de hiperparámetros}{34}{subsection.6.6.3}%
+\contentsline {section}{\numberline {6.7}Diagramas de Flujo}{35}{section.6.7}%
+\contentsline {subsection}{\numberline {6.7.1}Gestión de Usuarios y Acceso}{36}{subsection.6.7.1}%
+\contentsline {subsection}{\numberline {6.7.2}Gestión de Capital (\textit {Wallets})}{37}{subsection.6.7.2}%
+\contentsline {subsection}{\numberline {6.7.3}Obtención de Datos (ETL)}{38}{subsection.6.7.3}%
+\contentsline {subsection}{\numberline {6.7.4}Gestión de Estrategias}{39}{subsection.6.7.4}%
+\contentsline {subsection}{\numberline {6.7.5}Backtesting}{42}{subsection.6.7.5}%
+\contentsline {subsection}{\numberline {6.7.6}Trading en Tiempo Real}{44}{subsection.6.7.6}%
+\contentsline {subsection}{\numberline {6.7.7}Entrenamiento de Modelos}{46}{subsection.6.7.7}%
+\contentsline {subsection}{\numberline {6.7.8}Optimización de Hiperparámetros}{48}{subsection.6.7.8}%
+\contentsline {chapter}{\numberline {7}Desarrollo del Trabajo}{52}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Introducción}{52}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Trazabilidad de Objetivos y Evidencia}{52}{section.7.2}%
+\contentsline {section}{\numberline {7.3}Manual de usuario}{54}{section.7.3}%
+\contentsline {paragraph}{Gestión de cuentas y carteras.}{54}{section.7.3}%
+\contentsline {paragraph}{Descarga de datos históricos.}{54}{section.7.3}%
+\contentsline {paragraph}{Simulación histórica (\textit {backtesting}).}{54}{section.7.3}%
+\contentsline {paragraph}{Módulo de inteligencia artificial.}{55}{section.7.3}%
+\contentsline {paragraph}{Negociación simulada en tiempo real.}{55}{section.7.3}%
+\contentsline {section}{\numberline {7.4}Resultados}{58}{section.7.4}%
+\contentsline {subsection}{\numberline {7.4.1}Cobertura de tests automáticos}{58}{subsection.7.4.1}%
+\contentsline {chapter}{\numberline {8}Conclusiones y Vías Futuras}{61}{chapter.8}%
+\contentsline {chapter}{\numberline {A}Glosario}{62}{appendix.Alph1}%
+\contentsline {chapter}{\numberline {B}Esquema de la base de datos}{72}{appendix.Alph2}%
+\contentsline {chapter}{\numberline {C}Referencia del protocolo IPC}{78}{appendix.Alph3}%
+\contentsline {chapter}{\numberline {D}Espacios de búsqueda de hiperparámetros}{80}{appendix.Alph4}%
