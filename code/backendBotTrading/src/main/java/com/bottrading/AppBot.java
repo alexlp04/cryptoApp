@@ -141,10 +141,17 @@ public class AppBot implements CommandLineRunner {
 
         boolean ejecutando = true;
         while (ejecutando) {
-            uiPrint("> ");
+            uiPrint(buildPrompt());
             String linea = scanner.nextLine().trim();
             ejecutando = procesarLinea(linea);
         }
+    }
+
+    private String buildPrompt() {
+        if (sessionManager.isLoggedIn()) {
+            return "[" + sessionManager.getCurrentUser().getNombre() + "] > ";
+        }
+        return "[sin sesion] > ";
     }
 
     @SuppressWarnings("java:S106")
