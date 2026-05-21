@@ -1,0 +1,69 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "backend: test",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["test"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"],
+      "group": "test"
+    },
+    {
+      "label": "backend: verify-quality",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["clean", "verify", "-DskipTests"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"],
+      "group": "build"
+    },
+    {
+      "label": "backend: full-quality",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["clean", "verify"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"],
+      "group": "build"
+    },
+    {
+      "label": "backend: sonar-scanner",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["sonar:sonar"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"]
+    },
+    {
+      "label": "repo: install-git-hooks",
+      "type": "shell",
+      "command": "bash",
+      "args": ["scripts/install-git-hooks.sh"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: pre-push-gate",
+      "type": "shell",
+      "command": "mvn",
+      "args": ["clean", "verify"],
+      "options": {
+        "cwd": "${workspaceFolder}/code/backendBotTrading"
+      },
+      "problemMatcher": ["$maven"],
+      "group": "build"
+    }
+  ]
+}

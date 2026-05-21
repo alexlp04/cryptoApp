@@ -1,0 +1,24 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-21",
+      "path": "/home/alejandro/.local/share/mise/installs/java/temurin-21",
+      "default": true
+    }
+  ],
+  "java.compile.nullAnalysis.mode": "automatic",
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "sonarlint.connectedMode.project": {
+    "connectionId": "alexlp04",
+    "projectKey": "alexlp04_cryptoApp"
+  },
+  "sonarlint.rules": {
+    "java:S106": {
+      "level": "on"
+    }
+  }
+}
