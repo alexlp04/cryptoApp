@@ -62,7 +62,6 @@ logs/
 # ------------------------------------------------------------------------------
 .DS_Store
 Thumbs.dbdocs/
-.github/
 .sonarlint/
 .githooks/
 package-lock.json
