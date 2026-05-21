@@ -39,16 +39,12 @@ public final class ModelsCommand implements CliCommand {
         context.println().accept("   > learning_rate (Float): Tasa de aprendizaje (0.01-0.2). Def: 0.05");
         context.println().accept("   > max_depth     (Int)  : Profundidad (3-12). Def: 6\n");
 
-        context.println().accept("   4. GRADIENT BOOSTING (-m gradient_boosting) [Clasico]");
-        context.println().accept("   > n_estimators  (Int)  : (100-500). Def: 100");
-        context.println().accept("   > learning_rate (Float): (0.01-0.2). Def: 0.1\n");
-
-        context.println().accept("   5. SUPPORT VECTOR MACHINES (-m svm) [Matematico]");
+        context.println().accept("   4. SUPPORT VECTOR MACHINES (-m svm) [Matematico]");
         context.println().accept("   Detecta regimenes de mercado creando fronteras matematicas.");
         context.println().accept("   > C             (Float): Margen de error (0.1-100). Def: 1.0");
         context.println().accept("   > kernel        (Str)  : Forma ('rbf', 'linear', 'poly'). Def: rbf\n");
 
-        context.println().accept("   6. DEEP LEARNING / RED NEURONAL (-m neural_network) [Avanzado]");
+        context.println().accept("   5. DEEP LEARNING / RED NEURONAL (-m neural_network) [Avanzado]");
         context.println().accept("   TensorFlow/Keras. Excelente si le pasas muchos indicadores.");
         context.println().accept("   > epochs        (Int)  : Vueltas completas al dataset (10-100). Def: 50");
         context.println().accept("   > batch_size    (Int)  : Velas procesadas de golpe (32, 64, 128). Def: 64");

@@ -7,7 +7,7 @@ Protocolo IPC:
 
 Payload de entrada (desde AIOptimizationService.java):
   {
-    "model_type":    str     — xgboost | lightgbm | random_forest | neural_network
+        "model_type":    str     — xgboost | lightgbm | random_forest | svm | neural_network
     "symbol":        str     — ej. "BTCUSDT"
     "timeframe":     str     — ej. "1h"
     "dataset":       list    — lista de rows {timestamp, open?, high?, low?, close, volume, indics…}
@@ -42,7 +42,6 @@ Payload de salida:
 from __future__ import annotations
 
 import gc
-import importlib
 import json
 import logging
 import math
@@ -57,13 +56,10 @@ import numpy as np
 import optuna
 import pandas as pd
 from optuna.pruners import MedianPruner
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
-import lightgbm as lgb
-import xgboost as xgb
 
 from ipc_protocol import read_request_payload, write_error, write_response
 from backtest_engine import run_backtest_with_predictions
@@ -72,6 +68,8 @@ from shared_utils import (
     apply_strategy_features,
     setup_engine_logging,
     build_sklearn_model,
+    configure_tensorflow_runtime,
+    fit_sklearn_model,
     PROJECT_ROOT,
 )
 
@@ -95,6 +93,7 @@ RESULTS_SUBDIR: str = "optimize"
 # Máximo de filas usadas durante la búsqueda con Optuna para modelos NN.
 # El entrenamiento final siempre usa el dataset completo.
 OPTUNA_NN_MAX_SAMPLES: int = 50_000
+OPTUNA_SVM_MAX_SAMPLES: int = 12_000
 
 
 # =============================================================================
@@ -183,6 +182,39 @@ def _suggest_random_forest(trial: optuna.Trial) -> dict[str, Any]:
     }
 
 
+def _suggest_svm(trial: optuna.Trial) -> dict[str, Any]:
+    kernel = trial.suggest_categorical("kernel", ["linear", "rbf", "poly", "sigmoid"])
+    params: dict[str, Any] = {
+        "C": trial.suggest_float("C", 1e-3, 1e3, log=True),
+        "kernel": kernel,
+        "gamma": trial.suggest_categorical("gamma", ["scale", "auto"]),
+        "probability": True,
+        "random_state": 42,
+    }
+    if kernel == "poly":
+        params["degree"] = trial.suggest_int("degree", 2, 5)
+    return params
+
+
+def _prepare_svm_fit_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Normaliza el fit de SVM para evitar calibraciones internas muy costosas."""
+    fit_params = dict(params)
+    # `probability=True` activa una calibración interna adicional en libsvm que,
+    # para el entrenamiento final, puede dejar el proceso más de una hora sin emitir logs.
+    fit_params["probability"] = False
+    fit_params.setdefault("cache_size", 512)
+    fit_params.setdefault("max_iter", 2000)
+    return fit_params
+
+
+def _prepare_optuna_sklearn_params(model_type: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Ajustes de búsqueda para mantener Optuna ágil sin afectar el modelo final guardado."""
+    if model_type != "svm":
+        return params
+
+    return _prepare_svm_fit_params(params)
+
+
 def _suggest_neural_network(trial: optuna.Trial) -> dict[str, Any]:
     return {
         "epochs": trial.suggest_int("epochs", 20, 200),
@@ -198,6 +230,7 @@ _SUGGEST_FN: dict[str, Any] = {
     "xgboost": _suggest_xgboost,
     "lightgbm": _suggest_lightgbm,
     "random_forest": _suggest_random_forest,
+    "svm": _suggest_svm,
     "neural_network": _suggest_neural_network,
     "deep_learning": _suggest_neural_network,
     "keras": _suggest_neural_network,
@@ -236,6 +269,12 @@ def _build_and_eval_neural_network(
     from tensorflow.keras.layers import Dense, Dropout, Normalization
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.optimizers import Adam
+
+    gpu_enabled, gpu_names = configure_tensorflow_runtime()
+    if gpu_enabled:
+        logger.info("TensorFlow/Optuna usará GPU: %s", gpu_names)
+    else:
+        logger.info("TensorFlow/Optuna usará CPU")
 
     epochs = int(params.get("epochs", 50))
     batch_size = int(params.get("batch_size", 64))
@@ -423,14 +462,33 @@ def _make_objective(
     Por cada fold sklearn se corre un backtest real con run_backtest_with_predictions
     para obtener métricas de trading fidedignas a la estrategia.
     """
-    suggest_fn = _SUGGEST_FN.get(model_type, _suggest_random_forest)
+    suggest_fn = _SUGGEST_FN[model_type]
     is_neural = model_type in ("neural_network", "deep_learning", "keras")
+    search_x = X
+    search_y = y
+    search_timestamps = timestamps
+    if model_type == "svm" and len(X) > OPTUNA_SVM_MAX_SAMPLES:
+        search_x = X[-OPTUNA_SVM_MAX_SAMPLES:]
+        search_y = y[-OPTUNA_SVM_MAX_SAMPLES:]
+        search_timestamps = timestamps[-OPTUNA_SVM_MAX_SAMPLES:]
+        logger.info(
+            "SVM/Optuna limitará dataset de búsqueda: %d → %d filas",
+            len(X), len(search_x),
+        )
     # TimeSeriesSplit garantiza que la validación siempre es posterior al entrenamiento
     tss = TimeSeriesSplit(n_splits=cv_folds)
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
+        trial_params = _prepare_optuna_sklearn_params(model_type, params)
         trial_start = datetime.now()
+
+        logger.info(
+            "Trial %3d | %s | iniciando sobre %d filas",
+            trial.number,
+            model_type,
+            len(search_x) if model_type == "svm" else len(X),
+        )
 
         try:
             cv_f1_scores: list[float] = []
@@ -456,21 +514,25 @@ def _make_objective(
                 last_y_pred_sk: np.ndarray | None = None
                 last_val_idx_sk: np.ndarray | None = None
 
-                for fold_idx, (train_idx, val_idx) in enumerate(tss.split(X)):
-                    x_tr, x_val = X[train_idx], X[val_idx]
-                    y_tr, y_val = y[train_idx], y[val_idx]
+                for fold_idx, (train_idx, val_idx) in enumerate(tss.split(search_x)):
+                    x_tr, x_val = search_x[train_idx], search_x[val_idx]
+                    y_tr, y_val = search_y[train_idx], search_y[val_idx]
 
-                    model_fold = build_sklearn_model(model_type, params)
                     # class_weight para compensar desbalanceo (problema 1)
-                    n_classes_fold = len(np.unique(y))
-                    cw_fold = compute_class_weight("balanced", classes=np.unique(y), y=y)
-                    cw_fold_dict = dict(zip(np.unique(y).tolist(), cw_fold.tolist()))
-                    if hasattr(model_fold, "class_weight"):
-                        model_fold.set_params(class_weight=cw_fold_dict)
-                    model_fold.fit(x_tr, y_tr)
+                    cw_fold = compute_class_weight(
+                        "balanced", classes=np.unique(search_y), y=search_y
+                    )
+                    cw_fold_dict = dict(zip(np.unique(search_y).tolist(), cw_fold.tolist()))
+                    model_fold = fit_sklearn_model(
+                        model_type,
+                        trial_params,
+                        x_tr,
+                        y_tr,
+                        class_weight=cw_fold_dict,
+                    )
                     y_pred_val = model_fold.predict(x_val)
 
-                    n_classes_cur = len(np.unique(y))
+                    n_classes_cur = len(np.unique(search_y))
                     avg_mode = "binary" if n_classes_cur <= 2 else "weighted"
                     fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode, zero_division=0))
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
@@ -489,7 +551,7 @@ def _make_objective(
                 # Backtest UNA VEZ sobre el último fold (datos más recientes)
                 if last_y_pred_sk is not None and last_val_idx_sk is not None:
                     y_pred_original = label_encoder.inverse_transform(last_y_pred_sk)
-                    val_timestamps = timestamps[last_val_idx_sk]
+                    val_timestamps = search_timestamps[last_val_idx_sk]
                     df_val = df_enriched[
                         df_enriched["timestamp"].isin(set(val_timestamps.tolist()))
                     ].sort_values("timestamp").reset_index(drop=True)
@@ -514,9 +576,8 @@ def _make_objective(
                 pf_norm_cv = float(np.mean(cv_pf_norms))
                 sharpe_norm_cv = float(np.mean(cv_sharpe_norms))
 
-                model_full = build_sklearn_model(model_type, params)
-                model_full.fit(X, y)
-                train_acc = float(accuracy_score(y, model_full.predict(X)))
+                model_full = fit_sklearn_model(model_type, trial_params, search_x, search_y)
+                train_acc = float(accuracy_score(search_y, model_full.predict(search_x)))
 
             overfit_gap = train_acc - cv_acc
             composite = _compute_composite_score(
@@ -595,6 +656,12 @@ def _train_neural_final(
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.optimizers import Adam
 
+    gpu_enabled, gpu_names = configure_tensorflow_runtime()
+    if gpu_enabled:
+        logger.info("TensorFlow entrenamiento final usará GPU: %s", gpu_names)
+    else:
+        logger.info("TensorFlow entrenamiento final usará CPU")
+
     epochs = int(best_params.get("epochs", 50))
     batch_size = int(best_params.get("batch_size", 64))
     lr = float(best_params.get("learning_rate", 0.001))
@@ -663,14 +730,24 @@ def _train_sklearn_final(
     label_encoder: LabelEncoder | None,
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo sklearn final. Devuelve (model, filename, y_pred_test)."""
-    model = build_sklearn_model(model_type, best_params)
-    model.fit(X, y)
+    fit_params = dict(best_params)
+    if model_type == "svm":
+        fit_params = _prepare_svm_fit_params(best_params)
+        logger.info(
+            "Entrenamiento final SVM ajustado: probability=%s max_iter=%s cache_size=%s",
+            fit_params.get("probability"),
+            fit_params.get("max_iter"),
+            fit_params.get("cache_size"),
+        )
+
+    model = fit_sklearn_model(model_type, fit_params, X, y)
     y_pred = model.predict(X_test)
 
     setattr(model, "feature_cols", feature_cols)
     setattr(model, "strategy_name", strategy_name)
     setattr(model, "warmup_candles", warmup_candles)
     setattr(model, "best_params", best_params)
+    setattr(model, "fit_params", fit_params)
     setattr(model, "label_encoder", label_encoder)
 
     suffix = f"_{strategy_name}" if strategy_name else ""
