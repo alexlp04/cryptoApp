@@ -1,0 +1,82 @@
+package com.bottrading.interfaces.cli.commands;
+
+import java.math.BigDecimal;
+
+import com.bottrading.interfaces.cli.CliCommandContext;
+import com.bottrading.interfaces.cli.CliInputValidator;
+import com.bottrading.shared.utils.CommandParser;
+
+/**
+ * Handles backtest command.
+ */
+public final class BacktestCommand implements CliCommand {
+
+    @Override
+    public String name() {
+        return "backtest";
+    }
+
+    @Override
+    public void execute(String[] parts, CliCommandContext context) {
+        CommandParser args = new CommandParser(parts);
+
+        if (!CliInputValidator.validateParser(args, context)) {
+            return;
+        }
+
+        if (!CliInputValidator.requireStrategyTimeframeAndCoins(args,
+                "Uso: backtest -strategy <nombre> [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]",
+                context)) {
+            return;
+        }
+
+        if (!validarModelo(args, context)) {
+            return;
+        }
+
+        BigDecimal capitalAsignado = CliInputValidator.readBigDecimal(context, "Capital a asignar: ", "capital");
+        if (capitalAsignado == null) {
+            return;
+        }
+
+        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
+        if (risk == null) {
+            return;
+        }
+
+        boolean limpiarBacktestsPrevios = CliInputValidator.readYesNo(context,
+                "Eliminar archivos de backtest previos? (s/n): ");
+
+        boolean guardarTrades = CliInputValidator.readYesNo(context, "Guardar trades del backtest en CSV? (s/n): ");
+
+        String modoMsg = args.getModelo() != null
+                ? "Iniciando Backtest con modelo IA: " + args.getModelo() + "..."
+                : "Iniciando Backtest clásico...";
+        context.println().accept(modoMsg);
+
+        try {
+            context.executeBacktestUseCase().ejecutarBacktest(
+                    args.getEstrategia(),
+                    args.getModelo(),
+                    args.getTimeframe(),
+                    args.getCoins(),
+                    capitalAsignado,
+                    risk,
+                    limpiarBacktestsPrevios,
+                    guardarTrades);
+            context.println().accept("Backtest finalizado. Resultados guardados en CSV.");
+        } catch (Exception e) {
+            context.println().accept("Error: " + e.getMessage());
+        }
+    }
+
+    private boolean validarModelo(CommandParser args, CliCommandContext context) {
+        if (args.getModelo() != null && args.getEstrategia() == null) {
+            context.println().accept("Error: -model requiere también -strategy para calcular indicadores.");
+            context.println().accept(
+                    "Uso: backtest -strategy <nombre> -model <nombre> -tf <timeframe> -coins <coin1> [coin2...]");
+            return false;
+        }
+        return true;
+    }
+}
