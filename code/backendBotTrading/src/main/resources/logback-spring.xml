@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Resuelve la ruta de logs apuntando siempre a PROJECT_ROOT/logs -->
+    <define name="LOG_PATH" class="com.bottrading.config.LogPathDefiner"/>
+
+    <appender name="FILE-INFO" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/app-general.logs</file>
+        <!-- append=false trunca el archivo al arrancar (limpia logs al inicio) -->
+        <append>false</append>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/archived/app-general.%d{yyyy-MM-dd}.logs</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE-ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/errores.log</file>
+        <!-- append=false trunca el archivo al arrancar (limpia logs al inicio) -->
+        <append>false</append>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/archived/errores.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>60</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <logger name="org.springframework" level="WARN" />
+    <logger name="org.hibernate" level="WARN" />
+    <logger name="com.zaxxer.hikari" level="WARN" />
+
+    <root level="INFO">
+        <appender-ref ref="FILE-INFO" />
+        <appender-ref ref="FILE-ERROR" />
+    </root>
+</configuration>
