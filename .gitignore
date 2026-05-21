@@ -63,3 +63,9 @@ results/
 # ------------------------------------------------------------------------------
 .DS_Store
 Thumbs.dbdocs/
+
+.github/
+.githooks/
+.sonarlint/
+models/
+.vscode/
