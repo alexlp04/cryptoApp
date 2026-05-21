@@ -33,6 +33,7 @@ import com.bottrading.interfaces.cli.commands.SignupCommand;
 import com.bottrading.interfaces.cli.commands.StartCommand;
 import com.bottrading.interfaces.cli.commands.StopCommand;
 import com.bottrading.interfaces.cli.commands.TermCommand;
+import com.bottrading.interfaces.cli.commands.TestCommand;
 import com.bottrading.interfaces.cli.commands.TradeCommand;
 import com.bottrading.interfaces.cli.commands.TrainCommand;
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
@@ -112,6 +113,7 @@ public class AppBot implements CommandLineRunner {
         registerCommand(new TradeCommand());
         registerCommand(new TrainCommand());
         registerCommand(new OptimizeCommand());
+        registerCommand(new TestCommand());
         registerCommand(new FetchCommand());
         registerCommand(new BacktestCommand());
         registerCommand(new StartCommand());
@@ -141,10 +143,17 @@ public class AppBot implements CommandLineRunner {
 
         boolean ejecutando = true;
         while (ejecutando) {
-            uiPrint("> ");
+            uiPrint(buildPrompt());
             String linea = scanner.nextLine().trim();
             ejecutando = procesarLinea(linea);
         }
+    }
+
+    private String buildPrompt() {
+        if (sessionManager.isLoggedIn()) {
+            return "[" + sessionManager.getCurrentUser().getNombre() + "] > ";
+        }
+        return "[sin sesion] > ";
     }
 
     @SuppressWarnings("java:S106")

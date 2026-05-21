@@ -87,7 +87,6 @@ public class AIOptimizationService implements OptimizeModelUseCase {
         loader.updateMessage("Descargando y actualizando velas históricas...");
         fetchMarketDataUseCase.fetchIncremental(symbol, timeframe, daysForPreparation, now);
 
-        // fetchIncremental detiene el ConsoleLoader internamente — reiniciamos el spinner
         loader.startSpinner("Preparando dataset de entrenamiento...");
         long targetTimestamp = now - (daysForPreparation * 24L * 60L * 60L * 1000L);
         List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(

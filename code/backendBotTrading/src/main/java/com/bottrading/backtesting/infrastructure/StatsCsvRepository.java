@@ -46,9 +46,11 @@ public class StatsCsvRepository {
      *
      * @param nombreEstrategia Nombre de la estrategia ejecutada.
      * @param timeframe        Marco temporal utilizado.
-     * @param jsonResultado    JSON con solo estadísticas devuelto por Python.
+         * @param modelName        Modelo usado en el backtest, si aplica.
+         * @param jsonResultado    JSON con solo estadísticas devuelto por Python.
      */
-    public void guardarEstadisticasDelBacktest(String nombreEstrategia, String timeframe, String jsonResultado)
+        public void guardarEstadisticasDelBacktest(String nombreEstrategia, String timeframe, String modelName,
+            String jsonResultado)
             throws FileOperationException {
         try {
             Map<String, Object> resultado = gson.fromJson(jsonResultado,
@@ -60,7 +62,7 @@ public class StatsCsvRepository {
 
             if (statsList != null) {
                 for (Map<String, Object> stats : statsList) {
-                    guardarStats(nombreEstrategia, timeframe, stats, true);
+                    guardarStats(nombreEstrategia, timeframe, stats, true, modelName);
                 }
             }
         } catch (Exception e) {
@@ -79,10 +81,14 @@ public class StatsCsvRepository {
      */
     public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
             boolean isBacktest) {
+        guardarStats(nombreEstrategia, timeframe, stats, isBacktest, null);
+    }
+
+    public synchronized void guardarStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
+            boolean isBacktest, String modelName) {
         try {
-            String suffix = isBacktest ? "_backtest.csv" : ".csv";
-            Path filePath = csvUtils.getCarpetaEstrategia(nombreEstrategia).resolve("results" + suffix);
             String currentSymbol = SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), "UNKNOWN");
+            Path filePath = resolverArchivoStats(nombreEstrategia, timeframe, stats, isBacktest, modelName);
 
             guardarOActualizarStats(filePath, stats, currentSymbol, timeframe);
             log.trace("Stats guardadas: {} [{}] {}", nombreEstrategia, currentSymbol, timeframe);
@@ -117,6 +123,33 @@ public class StatsCsvRepository {
             throw new FileOperationException("Error al leer estadísticas: " + e.getMessage(), e);
         }
         return stats;
+    }
+
+    private Path resolverArchivoStats(String nombreEstrategia, String timeframe, Map<String, Object> stats,
+            boolean isBacktest, String modelName) {
+        Path carpetaEstrategia = csvUtils.getCarpetaEstrategia(nombreEstrategia);
+
+        if (!isBacktest || modelName == null || modelName.isBlank()) {
+            String suffix = isBacktest ? "_backtest.csv" : ".csv";
+            return carpetaEstrategia.resolve("results" + suffix);
+        }
+
+        String currentTimeframe = SafeParser.toString(stats.get(AppConstants.KEY_TIMEFRAME), timeframe);
+        String currentSymbol = SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), "UNKNOWN");
+        String fileName = String.format("backtest_result_%s_%s_%s.csv",
+                normalizarSegmentoArchivo(currentTimeframe),
+                normalizarSegmentoArchivo(modelName),
+                normalizarSegmentoArchivo(currentSymbol));
+
+        return carpetaEstrategia.resolve(fileName);
+    }
+
+    private String normalizarSegmentoArchivo(String value) {
+        String sanitized = SafeParser.toString(value, "unknown")
+                .trim()
+                .replaceAll("[^a-zA-Z0-9_-]", "_");
+
+        return sanitized.isBlank() ? "unknown" : sanitized;
     }
 
 
