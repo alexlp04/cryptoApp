@@ -17,7 +17,8 @@ logger = setup_engine_logging("engine_fetch")
 
 URL_FETCH = "https://api.binance.com/api/v3/uiKlines"
 REQUEST_TIMEOUT_SECONDS = 20
-BINANCE_MAX_LIMIT = 1500
+# Binance uiKlines returns up to 1000 rows per request.
+BINANCE_MAX_LIMIT = 1000
 MAX_PARALLEL_WORKERS = 5
 DEFAULT_RATE_LIMIT_WAIT = 60
 MAX_BACKOFF_SEC = 300

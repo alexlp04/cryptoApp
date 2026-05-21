@@ -26,7 +26,7 @@ from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
     build_and_train_neural_network,
-    build_sklearn_model,
+    fit_sklearn_model,
     load_strategy_by_name,
     setup_engine_logging,
 )
@@ -163,14 +163,17 @@ def main() -> None:
 
         else:
             logger.info("Seleccionado: Modelo ML clasico (%s)", model_type.upper())
-            model = build_sklearn_model(model_type, hyperparams)
             from sklearn.utils.class_weight import compute_class_weight
             _cw_sk = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
             _cw_sk_dict: dict[int, float] = dict(zip(np.unique(y_train).tolist(), _cw_sk.tolist()))
             logger.info("class_weight (sklearn train): %s", _cw_sk_dict)
-            if hasattr(model, "class_weight"):
-                model.set_params(class_weight=_cw_sk_dict)
-            model.fit(X_train, y_train)
+            model = fit_sklearn_model(
+                model_type,
+                hyperparams,
+                X_train,
+                y_train,
+                class_weight=_cw_sk_dict,
+            )
             y_pred = model.predict(X_test)
 
             setattr(model, "feature_cols", feature_cols)

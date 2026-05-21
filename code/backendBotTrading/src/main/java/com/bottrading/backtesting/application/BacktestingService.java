@@ -73,7 +73,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
                 capitalAsignado, risk, guardarTrades);
 
         if (jsonResultado != null && !jsonResultado.isEmpty()) {
-            statsCsvRepository.guardarEstadisticasDelBacktest(nombreEstra, tf, jsonResultado);
+            statsCsvRepository.guardarEstadisticasDelBacktest(nombreEstra, tf, modelName, jsonResultado);
             ConsoleLoader.getInstance().stopClear();
             log.info("Resultados guardados en: {}{}{}", PathConfig.RESULTS_DIR, File.separator, nombreEstra);
         } else {
@@ -107,7 +107,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
-        String payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
+        Map<String, Object> payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
                 nombreEstrategia, modelName, guardarTrades);
 
         return invocarMotorPythonConRetries(payload);
@@ -138,7 +138,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
     }
 
     @SuppressWarnings("java:S107")
-    private String construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
+    private Map<String, Object> construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
             BigDecimal capitalAsignado, BigDecimal risk, String nombreEstrategia, String modelName,
             boolean guardarTrades) {
         Map<String, Object> payload = new HashMap<>();
@@ -152,17 +152,17 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         if (modelName != null && !modelName.isBlank()) {
             payload.put("model_name", modelName);
         }
-        return gson.toJson(payload);
+        return payload;
     }
 
     /**
      * Invoca el motor Python con timeout y destrucción de proceso en caso de error.
      * Soporte para MessagePack (próxima fase) manteniendo compatibilidad JSON.
      */
-    private String invocarMotorPythonConRetries(String jsonPayload) throws StrategyExecutionException {
+    private String invocarMotorPythonConRetries(Map<String, Object> payload) throws StrategyExecutionException {
         try {
             long startTime = System.currentTimeMillis();
-            log.debug("Iniciando backtest con payload de {} bytes", jsonPayload.length());
+            log.debug("Iniciando backtest para {} símbolo(s)", ((Map<?, ?>) payload.getOrDefault("velas", Map.of())).size());
 
             ConsoleLoader.getInstance().startSpinner("Ejecutando backtest, por favor espera...");
             PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_BACKTEST_PATH)
@@ -170,7 +170,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
                     .noTimeout()
                     .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
                     .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
-                    .stdinWriter(os -> escribirEnvelopeBacktest(os, jsonPayload))
+                    .stdinWriter(os -> escribirEnvelopeBacktest(os, payload))
                     .stdoutReader(this::parseResponseWithFallback)
                     .onStderrLine(line -> log.info("PY [backtest]: {}", line))
                     .build();
@@ -196,9 +196,8 @@ public class BacktestingService implements ExecuteBacktestUseCase {
     /**
      * Lee un flujo de entrada completo y lo convierte a String.
      */
-    private void escribirEnvelopeBacktest(java.io.OutputStream outputStream, String jsonPayload) throws IOException {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = gson.fromJson(jsonPayload, Map.class);
+    private void escribirEnvelopeBacktest(java.io.OutputStream outputStream, Map<String, Object> payload)
+            throws IOException {
         IpcMessagePackCodec.writeEnvelope(outputStream, IpcMessageType.BACKTEST_REQUEST, payload);
     }
 
