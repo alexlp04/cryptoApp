@@ -1,58 +1,13 @@
-# cryptoApp
+# Codigo Fuente De CryptoApp
 
-CryptoApp es un bot de trading automático que implementa y gestiona estrategias de inversión mediante modelos de computación.
-Este proyecto forma parte del Trabajo de Fin de Grado (TFG) en la carrera de Ingeniería Informática de la Universidad de Murcia.
+La documentacion principal del repositorio vive en el README raiz:
 
-## 🚀 Características principales
+[`../README.md`](../README.md)
 
-Por ahora unicamente puedes loggearte y guardar en la base de datos los datos sobre las velas de una moneda en un intervalo
+Este directorio contiene el nucleo ejecutable del proyecto:
 
-## 🛠️ Tecnologías utilizadas
+- `backendBotTrading/` para el backend Java, la CLI interactiva y los tests Maven.
+- `scripts/` para los engines Python de fetch, indicadores, backtesting, entrenamiento y optimizacion.
+- `strategies/` para las estrategias cargadas dinamicamente por los motores.
 
-Lenguaje principal: Java y Python
-
-Broker: Binance
-
-Base de datos: MySQL
-
-## 📂 Diagrama de Clases
-
-![alt text](/docs/img/diagramaDeClases.png)
-
-## ⚙️ Instalación y uso
-
-### Clonar el repositorio
-
-git clone https://github.com/alexlp04/cryptoApp.git
-cd CryptoApp
-
-### Configurar variables de entorno
-
-Crea una carpeta .env donde añadir tus variables de entorno con tus credenciales de API y parámetros:
-
-DB_URL: Con la URL de tu base de datos
-DB_USER: Con el nombre de usuario que tendrá acceso a dicha base de datos
-DB_PASS: La contraseña de ese usuario
-
-### Ejecutar el bot
-
-Desde la carpeta cryptoApp/ ejecuta los siguientes comandos en Windows
-
-cd backedBotTrading/
-mvn clean package
-java -jar target/backendBotTrading-1.0-SNAPSHOT-shaded.jar
-
-Y para Mac
-
-cd backedBotTrading/
-mvn clean package -DskipTests
-java -jar target/backendBotTrading-1.0-SNAPSHOT-shaded.jar
-
-### Documentación
-
-La documentación completa del proyecto, incluyendo la memoria del TFG, se encuentra en la carpeta /docs (Sin hacer)
-
-👨‍🎓 Autor
-
-Proyecto desarrollado por Alejandro López López
-Universidad de Murcia – Grado en Ingeniería Informática
+Si vas a arrancar la aplicacion, validar tests o revisar la arquitectura completa, empieza por el README raiz y usa este subdirectorio como mapa del codigo fuente.
