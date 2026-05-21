@@ -52,6 +52,7 @@ class StatsCsvRepositoryTest {
 
     // Estrategia de test para leerStatsActuales (usa PathConfig.RESULTS_DIR directamente)
     private static final String LEER_TEST_STRATEGY = "JUNIT_STATS_LEER_TEST";
+    private static final String MODEL_NAME = "lightgbm";
     private Path leerTestDir;
 
     // ─── JSON de ejemplo para guardarEstadisticasDelBacktest ─────────────────
@@ -125,13 +126,13 @@ class StatsCsvRepositoryTest {
     class GuardarEstadisticasDelBacktestTests {
 
         @Test
-        @DisplayName("✓ Debe crear el archivo results_backtest.csv al guardar estadísticas válidas")
-        void should_create_results_backtest_csv_for_valid_json() {
+        @DisplayName("✓ Debe crear un CSV con timeframe, modelo y moneda al guardar estadísticas válidas")
+        void should_create_model_named_backtest_csv_for_valid_json() {
             // When
-            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", JSON_CON_STATS);
+            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, JSON_CON_STATS);
 
             // Then
-            Path csvFile = tempDir.resolve("results_backtest.csv");
+            Path csvFile = buildModelBacktestPath("1h", MODEL_NAME, "BTCUSDT");
             assertThat(Files.exists(csvFile), is(true));
         }
 
@@ -139,10 +140,10 @@ class StatsCsvRepositoryTest {
         @DisplayName("✓ Debe escribir el header en la primera línea del CSV")
         void should_write_header_as_first_line() throws IOException {
             // When
-            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", JSON_CON_STATS);
+            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, JSON_CON_STATS);
 
             // Then
-            Path csvFile = tempDir.resolve("results_backtest.csv");
+            Path csvFile = buildModelBacktestPath("1h", MODEL_NAME, "BTCUSDT");
             String firstLine = Files.readAllLines(csvFile, StandardCharsets.UTF_8).get(0);
             assertThat(firstLine, is(AppConstants.CSV_HEADER_STATS));
         }
@@ -151,10 +152,10 @@ class StatsCsvRepositoryTest {
         @DisplayName("✓ Debe escribir el símbolo correcto en la línea de datos")
         void should_write_correct_symbol_in_data_line() throws IOException {
             // When
-            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", JSON_CON_STATS);
+            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, JSON_CON_STATS);
 
             // Then
-            Path csvFile = tempDir.resolve("results_backtest.csv");
+            Path csvFile = buildModelBacktestPath("1h", MODEL_NAME, "BTCUSDT");
             String dataLine = Files.readAllLines(csvFile, StandardCharsets.UTF_8).get(1);
             assertThat(dataLine.startsWith("BTCUSDT"), is(true));
         }
@@ -164,7 +165,7 @@ class StatsCsvRepositoryTest {
         void should_throw_fileOperationException_for_invalid_json() {
             assertThrows(FileOperationException.class, () ->
                     statsCsvRepository.guardarEstadisticasDelBacktest(
-                            "RSISMAStrategy", "1h", "esto no es json {{{"));
+                    "RSISMAStrategy", "1h", MODEL_NAME, "esto no es json {{{"));
         }
 
         @Test
@@ -174,7 +175,18 @@ class StatsCsvRepositoryTest {
             String jsonSinStats = "{\"otro_campo\":\"valor\"}";
 
             // When / Then — no debe lanzar
-            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", jsonSinStats);
+            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, jsonSinStats);
+        }
+
+        @Test
+        @DisplayName("✓ Debe mantener el nombre legacy cuando el modelo no viene informado")
+        void should_keep_legacy_backtest_filename_when_model_name_is_blank() {
+            // When
+            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", " ", JSON_CON_STATS);
+
+            // Then
+            Path csvFile = tempDir.resolve("results_backtest.csv");
+            assertThat(Files.exists(csvFile), is(true));
         }
     }
 
@@ -247,6 +259,17 @@ class StatsCsvRepositoryTest {
 
             // Then
             Path csvFile = tempDir.resolve("results.csv");
+            assertThat(Files.exists(csvFile), is(true));
+        }
+
+        @Test
+        @DisplayName("✓ Debe crear un CSV de backtest por modelo cuando se informa modelName")
+        void should_create_model_named_backtest_csv_when_model_name_is_present() throws IOException {
+            // When
+            statsCsvRepository.guardarStats("RSISMAStrategy", "1h", crearStatsTest("BTCUSDT"), true, MODEL_NAME);
+
+            // Then
+            Path csvFile = buildModelBacktestPath("1h", MODEL_NAME, "BTCUSDT");
             assertThat(Files.exists(csvFile), is(true));
         }
     }
@@ -358,5 +381,9 @@ class StatsCsvRepositoryTest {
     private String buildStatsCsvRow(String symbol, String timeframe) {
         return symbol + "," + timeframe + ",10,4,14,0.08,80.00,0.15,0.15,"
                 + "71.4%,1.95,2024-01-01,2024-12-31,PROFITABLE";
+    }
+
+    private Path buildModelBacktestPath(String timeframe, String modelName, String symbol) {
+        return tempDir.resolve(String.format("backtest_result_%s_%s_%s.csv", timeframe, modelName, symbol));
     }
 }

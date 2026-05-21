@@ -103,7 +103,7 @@ public final class OptimizeCommand implements CliCommand {
                 defaultDays = 180;
             }
             case "1h" -> {
-                maxDays = 1095;
+            maxDays = 1095;
                 defaultDays = 365;
             }
             case "4h" -> {
