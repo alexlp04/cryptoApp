@@ -46,7 +46,6 @@ backendBotTrading/envs/.env
 # Logs y resultados
 # ------------------------------------------------------------------------------
 logs/
-results/
 *.log
 
 # ------------------------------------------------------------------------------
@@ -63,3 +62,27 @@ results/
 # ------------------------------------------------------------------------------
 .DS_Store
 Thumbs.dbdocs/
+.github/
+.sonarlint/
+.githooks/
+package-lock.json
+
+*.aux
+*.lof
+*.log
+*.lot
+*.fls
+*.out
+*.toc
+*.fmt
+*.fot
+*.run.xml
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.brf
+*.bcf
+
+models/
+results/
