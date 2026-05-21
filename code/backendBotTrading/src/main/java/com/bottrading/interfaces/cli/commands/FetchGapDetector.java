@@ -50,11 +50,17 @@ public class FetchGapDetector {
         List<Long> timestamps = velaRepository.findOpenTimesBySymbolAndIntervalBetweenOrderByOpenTimeAsc(
                 symbol, timeframe, fromEpochMs, toEpochMs);
 
-        if (timestamps.size() < 2) {
-            return List.of();
+        List<Pair<LocalDateTime, LocalDateTime>> gaps = new ArrayList<>();
+
+        if (timestamps.isEmpty()) {
+            addGapIfValid(gaps, symbol, timeframe, fromEpochMs, toEpochMs);
+            return gaps;
         }
 
-        List<Pair<LocalDateTime, LocalDateTime>> gaps = new ArrayList<>();
+        long first = timestamps.getFirst();
+        if (first - fromEpochMs > expectedIntervalMs + TOLERANCE_MS) {
+            addGapIfValid(gaps, symbol, timeframe, fromEpochMs, first - expectedIntervalMs);
+        }
 
         for (int i = 1; i < timestamps.size(); i++) {
             long previous = timestamps.get(i - 1);
@@ -64,25 +70,40 @@ public class FetchGapDetector {
             if (diff > expectedIntervalMs + TOLERANCE_MS) {
                 long gapStartMs = previous + expectedIntervalMs;
                 long gapEndMs = current - expectedIntervalMs;
-
-                if (gapStartMs <= gapEndMs) {
-                    LocalDateTime gapStart = LocalDateTime.ofEpochSecond(
-                            gapStartMs / 1000L,
-                            (int) ((gapStartMs % 1000L) * 1_000_000),
-                            ZoneOffset.UTC);
-                    LocalDateTime gapEnd = LocalDateTime.ofEpochSecond(
-                            gapEndMs / 1000L,
-                            (int) ((gapEndMs % 1000L) * 1_000_000),
-                            ZoneOffset.UTC);
-
-                    gaps.add(new Pair<>(gapStart, gapEnd));
-                    log.warn("Gap detected symbol={} timeframe={} start={} end={}",
-                            symbol, timeframe, gapStart, gapEnd);
-                }
+                addGapIfValid(gaps, symbol, timeframe, gapStartMs, gapEndMs);
             }
         }
 
+        long last = timestamps.getLast();
+        if (toEpochMs - last > expectedIntervalMs + TOLERANCE_MS) {
+            addGapIfValid(gaps, symbol, timeframe, last + expectedIntervalMs, toEpochMs);
+        }
+
         return gaps;
+    }
+
+    private void addGapIfValid(
+            List<Pair<LocalDateTime, LocalDateTime>> gaps,
+            String symbol,
+            String timeframe,
+            long gapStartMs,
+            long gapEndMs) {
+        if (gapStartMs > gapEndMs) {
+            return;
+        }
+
+        LocalDateTime gapStart = toUtcDateTime(gapStartMs);
+        LocalDateTime gapEnd = toUtcDateTime(gapEndMs);
+        gaps.add(new Pair<>(gapStart, gapEnd));
+        log.warn("Gap detected symbol={} timeframe={} start={} end={}",
+                symbol, timeframe, gapStart, gapEnd);
+    }
+
+    private LocalDateTime toUtcDateTime(long epochMs) {
+        return LocalDateTime.ofEpochSecond(
+                epochMs / 1000L,
+                (int) ((epochMs % 1000L) * 1_000_000),
+                ZoneOffset.UTC);
     }
 
     private long resolveTimeframeMillis(String timeframe) {

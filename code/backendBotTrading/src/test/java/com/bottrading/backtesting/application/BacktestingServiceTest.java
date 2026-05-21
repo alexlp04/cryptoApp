@@ -67,7 +67,8 @@ class BacktestingServiceTest {
 
     // ─── Constantes de test ──────────────────────────────────────────────────
     private static final String ESTRATEGIA = "RSISMAStrategy";
-    private static final String TIMEFRAME = "1h";
+        private static final String TIMEFRAME = "1h";
+        private static final String MODEL_NAME = "lightgbm";
     private static final BigDecimal CAPITAL = BigDecimal.valueOf(1000);
     private static final BigDecimal RISK = BigDecimal.valueOf(0.02);
     private static final String FAKE_STRATEGY_PATH = "/fake/strategies/RSISMAStrategy.py";
@@ -373,7 +374,7 @@ class BacktestingServiceTest {
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, never())
-                        .guardarEstadisticasDelBacktest(anyString(), anyString(), anyString());
+                        .guardarEstadisticasDelBacktest(anyString(), anyString(), any(), anyString());
             }
         }
     }
@@ -404,7 +405,30 @@ class BacktestingServiceTest {
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, times(1))
-                        .guardarEstadisticasDelBacktest(ESTRATEGIA, TIMEFRAME, FAKE_JSON_RESULTADO);
+                        .guardarEstadisticasDelBacktest(ESTRATEGIA, TIMEFRAME, null, FAKE_JSON_RESULTADO);
+            }
+        }
+
+        @Test
+        @DisplayName("✓ Debe propagar el nombre del modelo al repositorio de stats")
+        void should_pass_model_name_to_stats_repository() throws PythonBridgeExecutionException {
+            when(velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc(anyString(), anyString()))
+                    .thenReturn(List.of(crearVelaTest("BTCUSDT")));
+
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class);
+                 MockedStatic<PathConfig> pathStatic = mockStatic(PathConfig.class)) {
+
+                consoleStatic.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                pathStatic.when(() -> PathConfig.getValidStrategyPath(ESTRATEGIA))
+                        .thenReturn(FAKE_STRATEGY_PATH);
+                doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
+
+                backtestingService.ejecutarBacktest(ESTRATEGIA, MODEL_NAME, TIMEFRAME,
+                        List.of("BTCUSDT"), CAPITAL, RISK, false, false);
+
+                verify(statsCsvRepository, times(1))
+                        .guardarEstadisticasDelBacktest(ESTRATEGIA, TIMEFRAME, MODEL_NAME, FAKE_JSON_RESULTADO);
             }
         }
 
@@ -427,7 +451,7 @@ class BacktestingServiceTest {
                         List.of("BTCUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository, never())
-                        .guardarEstadisticasDelBacktest(anyString(), anyString(), anyString());
+                        .guardarEstadisticasDelBacktest(anyString(), anyString(), any(), anyString());
             }
         }
 
@@ -452,7 +476,7 @@ class BacktestingServiceTest {
                         List.of("ETHUSDT"), CAPITAL, RISK, false, false);
 
                 verify(statsCsvRepository)
-                        .guardarEstadisticasDelBacktest(estrategia, tf, FAKE_JSON_RESULTADO);
+                        .guardarEstadisticasDelBacktest(estrategia, tf, null, FAKE_JSON_RESULTADO);
             }
         }
     }
