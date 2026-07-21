@@ -9,7 +9,12 @@ import logging
 from collections import deque
 from decimal import Decimal
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
+from shared_utils import (
+    load_strategy_by_path,
+    setup_engine_logging,
+    emit_heartbeats,
+    CODE_DIR,
+)
 
 logger = setup_engine_logging("engine_rt")
 
@@ -152,6 +157,8 @@ async def run_all(
         )
         for sym in symbols
     ]
+    # Heartbeat de liveness: mantiene vivo el canal RT aunque no haya señales.
+    tasks.append(emit_heartbeats())
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":

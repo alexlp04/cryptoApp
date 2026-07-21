@@ -160,6 +160,45 @@ class SignalProtocolParserTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // parseLineaLog() / isHeartbeat() — líneas de heartbeat (liveness)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Heartbeat — líneas de liveness")
+    class HeartbeatTests {
+
+        @Test
+        @DisplayName("✓ Debe reconocer una línea HEARTBEAT con payload JSON")
+        void should_detect_heartbeat_with_payload() {
+            assertThat(parser.isHeartbeat("HEARTBEAT\t{\"type\":\"heartbeat\"}"), is(true));
+        }
+
+        @Test
+        @DisplayName("✓ Debe reconocer HEARTBEAT con espacios alrededor")
+        void should_detect_heartbeat_with_spaces() {
+            assertThat(parser.isHeartbeat("  HEARTBEAT\t{}  "), is(true));
+        }
+
+        @Test
+        @DisplayName("✓ Un heartbeat no debe producir señal (retorna null)")
+        void should_return_null_for_heartbeat() {
+            SignalDTO result = parser.parseLineaLog("HEARTBEAT\t{\"type\":\"heartbeat\"}", 1L);
+            assertThat(result, is(nullValue()));
+        }
+
+        @Test
+        @DisplayName("✓ Una línea de log normal no debe considerarse heartbeat")
+        void should_not_detect_plain_log_as_heartbeat() {
+            assertThat(parser.isHeartbeat("INFO: conectando a Binance"), is(false));
+        }
+
+        @Test
+        @DisplayName("✓ isHeartbeat debe ser tolerante a null")
+        void should_handle_null_in_is_heartbeat() {
+            assertThat(parser.isHeartbeat(null), is(false));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // validarSignal (via parseLineaLog) — campo symbol
     // ─────────────────────────────────────────────────────────────────────────
     @Nested
