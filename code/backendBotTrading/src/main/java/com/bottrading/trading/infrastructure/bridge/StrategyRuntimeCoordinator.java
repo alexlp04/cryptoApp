@@ -49,7 +49,19 @@ public class StrategyRuntimeCoordinator {
     /** Periodo de sondeo del watchdog de inactividad. */
     private static final long WATCHDOG_POLL_MS = 1_000L;
 
+    /** Retraso base del backoff de reinicio de estrategia. */
+    private static final long RESTART_BASE_DELAY_MS = 5_000L;
+    /** Tope del retraso de reinicio. */
+    private static final long RESTART_MAX_DELAY_MS = 300_000L;
+    /** Máximo de reinicios consecutivos sin estabilizar antes de abortar. */
+    private static final int MAX_CONSECUTIVE_RESTARTS = 5;
+    /** Uptime a partir del cual una ejecución se considera estable y resetea el crash-loop. */
+    private static final long STABLE_UPTIME_MS = 120_000L;
+
     private final Map<Long, Future<?>> runtimeThreads = new ConcurrentHashMap<>();
+
+    /** Estrategias cuya parada fue solicitada explícitamente (no deben reiniciarse). */
+    private final Set<Long> stopRequested = ConcurrentHashMap.newKeySet();
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -78,13 +90,58 @@ public class StrategyRuntimeCoordinator {
     }
 
     /**
-     * Lógica principal del flujo de ejecución en tiempo real.
+     * Supervisor de ejecución 24/7: mantiene la estrategia viva reiniciando el
+     * proceso Python con backoff exponencial si cae de forma anómala, hasta que
+     * (a) el usuario la detiene, (b) termina limpiamente, o (c) entra en un
+     * crash-loop y se supera el máximo de reinicios (se aborta y liquida).
      */
     private void runEngineRT(InstanciaEstrategia instancia, List<String> symbols) {
-        boolean errorCritico = false;
+        Long id = instancia.getId();
+        stopRequested.remove(id);
+        RestartBackoffPolicy backoff = new RestartBackoffPolicy(
+                RESTART_BASE_DELAY_MS, RESTART_MAX_DELAY_MS, MAX_CONSECUTIVE_RESTARTS, STABLE_UPTIME_MS);
+        boolean abortadoPorCrashLoop = false;
+
+        while (!isStopRequested(id) && !Thread.currentThread().isInterrupted()) {
+            long runStart = System.currentTimeMillis();
+            boolean crashed = runOneProcess(instancia, symbols);
+            long uptimeMs = System.currentTimeMillis() - runStart;
+
+            if (isStopRequested(id) || Thread.currentThread().isInterrupted()) {
+                break;                      // parada intencional durante la ejecución
+            }
+            if (!crashed) {
+                break;                      // terminó por sí mismo sin error: no reiniciar en bucle
+            }
+
+            long delayMs = backoff.onRunEnded(uptimeMs);
+            if (delayMs < 0) {
+                abortadoPorCrashLoop = true;
+                log.error("Estrategia {}: {} reinicios consecutivos sin estabilizar. Abortando y liquidando.",
+                        id, backoff.consecutiveRestarts());
+                break;
+            }
+            log.warn("Reiniciando estrategia {} en {} ms (reinicio consecutivo #{}, uptime previo {} ms)",
+                    id, delayMs, backoff.consecutiveRestarts(), uptimeMs);
+            if (!dormirInterrumpible(delayMs)) {
+                break;                      // interrumpido durante el backoff
+            }
+        }
+
+        gestionarCierre(instancia, abortadoPorCrashLoop);
+    }
+
+    /**
+     * Ejecuta UNA instancia del proceso Python de principio a fin.
+     *
+     * @return {@code true} si terminó de forma anómala (candidato a reinicio);
+     *         {@code false} si terminó limpiamente o por parada solicitada.
+     */
+    private boolean runOneProcess(InstanciaEstrategia instancia, List<String> symbols) {
         Process process = null;
         Future<?> stderrFuture = null;
         long startTime = System.currentTimeMillis();
+        boolean crashed = false;
 
         try {
             process = processSupervisor.iniciarProcesoPython(instancia);
@@ -98,23 +155,24 @@ public class StrategyRuntimeCoordinator {
             if (process.isAlive()) {
                 boolean finished = process.waitFor(5, TimeUnit.SECONDS);
                 if (!finished) {
-                    log.warn("Proceso de estrategia {} aún vivo después de cierre, destruyendo", 
+                    log.warn("Proceso de estrategia {} aún vivo después de cierre, destruyendo",
                             instancia.getId());
                     processSupervisor.destroyProcessForcibly(process);
                 }
             }
-            
+
             int exitCode = process.exitValue();
-            if (exitCode != 0 && !Thread.currentThread().isInterrupted()) {
-                throw new PythonProcessException("Proceso Python terminó con código: " + exitCode);
+            if (exitCode != 0 && !isStopRequested(instancia.getId()) && !Thread.currentThread().isInterrupted()) {
+                crashed = true;
+                log.warn("Proceso Python de estrategia {} terminó con código {}", instancia.getId(), exitCode);
             }
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("Hilo de estrategia {} interrumpido", instancia.getId());
         } catch (Exception e) {
-            if (!Thread.currentThread().isInterrupted()) {
-                errorCritico = true;
+            if (!isStopRequested(instancia.getId()) && !Thread.currentThread().isInterrupted()) {
+                crashed = true;
                 log.error("Error en motor Python ({}): {}", instancia.getNombreEstrategia(), e.getMessage(), e);
             }
         } finally {
@@ -124,7 +182,21 @@ public class StrategyRuntimeCoordinator {
             if (process != null) {
                 processSupervisor.destroyProcessForcibly(process);
             }
-            gestionarCierre(instancia, errorCritico);
+        }
+        return crashed;
+    }
+
+    private boolean isStopRequested(Long instanciaId) {
+        return stopRequested.contains(instanciaId);
+    }
+
+    private boolean dormirInterrumpible(long ms) {
+        try {
+            Thread.sleep(ms);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -266,19 +338,23 @@ public class StrategyRuntimeCoordinator {
         
         retryQueueService.cleanup(instanciaId);
         runtimeThreads.remove(instanciaId);
+        stopRequested.remove(instanciaId);
     }
 
     /**
-     * Detiene una estrategia específica.
+     * Detiene una estrategia específica. Marca la parada como intencional para
+     * que el supervisor NO reinicie el proceso.
      */
     public void detenerEstrategia(Long instanciaId) {
+        stopRequested.add(instanciaId);
+
         Future<?> future = runtimeThreads.remove(instanciaId);
         if (future != null) {
             future.cancel(true);
         }
-        
+
         processSupervisor.destroyProcessForcibly(instanciaId);
-        
+
         log.info("Recursos liberados para estrategia {}", instanciaId);
     }
 
