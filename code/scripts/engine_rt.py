@@ -9,7 +9,7 @@ import logging
 from collections import deque
 from decimal import Decimal
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
+from shared_utils import load_strategy_by_path, setup_engine_logging, build_signal_line, CODE_DIR
 
 logger = setup_engine_logging("engine_rt")
 
@@ -102,7 +102,7 @@ async def run_symbol(
 
                     if action:
                         signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
-                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
         except Exception as e:

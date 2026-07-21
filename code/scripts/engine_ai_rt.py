@@ -15,7 +15,7 @@ import pandas as pd
 import websockets
 
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR, PROJECT_ROOT
+from shared_utils import load_strategy_by_path, setup_engine_logging, build_signal_line, CODE_DIR, PROJECT_ROOT
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -283,7 +283,7 @@ def _emit_signal(
         "is_real": is_real,
         "source": f"AI_{model_name.upper()}",
     }
-    print("SIGNAL\t" + json.dumps(signal), flush=True)
+    print(build_signal_line(signal), flush=True)
     logger.info("SEÑAL %s ENVIADA: %s para %s a %s", model_name.upper(), action, symbol, signal["price"])
 
 

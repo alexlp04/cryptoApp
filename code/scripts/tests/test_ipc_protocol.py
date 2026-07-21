@@ -125,36 +125,65 @@ class TestReadRequestPayload:
         # Then
         assert all(isinstance(k, str) for k in result.keys())
 
-    def test_should_fallback_to_json_when_no_framing(self, monkeypatch):
-        # Given
+    def test_should_reject_plain_json(self, monkeypatch):
+        # Given — JSON plano ya NO se acepta (contrato estricto framed-only)
         import json
-        payload = {"symbol": "ETHUSDT"}
-        monkeypatch.setattr(sys, "stdin", _fake_stdin(json.dumps(payload).encode()))
-        # When
-        result = read_request_payload()
-        # Then
-        assert result["symbol"] == "ETHUSDT"
+        monkeypatch.setattr(sys, "stdin", _fake_stdin(json.dumps({"symbol": "ETHUSDT"}).encode()))
+        # When / Then
+        with pytest.raises(ValueError):
+            read_request_payload()
 
-    def test_should_fallback_to_legacy_msgpack_without_framing(self, monkeypatch):
-        # Given
-        payload = {"strategy_name": "StressTestStrategy"}
-        raw = msgpack.packb(payload, use_bin_type=True)
+    def test_should_reject_unframed_msgpack(self, monkeypatch):
+        # Given — msgpack sin frame ya NO se acepta
+        raw = msgpack.packb({"strategy_name": "StressTestStrategy"}, use_bin_type=True)
         monkeypatch.setattr(sys, "stdin", _fake_stdin(raw))
-        # When
-        result = read_request_payload()
-        # Then
-        assert result["strategy_name"] == "StressTestStrategy"
+        # When / Then
+        with pytest.raises(ValueError):
+            read_request_payload()
 
-    def test_should_wrap_legacy_list_in_velas_key(self, monkeypatch):
+    def test_should_reject_truncated_frame(self, monkeypatch):
+        # Given — la longitud declara más bytes de los que hay
+        payload = {"symbol": "BTCUSDT"}
+        framed = _build_framed(payload)
+        truncated = framed[:-3]  # recorta el cuerpo
+        monkeypatch.setattr(sys, "stdin", _fake_stdin(truncated))
+        # When / Then
+        with pytest.raises(ValueError, match="truncado"):
+            read_request_payload()
+
+    def test_should_reject_zero_length_frame(self, monkeypatch):
+        # Given — longitud 0 en el header
+        monkeypatch.setattr(sys, "stdin", _fake_stdin(struct.pack(">I", 0)))
+        # When / Then
+        with pytest.raises(ValueError):
+            read_request_payload()
+
+    def test_should_reject_header_shorter_than_4_bytes(self, monkeypatch):
         # Given
-        candles = [{"close": "100"}, {"close": "101"}]
-        raw = msgpack.packb(candles, use_bin_type=True)
+        monkeypatch.setattr(sys, "stdin", _fake_stdin(b"\x00\x01"))
+        # When / Then
+        with pytest.raises(ValueError):
+            read_request_payload()
+
+    def test_should_reject_envelope_without_payload_object(self, monkeypatch):
+        # Given — envelope sin payload de tipo objeto
+        body = msgpack.packb({"protocol_version": "1.0", "message_type": "X"}, use_bin_type=True)
+        raw = struct.pack(">I", len(body)) + body
         monkeypatch.setattr(sys, "stdin", _fake_stdin(raw))
-        # When
-        result = read_request_payload()
-        # Then
-        assert "velas" in result
-        assert len(result["velas"]) == 2
+        # When / Then
+        with pytest.raises(ValueError, match="payload"):
+            read_request_payload()
+
+    def test_should_reject_unsupported_protocol_version(self, monkeypatch):
+        # Given
+        body = msgpack.packb(
+            {"protocol_version": "9.9", "message_type": "X", "payload": {"a": 1}},
+            use_bin_type=True)
+        raw = struct.pack(">I", len(body)) + body
+        monkeypatch.setattr(sys, "stdin", _fake_stdin(raw))
+        # When / Then
+        with pytest.raises(ValueError, match="protocolo"):
+            read_request_payload()
 
     def test_should_raise_value_error_when_stdin_is_empty(self, monkeypatch):
         # Given
