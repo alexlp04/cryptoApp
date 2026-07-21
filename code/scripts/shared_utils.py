@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import inspect
+import json
 import logging
 import os
 import sys
@@ -82,6 +83,36 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
     root.addHandler(stream_handler)
 
     return logging.getLogger(engine_name)
+
+
+# =============================================================================
+# HEARTBEAT DEL CANAL RT (liveness)
+# =============================================================================
+HEARTBEAT_PREFIX: str = "HEARTBEAT\t"
+
+
+def build_heartbeat_line() -> str:
+    """Construye una línea de heartbeat para stdout (canal RT).
+
+    Java la usa como señal de vida: mientras lleguen heartbeats, el proceso
+    está sano aunque no emita señales. Se envía por stdout con el mismo
+    formato delimitado por líneas que las señales (``PREFIJO\\tJSON``).
+    """
+    return HEARTBEAT_PREFIX + json.dumps({"type": "heartbeat"})
+
+
+async def emit_heartbeats(interval_seconds: float = 15.0) -> None:
+    """Task asíncrona que emite un heartbeat por stdout cada ``interval_seconds``.
+
+    Debe lanzarse junto a los streams de símbolos para que el canal RT nunca
+    quede en silencio durante operación sana (las señales pueden tardar horas).
+    El intervalo debe ser holgadamente menor que el timeout de inactividad de Java.
+    """
+    import asyncio
+
+    while True:
+        await asyncio.sleep(interval_seconds)
+        print(build_heartbeat_line(), flush=True)
 
 
 @lru_cache(maxsize=1)
