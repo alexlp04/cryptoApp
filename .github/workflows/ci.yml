@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela runs antiguos de la misma rama/PR cuando llega un push nuevo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: Java · tests + quality gates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backendBotTrading
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Rápido en cada push: compila y corre los tests unitarios (H2, sin MySQL).
+      - name: Unit tests
+        run: mvn -B test
+
+      # Gates de calidad (Checkstyle, PMD, SpotBugs, dependency-check, JaCoCo).
+      # dependency-check descarga la BD de CVEs; se permite fallo para no bloquear
+      # el CI por indisponibilidad de la NVD, revisar su salida aparte.
+      - name: Quality gates (verify)
+        continue-on-error: true
+        run: mvn -B verify
+
+  python:
+    name: Python · pytest + ruff
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # Dependencias ligeras suficientes para la suite de tests (sin TensorFlow,
+      # que es pesado en CI; los tests de engines ML no lo requieren directamente).
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy ta scikit-learn xgboost lightgbm joblib \
+                      optuna msgpack python-dotenv python-dateutil pytz requests \
+                      pytest pytest-cov ruff mypy
+
+      - name: Lint (ruff)
+        continue-on-error: true
+        run: ruff check scripts strategies
+
+      - name: Tests (pytest)
+        working-directory: code/scripts
+        run: python -m pytest -q
