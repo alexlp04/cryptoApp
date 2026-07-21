@@ -130,11 +130,6 @@ public class StrategyRuntimeCoordinator {
 
     /**
      * Lee la salida de Python monitorizando liveness con un watchdog externo.
-     *
-     * <p>El bucle {@code readLine()} bloquea; por eso un watchdog independiente
-     * vigila los timeouts de arranque e inactividad ({@link RealtimeActivityTracker})
-     * y destruye el proceso si se cuelga, lo que desbloquea el {@code readLine()}.
-     * Cada línea recibida (señal, log o heartbeat) cuenta como actividad.
      */
     private void escucharSalidaPythonConTimeout(Process process, InstanciaEstrategia instancia, long startTime)
             throws PythonProcessException {
@@ -155,7 +150,7 @@ public class StrategyRuntimeCoordinator {
                 procesarLineaYSignal(line, instancia);
             }
 
-            // EOF: si el watchdog mató el proceso, reportarlo como timeout, no como cierre normal.
+            // si el watchdog mató el proceso, reportarlo como timeout, no como cierre normal.
             String reason = tracker.timedOutReason(System.currentTimeMillis());
             if (reason != null) {
                 throw new PythonProcessException(
