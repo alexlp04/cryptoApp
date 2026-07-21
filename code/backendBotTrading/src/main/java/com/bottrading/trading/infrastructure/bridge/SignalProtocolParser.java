@@ -26,11 +26,6 @@ public class SignalProtocolParser {
     /**
      * Procesa una línea del stdout de Python.
      * Retorna un SignalDTO si es una señal válida, o null si es un log/heartbeat.
-     *
-     * <p>Nota: un heartbeat no produce señal, pero SÍ cuenta como actividad de
-     * liveness. Quien invoca este método debe registrar la actividad por cada
-     * línea recibida (ver {@code RealtimeActivityTracker}); aquí solo se evita
-     * que los heartbeats contaminen el log como si fueran salida de la estrategia.
      */
     public SignalDTO parseLineaLog(String line, Long instanciaId) {
         String trimmedLine = line.trim();
