@@ -20,21 +20,32 @@ import lombok.extern.slf4j.Slf4j;
 public class SignalProtocolParser {
 
     private static final String SIGNAL_PREFIX = "SIGNAL\t";
+    private static final String HEARTBEAT_PREFIX = "HEARTBEAT";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
      * Procesa una línea del stdout de Python.
-     * Retorna un SignalDTO si es una señal válida, o null si es un log normal.
+     * Retorna un SignalDTO si es una señal válida, o null si es un log/heartbeat.
      */
     public SignalDTO parseLineaLog(String line, Long instanciaId) {
         String trimmedLine = line.trim();
 
         if (trimmedLine.startsWith(SIGNAL_PREFIX)) {
             return parseSignal(trimmedLine.substring(SIGNAL_PREFIX.length()), instanciaId);
+        } else if (isHeartbeat(trimmedLine)) {
+            log.trace("PYBEAT [{}]", instanciaId);
+            return null;
         } else {
             log.info("PYLOG [{}]: {}", instanciaId, line);
             return null;
         }
+    }
+
+    /**
+     * Indica si una línea es un heartbeat de liveness del motor Python.
+     */
+    public boolean isHeartbeat(String line) {
+        return line != null && line.trim().startsWith(HEARTBEAT_PREFIX);
     }
 
     /**

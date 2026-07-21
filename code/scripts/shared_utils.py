@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import inspect
+import json
 import logging
 import os
 import sys
@@ -51,10 +52,7 @@ _GPU_RUNTIME_DISABLED_MODELS: set[str] = set()
 def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
     """
     Configura logging dual (archivo + stream) para un engine y devuelve su logger.
-
     Escribe siempre a logs/{engine_name}.log.
-    El stream por defecto es sys.stderr para no contaminar stdout (canal IPC/señales).
-    Solo configura el root logger si todavía no tiene handlers (evita duplicados).
     """
     if stream is None:
         stream = sys.stderr
@@ -82,6 +80,32 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
     root.addHandler(stream_handler)
 
     return logging.getLogger(engine_name)
+
+
+# =============================================================================
+# HEARTBEAT DEL CANAL RT (liveness)
+# =============================================================================
+HEARTBEAT_PREFIX: str = "HEARTBEAT\t"
+
+
+def build_heartbeat_line() -> str:
+    """Construye una línea de heartbeat para stdout (canal RT).
+    Java la usa como señal de vida: mientras lleguen heartbeats, el proceso
+    está sano aunque no emita señales. 
+    """
+    return HEARTBEAT_PREFIX + json.dumps({"type": "heartbeat"})
+
+
+async def emit_heartbeats(interval_seconds: float = 15.0) -> None:
+    """Task asíncrona que emite un heartbeat por stdout cada ``interval_seconds``.
+    Debe lanzarse junto a los streams de símbolos para que el canal RT nunca
+    quede en silencio durante operación sana.
+    """
+    import asyncio
+
+    while True:
+        await asyncio.sleep(interval_seconds)
+        print(build_heartbeat_line(), flush=True)
 
 
 @lru_cache(maxsize=1)
@@ -304,18 +328,6 @@ def apply_strategy_features(
 ) -> tuple[pd.DataFrame, pd.Series]:
     """
     Extrae X (features con índice timestamp) e y (labels) de la estrategia.
-
-    Parámetros
-    ----------
-    df               : DataFrame OHLCV. Si already_enriched=True, ya tiene indicadores.
-    strategy         : instancia de BaseStrategy.
-    warmup_candles   : velas iniciales a descartar tras populate_indicators.
-    already_enriched : si True, omite populate_indicators (para optimize que ya lo hizo).
-                       si False (defecto), llama populate_indicators primero.
-
-    Devuelve
-    --------
-    (X_df, y_ser) con el timestamp real como índice para alineación en folds y backtests.
     """
     _logger = logging.getLogger(__name__)
 
@@ -528,18 +540,6 @@ def build_and_train_neural_network(
     La arquitectura es fija: Normalization → Dense(64) → Dropout → Dense(32) →
     Dropout → Dense(16) → output. Para arquitecturas configurables (Optuna) usar
     los helpers internos de engine_optimize.
-
-    Parámetros
-    ----------
-    X_train      : array de entrenamiento.
-    y_train      : labels de entrenamiento (enteros 0-indexed).
-    X_test       : array de evaluación.
-    hyperparams  : dict con keys epochs, batch_size, learning_rate, dropout_rate.
-    n_classes    : número de clases (2=binario, >2=multiclase).
-
-    Devuelve
-    --------
-    (model, y_pred) donde y_pred son las predicciones sobre X_test.
     """
     import numpy as np
 

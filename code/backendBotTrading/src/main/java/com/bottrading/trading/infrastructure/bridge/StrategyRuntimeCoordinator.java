@@ -42,8 +42,15 @@ public class StrategyRuntimeCoordinator {
     private final AccountingUseCase accountingService;
     private final PythonBridgeFacade pythonBridgeFacade;
 
+    /** Sin salida inicial en este plazo => el proceso no llegó a arrancar. */
+    private static final long STARTUP_TIMEOUT_MS = 90_000L;
+    /** Silencio máximo tolerado tras arrancar; debe superar el intervalo de heartbeat (15s). */
+    private static final long INACTIVITY_TIMEOUT_MS = 60_000L;
+    /** Periodo de sondeo del watchdog de inactividad. */
+    private static final long WATCHDOG_POLL_MS = 1_000L;
+
     private final Map<Long, Future<?>> runtimeThreads = new ConcurrentHashMap<>();
-    
+
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public StrategyRuntimeCoordinator(
@@ -122,44 +129,68 @@ public class StrategyRuntimeCoordinator {
     }
 
     /**
-     * Lee la salida de Python con monitoring de timeout por INACTIVIDAD.
+     * Lee la salida de Python monitorizando liveness con un watchdog externo.
      */
-    private void escucharSalidaPythonConTimeout(Process process, InstanciaEstrategia instancia, long startTime) 
+    private void escucharSalidaPythonConTimeout(Process process, InstanciaEstrategia instancia, long startTime)
             throws PythonProcessException {
+
+        RealtimeActivityTracker tracker = new RealtimeActivityTracker(
+                startTime, STARTUP_TIMEOUT_MS, INACTIVITY_TIMEOUT_MS);
+        Future<?> watchdog = lanzarWatchdogInactividad(process, instancia, tracker);
+
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-
-            final long INIT_TIMEOUT_MS = 90_000;        // 90s para inicialización
-            boolean primeraActividad = true;
 
             String line;
             while ((line = reader.readLine()) != null) {
                 if (Thread.currentThread().isInterrupted()) {
                     break;
                 }
-                
-                long now = System.currentTimeMillis();
-                long elapsedTotal = now - startTime;
-                // Verificar timeout de inicialización
-                if (primeraActividad && elapsedTotal > INIT_TIMEOUT_MS) {
-                    log.warn("Estrategia {} excedió timeout de inicialización (90s), terminando", 
-                            instancia.getId());
-                    throw new PythonProcessException("Timeout de inicialización excedido (>90s)");
-                }
-                
-                if (primeraActividad) {
-                    primeraActividad = false;
-                    log.info("Estrategia {} superó inicialización, pasada a monitoreo de inactividad (5m)", 
-                            instancia.getId());
-                }
-                
-                // Procesar línea (parsear y procesar signals si aplica)
+                tracker.markActivity(System.currentTimeMillis());
                 procesarLineaYSignal(line, instancia);
             }
-            
+
+            // si el watchdog mató el proceso, reportarlo como timeout, no como cierre normal.
+            String reason = tracker.timedOutReason(System.currentTimeMillis());
+            if (reason != null) {
+                throw new PythonProcessException(
+                        "Estrategia " + instancia.getId() + " detenida por watchdog: " + reason);
+            }
+
         } catch (IOException e) {
+            String reason = tracker.timedOutReason(System.currentTimeMillis());
+            if (reason != null) {
+                throw new PythonProcessException(
+                        "Estrategia " + instancia.getId() + " detenida por watchdog: " + reason, e);
+            }
             throw new PythonProcessException("Error al leer salida del proceso Python: " + e.getMessage(), e);
+        } finally {
+            watchdog.cancel(true);
         }
+    }
+
+    /**
+     * Lanza un watchdog que destruye el proceso si supera el timeout de arranque
+     * o de inactividad, permitiendo detectar procesos Python colgados en 24/7.
+     */
+    private Future<?> lanzarWatchdogInactividad(
+            Process process, InstanciaEstrategia instancia, RealtimeActivityTracker tracker) {
+        return executor.submit(() -> {
+            try {
+                while (process.isAlive() && !Thread.currentThread().isInterrupted()) {
+                    Thread.sleep(WATCHDOG_POLL_MS);
+                    String reason = tracker.timedOutReason(System.currentTimeMillis());
+                    if (reason != null) {
+                        log.warn("Watchdog: estrategia {} {} — destruyendo proceso Python",
+                                instancia.getId(), reason);
+                        processSupervisor.destroyProcessForcibly(process);
+                        return;
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
     }
 
     /**
