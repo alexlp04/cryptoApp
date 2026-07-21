@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,6 +39,7 @@ import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
 import com.bottrading.trading.application.port.out.TradeResultsPort;
 import com.bottrading.trading.domain.Posicion;
+import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
 import com.bottrading.trading.infrastructure.cache.StatsCache;
 
@@ -62,6 +64,9 @@ class PaperTradingServiceTest {
 
     @Mock
     private StatsCache statsCache;
+
+    @Mock
+    private ProcessedSignalRegistry signalRegistry;
 
     @InjectMocks
     private PaperTradingService paperTradingService;
@@ -202,6 +207,73 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalSELL());
 
             verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // onSignal() — Idempotencia (C3)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("onSignal() — Idempotencia de señales")
+    class IdempotencyTests {
+
+        /** Servicio con un registro de idempotencia REAL (no mock) para ejercer el dedup. */
+        private PaperTradingService serviceConRegistroReal() {
+            return new PaperTradingService(
+                    accountingService, instanciaRepo, posicionRepo, tradeResultsPort, statsCache,
+                    new ProcessedSignalRegistry());
+        }
+
+        @Test
+        @DisplayName("✓ Debe aplicar una señal BUY solo una vez aunque se entregue dos veces")
+        void should_apply_buy_only_once_on_duplicate_delivery() {
+            PaperTradingService svc = serviceConRegistroReal();
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+
+            SignalDTO sig = crearSignalBUY();
+            svc.onSignal(10L, sig);
+            svc.onSignal(10L, sig);   // reentrega idéntica
+
+            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any());
+            verify(posicionRepo, times(1)).save(any());
+        }
+
+        @Test
+        @DisplayName("✓ Debe reintentar si la primera aplicación falló (no se marcó como procesada)")
+        void should_reprocess_when_first_application_failed() {
+            PaperTradingService svc = serviceConRegistroReal();
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            doThrow(new RuntimeException("fallo transitorio"))
+                    .doNothing()
+                    .when(accountingService).commitCapital(anyLong(), any(), any());
+
+            SignalDTO sig = crearSignalBUY();
+            assertThrows(RuntimeException.class, () -> svc.onSignal(10L, sig));
+            svc.onSignal(10L, sig);   // reintento tras fallo: debe volver a intentarlo
+
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Distinto timestamp genera distinta clave y se aplica de nuevo")
+        void should_apply_again_for_different_timestamp() {
+            PaperTradingService svc = serviceConRegistroReal();
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+
+            SignalDTO s1 = crearSignalBUY();
+            s1.setTimestamp(1000L);
+            SignalDTO s2 = crearSignalBUY();
+            s2.setTimestamp(2000L);
+            svc.onSignal(10L, s1);
+            svc.onSignal(10L, s2);
+
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
         }
     }
 
