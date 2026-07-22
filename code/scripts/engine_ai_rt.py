@@ -11,6 +11,7 @@ from collections import deque
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 import websockets
 
