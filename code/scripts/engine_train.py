@@ -10,8 +10,8 @@ import gc
 import json
 import os
 import sys
+import time
 import warnings
-from datetime import datetime
 from typing import Any
 
 import joblib
@@ -126,7 +126,7 @@ def main() -> None:
         models_dir = os.path.join(PROJECT_ROOT, "models")
         os.makedirs(models_dir, exist_ok=True)
 
-        start_time = datetime.now()
+        start_time = time.monotonic()
         is_deep_learning = model_type in ("neural_network", "deep_learning", "keras")
 
         # Entrenamiento
@@ -186,7 +186,7 @@ def main() -> None:
             joblib.dump(model, model_path)
             logger.info("Modelo ML clasico guardado en: %s", model_path)
 
-        training_time = (datetime.now() - start_time).total_seconds()
+        training_time = time.monotonic() - start_time
 
         # Metricas de clasificacion
         avg = "binary" if n_classes <= 2 else "weighted"

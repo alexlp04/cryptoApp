@@ -46,8 +46,9 @@ import json
 import math
 import os
 import sys
+import time
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import joblib
@@ -139,7 +140,7 @@ def build_study_name(model_type: str, symbol: str, timeframe: str,
     trials de datasets o rangos distintos en el mismo estudio, invalidando cualquier
     comparación posterior.
     """
-    stamp = (moment or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    stamp = (moment or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
     return f"optimize_{model_type}_{symbol}_{timeframe}_{stamp}"
 
 
@@ -528,7 +529,7 @@ def _make_objective(
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
         trial_params = _prepare_optuna_sklearn_params(model_type, params)
-        trial_start = datetime.now()
+        trial_start = time.monotonic()
 
         logger.info(
             "Trial %3d | %s | iniciando sobre %d filas",
@@ -631,7 +632,7 @@ def _make_objective(
                 f1_cv, win_rate_cv, pf_norm_cv, sharpe_norm_cv, overfit_gap
             )
 
-            elapsed = (datetime.now() - trial_start).total_seconds()
+            elapsed = time.monotonic() - trial_start
             logger.info(
                 "Trial %3d | %s | f1_cv=%.4f acc_cv=%.4f win_rate=%.4f pf_norm=%.4f "
                 "sharpe_norm=%.4f gap=%.4f → composite=%.4f (%.1fs)",
@@ -945,18 +946,18 @@ def _preparar_dataset(
     )
 
     logger.info("Calculando indicadores — conjunto TRAIN...")
-    t0 = datetime.now()
+    t0 = time.monotonic()
     df_train_enriched = strategy.populate_indicators(df_train_raw.copy())
     logger.info("populate_indicators TRAIN: %.2fs (%d filas)",
-                (datetime.now() - t0).total_seconds(), len(df_train_enriched))
+                time.monotonic() - t0, len(df_train_enriched))
 
     logger.info("Calculando indicadores — conjunto TEST (con buffer de calentamiento)...")
-    t1 = datetime.now()
+    t1 = time.monotonic()
     df_test_enriched_buf = strategy.populate_indicators(df_test_buffer_raw.copy())
     buffer_rows = raw_split_idx - buffer_start
     df_test_enriched = df_test_enriched_buf.iloc[buffer_rows:].reset_index(drop=True)
     logger.info("populate_indicators TEST: %.2fs (%d filas)",
-                (datetime.now() - t1).total_seconds(), len(df_test_enriched))
+                time.monotonic() - t1, len(df_test_enriched))
 
     del df_train_raw, df_test_buffer_raw, df_test_enriched_buf
 

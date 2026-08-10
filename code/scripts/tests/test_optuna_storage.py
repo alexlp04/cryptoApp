@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import optuna
 import pytest
@@ -59,13 +59,15 @@ class TestBuildStudyName:
 
     def test_incluye_modelo_simbolo_y_timeframe(self):
         name = build_study_name("lightgbm", "BTCUSDT", "1h",
-                                datetime(2026, 8, 10, 14, 30, 5))
+                                datetime(2026, 8, 10, 14, 30, 5, tzinfo=timezone.utc))
 
         assert name == "optimize_lightgbm_BTCUSDT_1h_20260810-143005"
 
     def test_dos_ejecuciones_no_comparten_nombre(self):
-        primera = build_study_name("xgboost", "ETHUSDT", "4h", datetime(2026, 8, 10, 10, 0, 0))
-        segunda = build_study_name("xgboost", "ETHUSDT", "4h", datetime(2026, 8, 10, 10, 0, 1))
+        primera = build_study_name("xgboost", "ETHUSDT", "4h",
+                                   datetime(2026, 8, 10, 10, 0, 0, tzinfo=timezone.utc))
+        segunda = build_study_name("xgboost", "ETHUSDT", "4h",
+                                   datetime(2026, 8, 10, 10, 0, 1, tzinfo=timezone.utc))
 
         assert primera != segunda
 
