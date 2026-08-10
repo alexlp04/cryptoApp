@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
 from ipc_protocol import write_response
 from shared_utils import setup_engine_logging
 
@@ -21,6 +22,28 @@ DEFAULT_RATE_LIMIT_WAIT = 60
 MAX_BACKOFF_SEC = 300
 # Evita frames IPC excesivamente grandes que pueden cerrar el pipe en el consumidor.
 EMIT_CHUNK_SIZE = 2_000
+
+
+def _build_session() -> requests.Session:
+    """Crea una sesión HTTP con keep-alive y pool dimensionado a los workers.
+
+    Reutilizar conexiones evita rehacer el handshake TCP+TLS en cada request.
+    Al descargar históricos largos (miles de requests con ThreadPoolExecutor)
+    ese handshake domina el tiempo, así que el pool acelera notablemente.
+    """
+    session = requests.Session()
+    adapter = HTTPAdapter(
+        pool_connections=MAX_PARALLEL_WORKERS,
+        pool_maxsize=MAX_PARALLEL_WORKERS,
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+# Sesión compartida por todos los workers. requests.Session es segura para
+# GETs concurrentes al apoyarse en el PoolManager (thread-safe) de urllib3.
+_SESSION: requests.Session = _build_session()
 
 INTERVAL_MS = {
     "1m": 60_000,
@@ -106,7 +129,7 @@ def _request_with_backoff(
 
     for attempt in range(1, max_retries + 1):
         try:
-            response = requests.get(
+            response = _SESSION.get(
                 URL_FETCH, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
 
             status_action, backoff = _handle_response_status(
