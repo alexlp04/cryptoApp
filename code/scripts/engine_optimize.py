@@ -88,12 +88,62 @@ project_root = PROJECT_ROOT  # alias utilizado en el módulo para rutas de model
 DEFAULT_N_TRIALS: int = 100
 DEFAULT_CV_FOLDS: int = 5
 DEFAULT_MIN_COMPOSITE: float = 0.55
+
+# Almacén persistente de estudios Optuna. Sin él los estudios viven solo en memoria y
+# se pierden al terminar el proceso, impidiendo comparar ejecuciones o inspeccionarlas
+# con optuna-dashboard. Sobrescribible por entorno para apuntar a otro backend.
+OPTUNA_STORAGE_ENV_VAR: str = "CRYPTOAPP_OPTUNA_STORAGE"
+DEFAULT_OPTUNA_DB_RELPATH: str = os.path.join("results", "optuna", "studies.db")
 MIN_SAMPLES_REQUIRED: int = 50
 RESULTS_SUBDIR: str = "optimize"
 # Máximo de filas usadas durante la búsqueda con Optuna para modelos NN.
 # El entrenamiento final siempre usa el dataset completo.
 OPTUNA_NN_MAX_SAMPLES: int = 50_000
 OPTUNA_SVM_MAX_SAMPLES: int = 12_000
+
+
+# =============================================================================
+# PERSISTENCIA DE ESTUDIOS OPTUNA
+# =============================================================================
+
+def resolve_optuna_storage(root: str | None = None) -> str | None:
+    """
+    Devuelve la URL del almacén persistente de estudios Optuna.
+
+    Prioriza la variable de entorno CRYPTOAPP_OPTUNA_STORAGE (útil para apuntar a
+    MySQL/PostgreSQL); si no está, usa un SQLite bajo results/optuna/.
+
+    Devuelve None cuando el directorio no se puede preparar: en ese caso el estudio
+    corre en memoria, que es peor para reproducibilidad pero preferible a abortar
+    una optimización de horas por un problema de disco.
+    """
+    override = os.environ.get(OPTUNA_STORAGE_ENV_VAR, "").strip()
+    if override:
+        return override
+
+    db_path = os.path.join(root or project_root, DEFAULT_OPTUNA_DB_RELPATH)
+    try:
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "No se pudo preparar el almacén Optuna (%s); el estudio correrá en memoria", exc,
+        )
+        return None
+
+    return "sqlite:///" + db_path.replace("\\", "/")
+
+
+def build_study_name(model_type: str, symbol: str, timeframe: str,
+                     moment: datetime | None = None) -> str:
+    """
+    Nombre único por ejecución.
+
+    Se incluye timestamp a propósito: reutilizar el nombre haría que Optuna acumulase
+    trials de datasets o rangos distintos en el mismo estudio, invalidando cualquier
+    comparación posterior.
+    """
+    stamp = (moment or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return f"optimize_{model_type}_{symbol}_{timeframe}_{stamp}"
 
 
 # =============================================================================
@@ -1116,11 +1166,28 @@ def main() -> None:
         )
 
         trial_log: list[dict[str, Any]] = []
-        study = optuna.create_study(
-            direction="maximize",
-            pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10),
-            study_name=f"optimize_{model_type}_{symbol}_{timeframe}",
-        )
+        study_name = build_study_name(model_type, symbol, timeframe)
+        storage = resolve_optuna_storage()
+        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+
+        try:
+            study = optuna.create_study(
+                direction="maximize",
+                pruner=pruner,
+                study_name=study_name,
+                storage=storage,
+            )
+            if storage:
+                logger.info("Estudio '%s' persistido en %s", study_name, storage)
+        except Exception as exc:  # noqa: BLE001 - degradar a memoria antes que abortar
+            logger.warning(
+                "Almacén Optuna no disponible (%s); el estudio correrá solo en memoria", exc,
+            )
+            study = optuna.create_study(
+                direction="maximize",
+                pruner=pruner,
+                study_name=study_name,
+            )
         study.optimize(
             _make_objective(
                 model_type, x_train_full, y_train_full,
