@@ -1,0 +1,22 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "include": [
+    "code/scripts",
+    "code/strategies"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "models",
+    "results",
+    "logs"
+  ],
+  "extraPaths": [
+    "code"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": false
+}
