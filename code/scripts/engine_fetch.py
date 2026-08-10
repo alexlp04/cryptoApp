@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import requests
-from requests.adapters import HTTPAdapter
 from ipc_protocol import write_response
+from requests.adapters import HTTPAdapter
 from shared_utils import setup_engine_logging
 
 logger = setup_engine_logging("engine_fetch")

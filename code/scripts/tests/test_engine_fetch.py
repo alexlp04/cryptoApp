@@ -6,9 +6,8 @@ request, y verifica que la lógica de reintentos sigue apoyándose en esa sesió
 """
 from __future__ import annotations
 
-import requests
-
 import engine_fetch
+import requests
 
 
 class _FakeResp:

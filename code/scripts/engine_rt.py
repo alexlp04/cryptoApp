@@ -10,6 +10,7 @@ import websockets
 from ipc_protocol import read_request_payload
 from shared_utils import (
     CODE_DIR,
+    build_signal_line,
     emit_heartbeats,
     load_strategy_by_path,
     setup_engine_logging,
@@ -106,7 +107,7 @@ async def run_symbol(
 
                     if action:
                         signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
-                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
         except Exception:

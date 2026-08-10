@@ -88,6 +88,21 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
 
 
 # =============================================================================
+# PROTOCOLO DE LÍNEA DEL CANAL RT (Python -> Java)
+# =============================================================================
+# El canal de tiempo real NO usa MessagePack framed (a diferencia del canal
+# request/response): es NDJSON, una línea por mensaje con el formato
+# ``PREFIJO\tJSON`` sobre stdout. Java lo parsea línea a línea. Este es el punto
+# único donde se define el formato de las líneas de señal (ver IPC_PROTOCOL.md).
+SIGNAL_PREFIX: str = "SIGNAL\t"
+
+
+def build_signal_line(signal: dict) -> str:
+    """Construye una línea de señal RT para stdout (``SIGNAL\\tJSON``)."""
+    return SIGNAL_PREFIX + json.dumps(signal)
+
+
+# =============================================================================
 # HEARTBEAT DEL CANAL RT (liveness)
 # =============================================================================
 HEARTBEAT_PREFIX: str = "HEARTBEAT\t"
