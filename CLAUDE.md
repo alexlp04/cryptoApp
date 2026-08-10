@@ -165,7 +165,25 @@ con campos `final`, nunca `@Autowired` en campo; `Instant.ofEpochMilli()` para t
 de Binance (epoch ms, UTC); virtual threads para I/O (`Executors.newVirtualThreadPerTaskExecutor()`);
 `JdbcTemplate.batchUpdate()` para velas, JPA solo para entidades de bajo volumen.
 
+## Ramas
+
+Modelo estándar (detalle completo en `CONTRIBUTING.md`):
+
+```
+main → epic/<tema> → fix|feat/<nº-issue>-<slug> → epic/<tema> → prod
+```
+
+Una rama por issue, con su número delante; vuelve a la épica con `--no-ff`; la épica se verifica
+**entera** antes de promocionar a `prod`. Nunca se commitea directo a `main` ni a `prod`.
+
+El motivo de que exista la capa de integración: `fix/c4-durable-retry-queue` y `feat/calidad-y-ci`
+estaban ambas en verde por separado y al juntarlas rompieron el build
+(`Schema-validation: missing table [senal_fallida_pendiente]`), porque C4 añadió una entidad JPA
+sin migración y el test que lo detecta venía en la otra rama.
+
+**Toda entidad JPA nueva o modificada exige su migración** `V<n>__descripcion.sql`.
+
 ## Commits
 
-Máximo dos líneas, formato `feat|fix|wip|docs|data: <resumen>`.
+Máximo dos líneas, formato `feat|fix|wip|docs|data|style|merge: <resumen>`.
 **Nunca** añadas el trailer `Co-Authored-By: Claude` — se purgó del historial deliberadamente.
