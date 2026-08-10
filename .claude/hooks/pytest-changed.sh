@@ -16,7 +16,8 @@ fi
 CHANGED="$(git -C "$ROOT" status --porcelain -- '*.py' 2>/dev/null)"
 [ -n "$CHANGED" ] || exit 0
 
-OUTPUT="$(cd "$ROOT" && "$PY" -m pytest code/scripts/tests -q 2>&1)" && exit 0
+# --color=no: la salida viaja dentro de un JSON, y los codigos ANSI lo vuelven ilegible.
+OUTPUT="$(cd "$ROOT" && "$PY" -m pytest code/scripts/tests -q --color=no 2>&1)" && exit 0
 
 OUTPUT="$OUTPUT" "$PY" -c "
 import json, os

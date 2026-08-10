@@ -36,7 +36,8 @@ esac
 # Solo errores reales (pyflakes + sintaxis): nombres indefinidos, imports sin usar,
 # redefiniciones. Las reglas de estilo se dejan para `ruff check code/` a mano, para
 # que el hook no genere ruido en cada edición.
-FINDINGS="$("$RUFF" check --select E9,F --output-format concise "$FILE" 2>&1)" && exit 0
+# --color never: los hallazgos viajan dentro de un JSON; los codigos ANSI lo ensucian.
+FINDINGS="$("$RUFF" check --select E9,F --output-format concise --color never "$FILE" 2>&1)" && exit 0
 
 REL="${FILE#"$ROOT/"}"
 FINDINGS="$FINDINGS" REL="$REL" "$PY" -c "
