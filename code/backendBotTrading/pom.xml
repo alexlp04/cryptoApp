@@ -47,6 +47,16 @@
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Migraciones de esquema versionadas (sustituye a ddl-auto=update) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
         <!-- Logging (ya viene, pero explícito es mejor) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

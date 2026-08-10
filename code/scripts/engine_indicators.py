@@ -10,11 +10,10 @@ import sys
 import warnings
 
 import pandas as pd
-from ta.trend import SMAIndicator, EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-
 from ipc_protocol import read_request_payload, write_response
 from shared_utils import setup_engine_logging
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, EMAIndicator, SMAIndicator
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -110,6 +109,6 @@ if __name__ == "__main__":
         logger.info("=== Proceso finalizado correctamente ===")
 
     except Exception as exc:
-        logger.error("Fallo critico en el script: %s", str(exc), exc_info=True)
+        logger.exception("Fallo critico en el script")
         write_response("ERROR", {"status": "error", "message": str(exc), "indicadores": []})
         sys.exit(1)

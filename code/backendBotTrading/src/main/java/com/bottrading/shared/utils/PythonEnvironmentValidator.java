@@ -102,7 +102,7 @@ public class PythonEnvironmentValidator {
             throw new EnvironmentConfigException(
                 "Faltan módulos Python críticos:\n" + missingModules.toString() +
                 "\nSolución: Ejecutar en el venv del proyecto:\n" +
-                "  .venv/bin/pip install -r requirements.txt"
+                "  " + AppConstants.PYTHON_EXECUTABLE + " -m pip install -r requirements.txt"
             );
         }
     }

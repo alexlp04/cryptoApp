@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import logging
-import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import requests
@@ -104,7 +101,7 @@ def _handle_response_status(response: requests.Response, attempt: int, max_retri
 def _request_with_backoff(
     params: dict,
     max_retries: int = 5,
-) -> Optional[list]:
+) -> list | None:
     backoff = 2.0
 
     for attempt in range(1, max_retries + 1):
@@ -208,7 +205,7 @@ def _fetch_chunk(
     return chunk_index, velas
 
 
-def obtener_fecha_listado(symbol: str, timeframe: str) -> Optional[int]:
+def obtener_fecha_listado(symbol: str, timeframe: str) -> int | None:
     logger.info("Buscando fecha de listado para %s...", symbol)
     data = _request_with_backoff({
         "symbol": symbol,
@@ -296,7 +293,7 @@ def obtener_datos_binance(
     since_ms: int,
     workers: int = MAX_PARALLEL_WORKERS,
 ) -> int:
-    until_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    until_ms = int(datetime.now(UTC).timestamp() * 1000)
     interval_ms = INTERVAL_MS.get(timeframe)
 
     if interval_ms is None:
@@ -324,7 +321,7 @@ def obtener_datos_binance(
 def fetch(
     symbol: str,
     timeframe: str,
-    since_binance: Optional[str] = None,
+    since_binance: str | None = None,
 ) -> int:
     if since_binance is None or since_binance == "None":
         since_ms = obtener_fecha_listado(symbol, timeframe)
@@ -365,6 +362,6 @@ if __name__ == "__main__":
         logger.info(
             "=== Fetch completado. %s velas enviadas. ===", total_velas)
 
-    except Exception as exc:
-        logger.error("Error crítico: %s", str(exc), exc_info=True)
+    except Exception:
+        logger.exception("Error crítico")
         sys.exit(1)

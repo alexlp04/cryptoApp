@@ -17,7 +17,7 @@ import csv
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -36,7 +36,6 @@ os.makedirs(results_root, exist_ok=True)
 if code_dir not in sys.path:
     sys.path.insert(0, code_dir)
 
-from strategies.BaseStrategy import BaseStrategy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +114,7 @@ def guardar_trade_a_csv(carpeta_estrategia: str, symbol: str, timeframe: str, tr
                 trade.get("pnl", ""),
                 trade.get("capital", ""),
             ])
-    except IOError as exc:
+    except OSError as exc:
         logger.error("Error escribiendo trade a CSV: %s", exc)
         raise
 
@@ -343,10 +342,10 @@ def _calculate_backtest_stats(
     fecha_fin = "N/A"
     if not df.empty and "timestamp" in df.columns:
         fecha_inicio = datetime.fromtimestamp(
-            df["timestamp"].iloc[0] / 1000, timezone.utc
+            df["timestamp"].iloc[0] / 1000, UTC
         ).isoformat()
         fecha_fin = datetime.fromtimestamp(
-            df["timestamp"].iloc[-1] / 1000, timezone.utc
+            df["timestamp"].iloc[-1] / 1000, UTC
         ).isoformat()
 
     resultado = "NEUTRO"

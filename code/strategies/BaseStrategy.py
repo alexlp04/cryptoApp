@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import inspect
+from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import Union
 
 import pandas as pd
 
@@ -17,7 +16,7 @@ class BaseStrategy(ABC):
     # Sobreescribir en estrategias con timeframe muy corto (1m → 0.001) o largo (1d → 0.01).
     LABEL_RETURN_THRESHOLD: float = 0.002
 
-    def __init__(self, capital: Union[float, Decimal] = 1000, risk_per_trade: Union[float, Decimal] = 0.02):
+    def __init__(self, capital: float | Decimal = 1000, risk_per_trade: float | Decimal = 0.02):
         self.capital = Decimal(str(capital))
         self.risk_per_trade = Decimal(str(risk_per_trade))
 
@@ -55,7 +54,7 @@ class BaseStrategy(ABC):
     def get_name(self) -> str:
         return self.__class__.__name__
 
-    def get_position_size(self, price: Union[float, Decimal]) -> Decimal:
+    def get_position_size(self, price: float | Decimal) -> Decimal:
         return (self.capital * self.risk_per_trade) / Decimal(str(price))
 
     def should_close(self, row: dict, entry_price: float) -> bool:

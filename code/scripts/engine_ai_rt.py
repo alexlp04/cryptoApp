@@ -2,20 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import types
-import logging
 import warnings
 from collections import deque
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 import websockets
-
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, emit_heartbeats, CODE_DIR, PROJECT_ROOT
+from shared_utils import (
+    CODE_DIR,
+    PROJECT_ROOT,
+    emit_heartbeats,
+    load_strategy_by_path,
+    setup_engine_logging,
+)
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -362,8 +368,8 @@ async def run_symbol(
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
             await asyncio.sleep(2)
-        except Exception as e:
-            logger.error("Error en loop WS de %s: %s", symbol, str(e), exc_info=True)
+        except Exception:
+            logger.exception("Error en loop WS de %s", symbol)
             await asyncio.sleep(5)
 
 # =========================

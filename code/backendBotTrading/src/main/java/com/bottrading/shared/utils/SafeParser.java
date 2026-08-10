@@ -64,29 +64,6 @@ public class SafeParser {
     }
 
     /**
-     * Convierte un objeto a Double de forma segura.
-     */
-    public static double toDouble(Object value, double defaultValue) {
-        return Optional.ofNullable(value)
-                .map(String::valueOf)
-                .flatMap(s -> {
-                    try {
-                        return Optional.of(Double.parseDouble(s));
-                    } catch (NumberFormatException e) {
-                        return Optional.empty();
-                    }
-                })
-                .orElse(defaultValue);
-    }
-
-    /**
-     * Convierte un objeto a Double, con valor default = 0.0.
-     */
-    public static double toDouble(Object value) {
-        return toDouble(value, 0.0);
-    }
-
-    /**
      * Obtiene el String de un objeto de forma segura.
      */
     public static String toString(Object value, String defaultValue) {

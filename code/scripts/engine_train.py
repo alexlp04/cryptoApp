@@ -10,18 +10,15 @@ import gc
 import json
 import os
 import sys
+import time
 import warnings
-from datetime import datetime
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.preprocessing import LabelEncoder
-
-from ipc_protocol import read_request_payload, write_error, write_response
 from backtest_engine import run_backtest_with_predictions
+from ipc_protocol import read_request_payload, write_error, write_response
 from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
@@ -30,6 +27,8 @@ from shared_utils import (
     load_strategy_by_name,
     setup_engine_logging,
 )
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -127,7 +126,7 @@ def main() -> None:
         models_dir = os.path.join(PROJECT_ROOT, "models")
         os.makedirs(models_dir, exist_ok=True)
 
-        start_time = datetime.now()
+        start_time = time.monotonic()
         is_deep_learning = model_type in ("neural_network", "deep_learning", "keras")
 
         # Entrenamiento
@@ -176,10 +175,10 @@ def main() -> None:
             )
             y_pred = model.predict(X_test)
 
-            setattr(model, "feature_cols", feature_cols)
-            setattr(model, "strategy_name", strategy_name)
-            setattr(model, "warmup_candles", warmup_candles)
-            setattr(model, "label_encoder", label_encoder)
+            model.feature_cols = feature_cols
+            model.strategy_name = strategy_name
+            model.warmup_candles = warmup_candles
+            model.label_encoder = label_encoder
 
             suffix = f"_{strategy_name}" if strategy_name else ""
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
@@ -187,7 +186,7 @@ def main() -> None:
             joblib.dump(model, model_path)
             logger.info("Modelo ML clasico guardado en: %s", model_path)
 
-        training_time = (datetime.now() - start_time).total_seconds()
+        training_time = time.monotonic() - start_time
 
         # Metricas de clasificacion
         avg = "binary" if n_classes <= 2 else "weighted"
@@ -262,7 +261,7 @@ def main() -> None:
         logger.info("=== engine_train.py finalizado con exito ===")
 
     except Exception as exc:
-        logger.error("Fallo durante el proceso: %s", str(exc), exc_info=True)
+        logger.exception("Fallo durante el proceso")
         write_error("ERROR", str(exc))
         sys.exit(1)
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 import numpy as np
 import optuna
 import pytest
-
 import shared_utils
 from engine_optimize import _SUGGEST_FN, _prepare_optuna_sklearn_params
-from shared_utils import build_sklearn_model, fit_sklearn_model, _is_gpu_runtime_error
+from shared_utils import _is_gpu_runtime_error, build_sklearn_model, fit_sklearn_model
 
 
 @pytest.fixture(autouse=True)

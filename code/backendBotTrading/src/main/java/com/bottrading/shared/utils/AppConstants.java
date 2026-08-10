@@ -11,14 +11,39 @@ public final class AppConstants {
         throw new UnsupportedOperationException("Esta es una clase de utilidad y no puede ser instanciada");
     }
 
+    /** Ruta al intérprete del venv en Windows, relativa a la raíz del proyecto. */
+    static final String PYTHON_EXECUTABLE_WINDOWS = ".venv/Scripts/python.exe";
+
+    /** Ruta al intérprete del venv en Linux y macOS, relativa a la raíz del proyecto. */
+    static final String PYTHON_EXECUTABLE_POSIX = ".venv/bin/python3";
+
+    /** Variable de entorno para apuntar a un intérprete distinto al del venv por defecto. */
+    static final String PYTHON_EXECUTABLE_ENV_VAR = "CRYPTOAPP_PYTHON";
+
     /**
      * Ruta al ejecutable Python dentro del venv del proyecto.
      * Se valida al arrancar la aplicación (PythonEnvironmentValidator).
-     * 
-     * IMPORTANTE: Este path debe coincidir con donde el usuario tenga instalado el venv.
-     * Por defecto apunta a ".venv/bin/python3" relativo al directorio raíz del proyecto.
+     *
+     * El layout del venv depende del sistema operativo: Windows coloca el intérprete en
+     * ".venv/Scripts/python.exe" mientras que Linux y macOS lo hacen en ".venv/bin/python3".
+     * La variable de entorno CRYPTOAPP_PYTHON tiene prioridad si está definida.
      */
-    public static final String PYTHON_EXECUTABLE = ".venv/bin/python3"; 
+    public static final String PYTHON_EXECUTABLE = resolveDefaultPythonExecutable(
+            System.getenv(PYTHON_EXECUTABLE_ENV_VAR),
+            System.getProperty("os.name"));
+
+    /**
+     * Determina el intérprete por defecto. Visible para tests con el fin de cubrir
+     * ambos sistemas operativos sin depender del que ejecute la suite.
+     */
+    static String resolveDefaultPythonExecutable(String envOverride, String osName) {
+        if (envOverride != null && !envOverride.isBlank()) {
+            return envOverride;
+        }
+        boolean windows = osName != null
+                && osName.toLowerCase(java.util.Locale.ROOT).contains("win");
+        return windows ? PYTHON_EXECUTABLE_WINDOWS : PYTHON_EXECUTABLE_POSIX;
+    }
 
     public static final String KEY_SYMBOL = "symbol";
     public static final String KEY_TIMEFRAME = "timeframe";

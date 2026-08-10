@@ -1,5 +1,5 @@
-from ta.volatility import AverageTrueRange, BollingerBands
 from ta.momentum import ROCIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
 
 from strategies.BaseStrategy import BaseStrategy
 
