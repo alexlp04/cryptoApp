@@ -1,0 +1,110 @@
+name: CI
+
+# El proyecto tiene 347 tests Java y 184 Python, más Checkstyle, PMD, ruff y mypy.
+# Hasta ahora nada de eso se ejecutaba automáticamente: Java pasaba sus puertas solo
+# porque Maven las obliga en `verify`, y Python acumulaba deuda precisamente porque
+# nadie la obligaba. Este workflow cierra esa asimetría.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo sobre la misma rama cancela el run anterior: no tiene sentido gastar
+# minutos validando un commit ya superado.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — ruff, mypy, pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: ruff
+        run: ruff check code/
+
+      - name: mypy
+        run: mypy code/scripts
+
+      - name: pytest
+        run: pytest code/scripts/tests -q
+
+  java:
+    name: Java — Checkstyle, PMD y tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backendBotTrading
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # `verify` encadena Checkstyle, PMD y la suite JUnit sobre H2, incluida
+      # SchemaMigrationValidationTest (entidades JPA contra las migraciones Flyway).
+      - name: mvn verify
+        run: mvn -B --no-transfer-progress verify
+
+  java-mysql:
+    name: Java — esquema contra MySQL 8 real
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backendBotTrading
+
+    # H2 en modo compatibilidad no reproduce BIT(1), DATETIME(6), DECIMAL ni la
+    # semántica real de AUTO_INCREMENT y claves foráneas. Este job es el único sitio
+    # donde las migraciones se validan contra el motor de producción.
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: bottradingdb_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Validar migraciones contra MySQL
+        env:
+          TEST_DB_URL: jdbc:mysql://127.0.0.1:3306/bottradingdb_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: root
+        # -Dintegration.db=true es el interruptor de @EnabledIfSystemProperty: sin él
+        # el test se salta en silencio.
+        run: >-
+          mvn -B --no-transfer-progress test
+          -Dtest=SchemaMigrationMySqlIntegrationTest
+          -Dintegration.db=true
+          -DfailIfNoTests=false
