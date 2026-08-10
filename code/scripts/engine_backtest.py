@@ -92,6 +92,18 @@ def main() -> None:
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico
 
+        # Campos obligatorios: si faltan, un None viajaría hasta load_strategy_by_path o
+        # crear_carpeta_estrategia y fallaría allí de forma opaca. Mismo criterio que
+        # engine_train.py: el error se reporta en la frontera del protocolo.
+        # Se comprueban uno a uno (y no en bucle) para que el análisis estático pueda
+        # descartar el None en el resto de la función.
+        if not strategy_path:
+            raise ValueError("'strategy_path' es obligatorio en el payload de backtest.")
+        if not strategy_name:
+            raise ValueError("'strategy_name' es obligatorio en el payload de backtest.")
+        if not timeframe:
+            raise ValueError("'timeframe' es obligatorio en el payload de backtest.")
+
         logger.info("Loading strategy from: %s", strategy_path)
         strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
         strategy.timeframe = timeframe
@@ -127,7 +139,7 @@ def main() -> None:
             if df.empty:
                 continue
 
-            if model is not None:
+            if model is not None and model_type is not None:
                 # Backtest con predicciones del modelo IA
                 df_con_indicadores = strategy.populate_indicators(df.copy())
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)

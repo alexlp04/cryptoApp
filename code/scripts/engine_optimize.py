@@ -426,7 +426,7 @@ def _build_and_eval_neural_network(
 
     # Backtest UNA VEZ sobre el último fold (datos más recientes — respeta causalidad)
     if has_backtest_data and last_y_pred_fold is not None and last_val_idx_nn is not None:
-        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)  # type: ignore[union-attr]
+        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)
         val_timestamps = timestamps[last_val_idx_nn]  # type: ignore[index]
         df_val = df_enriched[
             df_enriched["timestamp"].isin(set(val_timestamps.tolist()))  # type: ignore[index]

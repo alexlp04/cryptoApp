@@ -216,11 +216,14 @@ def _disable_gpu_backend_for_process(model_type: str, exc: Exception) -> None:
 
 def _describe_model_backend(model: Any) -> str:
     module_name = type(model).__module__
+    # El fallback `dict` cubre modelos sin get_params (dobles de test, por ejemplo);
+    # se anota porque sin ello el tipo inferido es dict[Never, Never] y .get() no encaja.
+    params: dict[str, Any] = getattr(model, "get_params", dict)()
     if module_name.startswith("xgboost."):
-        device = getattr(model, "get_params", dict)().get("device", "cpu")
+        device = params.get("device", "cpu")
         return "GPU (XGBoost CUDA)" if str(device).lower() == "cuda" else "CPU (XGBoost)"
     if module_name.startswith("lightgbm."):
-        device_type = getattr(model, "get_params", dict)().get("device_type", "cpu")
+        device_type = params.get("device_type", "cpu")
         return "GPU (LightGBM)" if str(device_type).lower() == "gpu" else "CPU (LightGBM)"
     if module_name.startswith("sklearn."):
         return "CPU (sklearn)"
@@ -453,7 +456,10 @@ def build_sklearn_model(
 
     if model_type == "xgboost":
         clean.pop("use_label_encoder", None)  # clave obsoleta de versiones antiguas
-        base = {"n_estimators": 150, "learning_rate": 0.05,
+        # Bolsa heterogénea de hiperparámetros (str/int/float/bool): sin la anotación
+        # se infiere dict[str, object] y el desempaquetado **base choca con las firmas
+        # tipadas de los estimadores.
+        base: dict[str, Any] = {"n_estimators": 150, "learning_rate": 0.05,
                 "max_depth": 6, "random_state": 42, "eval_metric": "logloss"}
         if use_gpu:
             base.update({"tree_method": "hist", "device": "cuda"})
