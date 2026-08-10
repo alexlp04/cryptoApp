@@ -15,6 +15,12 @@
 	<img alt="TFG" src="https://img.shields.io/badge/Universidad%20de%20Murcia-TFG-7A0019?style=for-the-badge">
 </p>
 
+<p align="center">
+	<a href="https://github.com/alexlp04/cryptoapp/actions/workflows/ci.yml">
+		<img alt="CI" src="https://github.com/alexlp04/cryptoapp/actions/workflows/ci.yml/badge.svg">
+	</a>
+</p>
+
 > CryptoApp no nace como un simple bot de señales, sino como un banco de pruebas reproducible para estudiar estrategias, validar hipótesis, comparar modelos predictivos y simular operativa sin dinero real. El proyecto forma parte del Trabajo de Fin de Grado de Alejandro Lopez Lopez en el Grado en Ingenieria Informatica de la Universidad de Murcia.
 
 ## Vision General
@@ -80,15 +86,27 @@ flowchart LR
 ```text
 cryptoapp/
 ├── code/
-│   ├── backendBotTrading/   # backend Java + CLI + persistencia + tests Maven
+│   ├── backendBotTrading/
+│   │   └── src/main/
+│   │       ├── java/com/bottrading/
+│   │       │   ├── {market,trading,training,strategy,wallet,user,backtesting}/
+│   │       │   │       # un paquete por dominio, cada uno con application/domain/infrastructure
+│   │       │   ├── interfaces/cli/commands/   # comandos de la CLI (implementacion propia)
+│   │       │   └── config/  shared/
+│   │       └── resources/db/migration/        # migraciones Flyway (fuente del esquema)
 │   ├── scripts/             # engines Python: fetch, indicators, backtest, train, optimize, rt
+│   │   └── tests/           # suite pytest de los engines
 │   └── strategies/          # estrategias Python cargadas dinamicamente
-├── info/                    # apoyo tecnico, incluido el esquema SQL base
+├── .github/workflows/       # CI: Java, Python y validacion de esquema contra MySQL
+├── info/                    # apoyo tecnico (referencia historica, ver nota mas abajo)
 ├── models/                  # artefactos de modelos entrenados
 ├── results/                 # CSVs de backtesting y optimizacion
 ├── logs/                    # logs de ejecucion
+├── ruff.toml  mypy.ini      # configuracion de calidad Python (fijada en el repo)
 └── requirements.txt         # dependencias Python del proyecto
 ```
+
+Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructure`.
 
 ## Requisitos
 
@@ -117,13 +135,17 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Hacer visible el venv desde el backend Java
+### 3. Interprete Python
 
-El backend valida el ejecutable Python en `.venv/bin/python3` relativo al directorio desde el que se lanza `code/backendBotTrading`.
+El backend resuelve el interprete segun el sistema operativo, sin necesidad de enlaces
+simbolicos (`AppConstants.resolveDefaultPythonExecutable`):
 
-```bash
-ln -sfn ../../.venv code/backendBotTrading/.venv
-```
+| Sistema | Ruta relativa a la raiz del proyecto |
+| --- | --- |
+| Windows | `.venv/Scripts/python.exe` |
+| Linux y macOS | `.venv/bin/python3` |
+
+Para apuntar a otro interprete, define `CRYPTOAPP_PYTHON`; tiene prioridad sobre ambas rutas.
 
 ### 4. Configurar la base de datos
 
@@ -134,6 +156,12 @@ DB_URL=jdbc:mysql://localhost:3306/bottradingdb?useSSL=false&allowPublicKeyRetri
 DB_USER=tu_usuario
 DB_PASSWORD=tu_password
 ```
+
+**El esquema lo crea y versiona Flyway**, no Hibernate: `ddl-auto` esta en `validate`, asi que
+basta con una base vacia. Las migraciones viven en
+`code/backendBotTrading/src/main/resources/db/migration/`. Al anadir o cambiar un campo de una
+entidad hay que crear una migracion `V<n>__descripcion.sql`; `SchemaMigrationValidationTest`
+falla si entidades y migraciones divergen.
 
 ### 5. Arrancar la aplicacion
 
@@ -197,26 +225,34 @@ trade -v -strategy StressTestStrategy -tf 1h -coins BTCUSDT
 
 ## Validacion Y Calidad
 
-### Tests Java
+Todo lo que sigue se ejecuta automaticamente en cada pull request y en cada push a `main`
+(`.github/workflows/ci.yml`), en tres jobs: Python, Java y validacion de esquema contra
+MySQL 8 real.
+
+| Comprobacion | Comando | Cobertura actual |
+| --- | --- | --- |
+| Backend Java | `cd code/backendBotTrading && mvn verify` | 347 tests + Checkstyle + PMD |
+| Engines Python | `pytest code/scripts/tests -q` | 184 tests |
+| Linting Python | `ruff check code/` | configurado en `ruff.toml` |
+| Tipos Python | `mypy code/scripts` | configurado en `mypy.ini` |
+
+Las versiones de las herramientas se fijan en `requirements.txt` y su configuracion vive en el
+repositorio: sin eso el conjunto de reglas dependeria de la version instalada en cada maquina y
+el CI juzgaria el codigo con un criterio distinto al local.
+
+### Esquema de base de datos
 
 ```bash
-cd code/backendBotTrading
-mvn test
+# Entidades JPA contra las migraciones Flyway (H2 en modo MySQL)
+mvn test -Dtest=SchemaMigrationValidationTest
+
+# Contra MySQL 8 real: cubre BIT(1), DATETIME(6), DECIMAL, AUTO_INCREMENT y claves foraneas,
+# que H2 en modo compatibilidad no reproduce. Requiere una base dedicada y vacia.
+mvn test -Dtest=SchemaMigrationMySqlIntegrationTest -Dintegration.db=true
 ```
 
-### Verificacion completa del backend
-
-```bash
-cd code/backendBotTrading
-mvn verify
-```
-
-### Tests Python
-
-```bash
-source .venv/bin/activate
-pytest code/scripts/tests -q
-```
+> Los tests con `@SpringBootTest` **se cuelgan**: `AppBot` implementa `CommandLineRunner` y
+> arranca la CLI interactiva. Para persistencia usa `@DataJpaTest`.
 
 ### E2E de entrenamiento
 
@@ -226,9 +262,14 @@ bash code/backendBotTrading/src/test/resources/e2e/train_neural_network_e2e.sh
 
 ## Referencias Del Proyecto
 
-- Esquema SQL base: `info/tablas.sql`
+- Esquema de base de datos: `code/backendBotTrading/src/main/resources/db/migration/`
+- Guia de trabajo y contratos internos (IPC, estrategias): `CLAUDE.md`
 - Configuracion Maven y calidad: `code/backendBotTrading/pom.xml`
 - Configuracion Sonar: `code/backendBotTrading/sonar-project.properties`
+
+> `info/tablas.sql` se conserva como **referencia historica y esta desactualizado** (le faltan
+> `instancia_estrategia.nombre_modelo` y `posicion.{precio_salida, pnl, fecha_cierre}`). La
+> fuente de verdad del esquema son las migraciones Flyway.
 
 > Nota: este snapshot del repositorio se centra en el codigo, los resultados y los artefactos de ejecucion. La memoria academica del TFG no forma parte de la raiz actual del proyecto.
 

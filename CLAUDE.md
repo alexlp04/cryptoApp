@@ -3,9 +3,11 @@
 Guía de trabajo para Claude Code en CryptoApp. Todo lo aquí descrito está verificado
 contra el código real de `main`.
 
-> **Aviso:** `.github/copilot-instructions.md` y `.github/agents/*.agent.md` describen una
-> arquitectura **obsoleta** (TSV, `pandas-ta`, PyTorch, `poblar_indicadores`, `engine_paper_trade.py`).
-> No los uses como fuente de verdad. Este archivo y el código mandan.
+> **Fuente de verdad:** este archivo y el código. `.github/copilot-instructions.md` se ha
+> reducido a un puntero a este documento precisamente para que no vuelvan a divergir; los
+> `.github/agents/*.agent.md` que describían la arquitectura antigua (TSV, `pandas-ta`, PyTorch,
+> `poblar_indicadores`, `engine_paper_trade.py`) se eliminaron y sus equivalentes correctos
+> viven en `.claude/agents/`.
 
 ## Qué es el proyecto
 
@@ -37,8 +39,12 @@ code/backendBotTrading/src/main/java/com/bottrading/
   │     └── {application,domain,infrastructure}/
   ├── interfaces/cli/commands/    # comandos de la CLI
   ├── config/  shared/
+  └── resources/db/migration/   # migraciones Flyway — fuente del esquema
 code/scripts/       # engines Python (entrypoints invocados por Java)
+code/scripts/tests/ # suite pytest de los engines
 code/strategies/    # BaseStrategy.py + estrategias concretas
+.github/workflows/  # CI
+ruff.toml mypy.ini  # configuración de calidad Python
 models/ results/ logs/   # artefactos generados — no versionar
 ```
 
@@ -49,14 +55,19 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2
+mvn test          # JUnit + H2 (347 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q
-ruff check code/
-mypy code/scripts
+pytest code/scripts/tests -q   # 184 tests
+ruff check code/               # config en ruff.toml
+mypy code/scripts              # config en mypy.ini
 ```
+
+Las cuatro comprobaciones corren solas en cada PR y en cada push a `main`
+(`.github/workflows/ci.yml`), más un job extra que valida las migraciones contra MySQL 8 real.
+`ruff` está **fijado a una versión concreta** en `requirements.txt`: su conjunto de reglas por
+defecto cambia entre versiones, y sin fijarlo el CI aplicaría un criterio distinto al local.
 
 El intérprete se resuelve según el SO (`AppConstants.resolveDefaultPythonExecutable`):
 `.venv/Scripts/python.exe` en Windows, `.venv/bin/python3` en POSIX. Override:
@@ -141,7 +152,10 @@ Puntos que suelen malinterpretarse:
 **Python** — `flush=True` siempre en stdout; logs a stderr; `.itertuples()` nunca
 `.iterrows()`; sin lookahead bias (para la señal en `t` solo datos hasta `t`); NaN en
 OHLCV es dato corrupto → error explícito, pero NaN inicial de un indicador con ventana
-es esperado; claves API solo por entorno.
+es esperado; claves API solo por entorno; `time.monotonic()` para medir duraciones
+(`datetime.now()` es sensible a ajustes de reloj) y `datetime.now(UTC)` cuando la marca
+temporal se guarda o se muestra; los campos obligatorios del payload IPC se validan en la
+frontera del engine, no se dejan caer como `None` hasta el fondo.
 
 **Java** — `BigDecimal` para todo lo financiero, nunca `double`; inyección por constructor
 con campos `final`, nunca `@Autowired` en campo; `Instant.ofEpochMilli()` para timestamps
