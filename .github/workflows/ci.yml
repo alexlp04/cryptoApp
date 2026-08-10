@@ -58,10 +58,23 @@ jobs:
           distribution: temurin
           cache: maven
 
-      # `verify` encadena Checkstyle, PMD y la suite JUnit sobre H2, incluida
-      # SchemaMigrationValidationTest (entidades JPA contra las migraciones Flyway).
+      # `verify` encadena Checkstyle, PMD, SpotBugs (effort Max) y la suite JUnit sobre H2,
+      # incluida SchemaMigrationValidationTest (entidades JPA contra las migraciones Flyway).
+      # OWASP dependency-check no entra aquí: sus executions estan comentadas en el pom por
+      # la intermitencia de la NVD, y corre aparte en security-audit.yml.
       - name: mvn verify
         run: mvn -B --no-transfer-progress verify
+
+      # JaCoCo ya genera el informe en la fase verify, pero hasta ahora se descartaba con
+      # el runner. Publicarlo permite mirar la cobertura de un PR sin reproducirlo en local.
+      - name: Publicar cobertura JaCoCo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: code/backendBotTrading/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 14
 
   java-mysql:
     name: Java — esquema contra MySQL 8 real

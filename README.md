@@ -240,6 +240,25 @@ Las versiones de las herramientas se fijan en `requirements.txt` y su configurac
 repositorio: sin eso el conjunto de reglas dependeria de la version instalada en cada maquina y
 el CI juzgaria el codigo con un criterio distinto al local.
 
+`mvn verify` incluye ademas **SpotBugs** (effort `Max`, umbral `High`) y genera el informe de
+cobertura de JaCoCo, que el CI publica como artefacto del run.
+
+### Auditoria de dependencias
+
+OWASP dependency-check esta **deliberadamente fuera** de `mvn verify` (sus `executions` estan
+comentadas en el `pom.xml`): la API del NVD es intermitente y no debe tumbar la validacion de un
+PR. Corre en su propio workflow, `.github/workflows/security-audit.yml`, cada lunes y bajo
+demanda, junto a `pip-audit` sobre `requirements.txt`. Ninguno bloquea; ambos dejan su informe
+como artefacto.
+
+```bash
+# Manualmente, tal y como documenta el pom
+cd code/backendBotTrading && mvn dependency-check:check -N
+```
+
+> Define el secreto `NVD_API_KEY` en el repositorio para que el analisis no quede limitado por
+> el rate limit del NVD. Sin el funciona, pero mucho mas lento.
+
 ### Esquema de base de datos
 
 ```bash

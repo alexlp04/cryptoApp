@@ -66,6 +66,9 @@ mypy code/scripts              # config en mypy.ini
 
 Las cuatro comprobaciones corren solas en cada PR y en cada push a `main`
 (`.github/workflows/ci.yml`), más un job extra que valida las migraciones contra MySQL 8 real.
+La auditoría de dependencias (OWASP + `pip-audit`) va aparte en `security-audit.yml`, semanal y
+bajo demanda: está fuera de `mvn verify` a propósito porque la API del NVD es intermitente y no
+debe tumbar un PR.
 `ruff` está **fijado a una versión concreta** en `requirements.txt`: su conjunto de reglas por
 defecto cambia entre versiones, y sin fijarlo el CI aplicaría un criterio distinto al local.
 
