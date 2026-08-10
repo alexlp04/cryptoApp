@@ -7,20 +7,20 @@ Cada motor implementa el protocolo IPC MessagePack con framing
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # Añadir el directorio al path para que ipc_protocol sea importable directamente
 _SCRIPTS_DIR = os.path.dirname(__file__)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from ipc_protocol import read_request_payload, write_response, write_error  # noqa: E402
+from ipc_protocol import read_request_payload, write_error, write_response
 
 __version__ = "1.0.0"
 
 __all__ = [
     "read_request_payload",
-    "write_response",
     "write_error",
+    "write_response",
 ]

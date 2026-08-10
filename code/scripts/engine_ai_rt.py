@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import types
-import logging
 import warnings
 from collections import deque
 from typing import Any
@@ -13,9 +13,14 @@ from typing import Any
 import joblib
 import pandas as pd
 import websockets
-
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, emit_heartbeats, CODE_DIR, PROJECT_ROOT
+from shared_utils import (
+    CODE_DIR,
+    PROJECT_ROOT,
+    emit_heartbeats,
+    load_strategy_by_path,
+    setup_engine_logging,
+)
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
 warnings.filterwarnings("ignore", category=UserWarning)

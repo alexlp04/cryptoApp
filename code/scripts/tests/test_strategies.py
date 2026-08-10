@@ -4,9 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from strategies.StressTestStrategy import StressTestStrategy
-
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -55,7 +53,6 @@ class TestBaseStrategyContract:
         assert strategy.get_name() == "StressTestStrategy"
 
     def test_should_calculate_position_size_correctly(self, strategy):
-        from decimal import Decimal
         # 10000 * 0.02 / 50000 = 0.004
         size = strategy.get_position_size(50_000.0)
         assert abs(float(size) - 0.004) < 1e-9

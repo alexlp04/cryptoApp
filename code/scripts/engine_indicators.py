@@ -10,11 +10,10 @@ import sys
 import warnings
 
 import pandas as pd
-from ta.trend import SMAIndicator, EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-
 from ipc_protocol import read_request_payload, write_response
 from shared_utils import setup_engine_logging
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, EMAIndicator, SMAIndicator
 
 warnings.filterwarnings("ignore", category=UserWarning)
 

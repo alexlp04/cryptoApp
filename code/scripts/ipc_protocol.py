@@ -1,9 +1,10 @@
 import json
-import msgpack
 import struct
 import sys
 import uuid
-from typing import Any, Dict
+from typing import Any
+
+import msgpack
 
 PROTOCOL_VERSION = "1.0"
 
@@ -24,7 +25,7 @@ def _to_text_keys(value: Any) -> Any:
     return value
 
 
-def read_request_payload() -> Dict[str, Any]:
+def read_request_payload() -> dict[str, Any]:
     raw = sys.stdin.buffer.read()
     if not raw:
         raise ValueError("No input data provided")

@@ -5,8 +5,6 @@ import os
 
 import numpy as np
 import pandas as pd
-import pytest
-
 from backtest_engine import (
     _calculate_backtest_stats,
     _close_long,
@@ -17,7 +15,6 @@ from backtest_engine import (
     run_backtest,
     run_backtest_with_predictions,
 )
-
 
 # ─── Stubs de estrategia ──────────────────────────────────────────────────────
 

@@ -6,9 +6,8 @@ import pandas as pd
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pandera.errors import SchemaError, SchemaErrors
-
 from ohlcv_schema import find_time_gaps, validate_ohlcv
+from pandera.errors import SchemaError, SchemaErrors
 
 HOUR_MS = 3_600_000
 

@@ -1,23 +1,21 @@
 import sys
-import pandas as pd
-import numpy as np
-import os
 import traceback
-import logging
-from ipc_protocol import read_request_payload, write_response, write_error
-from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
+
+import numpy as np
+import pandas as pd
+from ipc_protocol import read_request_payload, write_error, write_response
+from shared_utils import CODE_DIR, load_strategy_by_path, setup_engine_logging
 
 # --- IMPORTAR MOTOR COMPARTIDO ---
 if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
-from backtest_engine import (  # noqa: E402
+from backtest_engine import (
     crear_carpeta_estrategia,
-    guardar_trade_a_csv,
     run_backtest,
     run_backtest_with_predictions,
 )
-from engine_ai_rt import load_model  # noqa: E402
+from engine_ai_rt import load_model
 
 logger = setup_engine_logging("engine_backtest")
 
@@ -96,7 +94,7 @@ def main() -> None:
 
         logger.info("Loading strategy from: %s", strategy_path)
         strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
-        setattr(strategy, "timeframe", timeframe)
+        strategy.timeframe = timeframe
 
         # Cargar modelo si se especificó
         model = None

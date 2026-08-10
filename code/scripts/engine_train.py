@@ -14,14 +14,11 @@ import warnings
 from datetime import datetime
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.preprocessing import LabelEncoder
-
-from ipc_protocol import read_request_payload, write_error, write_response
 from backtest_engine import run_backtest_with_predictions
+from ipc_protocol import read_request_payload, write_error, write_response
 from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
@@ -30,6 +27,8 @@ from shared_utils import (
     load_strategy_by_name,
     setup_engine_logging,
 )
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -176,10 +175,10 @@ def main() -> None:
             )
             y_pred = model.predict(X_test)
 
-            setattr(model, "feature_cols", feature_cols)
-            setattr(model, "strategy_name", strategy_name)
-            setattr(model, "warmup_candles", warmup_candles)
-            setattr(model, "label_encoder", label_encoder)
+            model.feature_cols = feature_cols
+            model.strategy_name = strategy_name
+            model.warmup_candles = warmup_candles
+            model.label_encoder = label_encoder
 
             suffix = f"_{strategy_name}" if strategy_name else ""
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"

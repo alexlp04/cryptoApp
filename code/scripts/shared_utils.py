@@ -212,10 +212,10 @@ def _disable_gpu_backend_for_process(model_type: str, exc: Exception) -> None:
 def _describe_model_backend(model: Any) -> str:
     module_name = type(model).__module__
     if module_name.startswith("xgboost."):
-        device = getattr(model, "get_params", lambda: {})().get("device", "cpu")
+        device = getattr(model, "get_params", dict)().get("device", "cpu")
         return "GPU (XGBoost CUDA)" if str(device).lower() == "cuda" else "CPU (XGBoost)"
     if module_name.startswith("lightgbm."):
-        device_type = getattr(model, "get_params", lambda: {})().get("device_type", "cpu")
+        device_type = getattr(model, "get_params", dict)().get("device_type", "cpu")
         return "GPU (LightGBM)" if str(device_type).lower() == "gpu" else "CPU (LightGBM)"
     if module_name.startswith("sklearn."):
         return "CPU (sklearn)"
@@ -427,8 +427,8 @@ def build_sklearn_model(
     import joblib as _jl  # noqa: F401 — importado aquí para no añadir dep al nivel de módulo
 
     try:
-        import xgboost as xgb
         import lightgbm as lgb
+        import xgboost as xgb
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
         from sklearn.svm import SVC
@@ -526,13 +526,13 @@ def fit_sklearn_model(
 
 
 def build_and_train_neural_network(
-    X_train: "np.ndarray",
-    y_train: "np.ndarray",
-    X_test: "np.ndarray",
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
     hyperparams: dict[str, Any],
     n_classes: int = 2,
     class_weight: dict[int, float] | None = None,
-) -> "tuple[Any, np.ndarray]":
+) -> tuple[Any, np.ndarray]:
     """
     Construye, entrena y evalúa una Red Neuronal Feed-Forward.
 

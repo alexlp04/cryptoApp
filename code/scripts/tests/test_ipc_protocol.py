@@ -7,14 +7,12 @@ import sys
 
 import msgpack
 import pytest
-
 from ipc_protocol import (
     _to_text_keys,
     read_request_payload,
     write_error,
     write_response,
 )
-
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 

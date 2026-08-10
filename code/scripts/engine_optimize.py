@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import gc
 import json
-import logging
 import math
 import os
 import sys
@@ -55,23 +54,21 @@ import joblib
 import numpy as np
 import optuna
 import pandas as pd
+from backtest_engine import run_backtest_with_predictions
+from ipc_protocol import read_request_payload, write_error, write_response
 from optuna.pruners import MedianPruner
+from shared_utils import (
+    PROJECT_ROOT,
+    apply_strategy_features,
+    configure_tensorflow_runtime,
+    fit_sklearn_model,
+    load_strategy_by_name,
+    setup_engine_logging,
+)
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
-
-from ipc_protocol import read_request_payload, write_error, write_response
-from backtest_engine import run_backtest_with_predictions
-from shared_utils import (
-    load_strategy_by_name,
-    apply_strategy_features,
-    setup_engine_logging,
-    build_sklearn_model,
-    configure_tensorflow_runtime,
-    fit_sklearn_model,
-    PROJECT_ROOT,
-)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -793,12 +790,12 @@ def _train_sklearn_final(
     model = fit_sklearn_model(model_type, fit_params, X, y)
     y_pred = model.predict(X_test)
 
-    setattr(model, "feature_cols", feature_cols)
-    setattr(model, "strategy_name", strategy_name)
-    setattr(model, "warmup_candles", warmup_candles)
-    setattr(model, "best_params", best_params)
-    setattr(model, "fit_params", fit_params)
-    setattr(model, "label_encoder", label_encoder)
+    model.feature_cols = feature_cols
+    model.strategy_name = strategy_name
+    model.warmup_candles = warmup_candles
+    model.best_params = best_params
+    model.fit_params = fit_params
+    model.label_encoder = label_encoder
 
     suffix = f"_{strategy_name}" if strategy_name else ""
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"

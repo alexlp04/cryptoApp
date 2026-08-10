@@ -1,19 +1,18 @@
 import asyncio
 import json
 import sys
-import pandas as pd
-import websockets
-import os
 import types
-import logging
 from collections import deque
 from decimal import Decimal
+
+import pandas as pd
+import websockets
 from ipc_protocol import read_request_payload
 from shared_utils import (
+    CODE_DIR,
+    emit_heartbeats,
     load_strategy_by_path,
     setup_engine_logging,
-    emit_heartbeats,
-    CODE_DIR,
 )
 
 logger = setup_engine_logging("engine_rt")

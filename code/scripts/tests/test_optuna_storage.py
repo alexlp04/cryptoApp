@@ -6,7 +6,6 @@ from datetime import datetime
 
 import optuna
 import pytest
-
 from engine_optimize import (
     DEFAULT_OPTUNA_DB_RELPATH,
     OPTUNA_STORAGE_ENV_VAR,

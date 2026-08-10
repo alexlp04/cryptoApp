@@ -36,7 +36,6 @@ os.makedirs(results_root, exist_ok=True)
 if code_dir not in sys.path:
     sys.path.insert(0, code_dir)
 
-from strategies.BaseStrategy import BaseStrategy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +114,7 @@ def guardar_trade_a_csv(carpeta_estrategia: str, symbol: str, timeframe: str, tr
                 trade.get("pnl", ""),
                 trade.get("capital", ""),
             ])
-    except IOError as exc:
+    except OSError as exc:
         logger.error("Error escribiendo trade a CSV: %s", exc)
         raise
 
