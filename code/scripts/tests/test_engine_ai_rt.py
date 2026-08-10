@@ -1,9 +1,20 @@
 """Tests de la inferencia en tiempo real del engine de IA."""
 from __future__ import annotations
 
+import engine_ai_rt
 import numpy as np
 import pytest
 from engine_ai_rt import _predict_deep_learning
+
+
+def test_numpy_esta_importado_en_el_modulo():
+    """Regresión directa del bug #40: el módulo debe exponer `np`.
+
+    Redundante a propósito con los tests de comportamiento: si alguien vuelve a
+    mover el import a un scope local, este falla primero y señala la causa exacta
+    en lugar de un `NameError` a mitad de una predicción.
+    """
+    assert hasattr(engine_ai_rt, "np")
 
 
 class _FakeKerasModel:
