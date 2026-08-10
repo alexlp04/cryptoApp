@@ -109,8 +109,8 @@ async def run_symbol(
                         print("SIGNAL\t" + json.dumps(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
-        except Exception as e:
-            logger.error("Error en loop de %s: %s", symbol, str(e), exc_info=True)
+        except Exception:
+            logger.exception("Error en loop de %s", symbol)
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
 

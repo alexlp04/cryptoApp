@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import requests
@@ -293,7 +293,7 @@ def obtener_datos_binance(
     since_ms: int,
     workers: int = MAX_PARALLEL_WORKERS,
 ) -> int:
-    until_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    until_ms = int(datetime.now(UTC).timestamp() * 1000)
     interval_ms = INTERVAL_MS.get(timeframe)
 
     if interval_ms is None:
@@ -362,6 +362,6 @@ if __name__ == "__main__":
         logger.info(
             "=== Fetch completado. %s velas enviadas. ===", total_velas)
 
-    except Exception as exc:
-        logger.error("Error crítico: %s", str(exc), exc_info=True)
+    except Exception:
+        logger.exception("Error crítico")
         sys.exit(1)

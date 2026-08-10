@@ -109,6 +109,6 @@ if __name__ == "__main__":
         logger.info("=== Proceso finalizado correctamente ===")
 
     except Exception as exc:
-        logger.error("Fallo critico en el script: %s", str(exc), exc_info=True)
+        logger.exception("Fallo critico en el script")
         write_response("ERROR", {"status": "error", "message": str(exc), "indicadores": []})
         sys.exit(1)

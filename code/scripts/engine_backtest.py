@@ -159,8 +159,8 @@ def main() -> None:
             "mode": "ai_model" if model_name else "classic",
         })
 
-    except Exception as e:
-        error_msg = "Backtest engine error: %s\n%s" % (str(e), traceback.format_exc())
+    except Exception as e:  # noqa: BLE001 - frontera del engine: todo fallo se reporta por IPC
+        error_msg = f"Backtest engine error: {e}\n{traceback.format_exc()}"
         logger.error(error_msg)
         write_error("ERROR", error_msg)
         sys.exit(1)

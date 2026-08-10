@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from engine_ai_rt import _predict_deep_learning
 
 
@@ -13,7 +12,7 @@ class _FakeKerasModel:
     def __init__(self, raw: np.ndarray) -> None:
         self._raw = raw
 
-    def predict(self, x_pred, verbose=0):  # noqa: ARG002 - firma impuesta por Keras
+    def predict(self, x_pred, verbose=0):
         return self._raw
 
 

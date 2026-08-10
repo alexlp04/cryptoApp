@@ -368,8 +368,8 @@ async def run_symbol(
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
             await asyncio.sleep(2)
-        except Exception as e:
-            logger.error("Error en loop WS de %s: %s", symbol, str(e), exc_info=True)
+        except Exception:
+            logger.exception("Error en loop WS de %s", symbol)
             await asyncio.sleep(5)
 
 # =========================

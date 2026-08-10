@@ -261,7 +261,7 @@ def main() -> None:
         logger.info("=== engine_train.py finalizado con exito ===")
 
     except Exception as exc:
-        logger.error("Fallo durante el proceso: %s", str(exc), exc_info=True)
+        logger.exception("Fallo durante el proceso")
         write_error("ERROR", str(exc))
         sys.exit(1)
 

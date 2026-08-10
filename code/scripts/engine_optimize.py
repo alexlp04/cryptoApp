@@ -48,7 +48,7 @@ import os
 import sys
 import time
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import joblib
@@ -140,7 +140,7 @@ def build_study_name(model_type: str, symbol: str, timeframe: str,
     trials de datasets o rangos distintos en el mismo estudio, invalidando cualquier
     comparación posterior.
     """
-    stamp = (moment or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
+    stamp = (moment or datetime.now(UTC)).strftime("%Y%m%d-%H%M%S")
     return f"optimize_{model_type}_{symbol}_{timeframe}_{stamp}"
 
 
@@ -1306,7 +1306,7 @@ def main() -> None:
         logger.info("=== engine_optimize.py finalizado con éxito ===")
 
     except Exception as exc:
-        logger.error("Fallo durante la optimización: %s", str(exc), exc_info=True)
+        logger.exception("Fallo durante la optimización")
         write_error("ERROR", str(exc))
         sys.exit(1)
 

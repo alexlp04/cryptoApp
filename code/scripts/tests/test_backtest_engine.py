@@ -158,7 +158,7 @@ class TestCloseLong:
 
     def test_should_track_max_drawdown_on_loss(self):
         # Given: capital empieza en 10000, cae 1
-        *_, peak_capital, max_drawdown, pnl = self._call(100.0, 90.0)
+        *_, _peak_capital, max_drawdown, _pnl = self._call(100.0, 90.0)
         assert max_drawdown > 0.0
 
     def test_should_accumulate_pos_pnl_on_profit(self):
@@ -257,7 +257,7 @@ class TestRunBacktest:
         strategy = _NeverTradeStrategy()
         df = _df_mock(50)
         # When
-        trade_count, stats = run_backtest(strategy, df, "ETHUSDT")
+        trade_count, _stats = run_backtest(strategy, df, "ETHUSDT")
         # Then
         assert trade_count == 0
 

@@ -121,7 +121,7 @@ class TestReadRequestPayload:
         # When
         result = read_request_payload()
         # Then
-        assert all(isinstance(k, str) for k in result.keys())
+        assert all(isinstance(k, str) for k in result)
 
     def test_should_fallback_to_json_when_no_framing(self, monkeypatch):
         # Given

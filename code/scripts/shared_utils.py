@@ -17,9 +17,14 @@ import os
 import sys
 import time
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    # Solo para anotaciones: numpy se importa de forma diferida dentro de las
+    # funciones que lo necesitan para no encarecer el arranque de los engines.
+    import numpy as np
 
 # =============================================================================
 # RUTAS DEL PROYECTO
@@ -129,7 +134,7 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
             tf.config.experimental.set_memory_growth(gpu, True)
         except RuntimeError:
             break
-        except Exception as exc:  # pragma: no cover - depende del runtime CUDA real
+        except Exception as exc:  # noqa: BLE001 # pragma: no cover - runtime CUDA real
             logging.getLogger(__name__).debug(
                 "No se pudo activar memory growth para %s: %s",
                 gpu.name,
@@ -266,7 +271,7 @@ def load_strategy_by_name(
         try:
             module = importlib.import_module(module_name)
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - se prueban varias rutas antes de rendirse
             errors.append(f"{module_name}: {exc}")
 
     if module is None:
@@ -280,7 +285,9 @@ def load_strategy_by_name(
         raise ValueError(f"No existe la clase '{strategy_name}' en el módulo de estrategia.")
 
     if not isinstance(strategy_class, type) or not issubclass(strategy_class, BaseStrategy):
-        raise ValueError(f"La clase '{strategy_name}' no hereda de BaseStrategy.")
+        raise ValueError(  # noqa: TRY004 - coherente con las validaciones vecinas
+            f"La clase '{strategy_name}' no hereda de BaseStrategy."
+        )
 
     return strategy_class(capital=capital, risk_per_trade=risk_per_trade)
 

@@ -17,7 +17,7 @@ import csv
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -342,10 +342,10 @@ def _calculate_backtest_stats(
     fecha_fin = "N/A"
     if not df.empty and "timestamp" in df.columns:
         fecha_inicio = datetime.fromtimestamp(
-            df["timestamp"].iloc[0] / 1000, timezone.utc
+            df["timestamp"].iloc[0] / 1000, UTC
         ).isoformat()
         fecha_fin = datetime.fromtimestamp(
-            df["timestamp"].iloc[-1] / 1000, timezone.utc
+            df["timestamp"].iloc[-1] / 1000, UTC
         ).isoformat()
 
     resultado = "NEUTRO"
