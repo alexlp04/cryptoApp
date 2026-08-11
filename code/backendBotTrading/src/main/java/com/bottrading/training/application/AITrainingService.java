@@ -98,7 +98,8 @@ public class AITrainingService implements TrainModelUseCase {
                 hyperparams == null ? Map.of() : hyperparams,
                 strategyPath,
                 candlesBySymbol,
-                timeframe);
+                timeframe,
+                trainingWindow.warmupCandles());
 
         if (!result.success()) {
             loader.stop("El entrenamiento no pudo completarse.");
@@ -116,19 +117,20 @@ public class AITrainingService implements TrainModelUseCase {
 
     private TrainingWindow resolverVentanaEntrenamiento(String strategyName, String timeframe, int dias) {
         if (strategyName == null || strategyName.isBlank()) {
-            return new TrainingWindow(dias, null);
+            return new TrainingWindow(dias, null, 0);
         }
 
         try {
-            int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
+            int warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+            int totalCandles = StrategyInspector.getCandlesRequired(timeframe, dias, warmupCandles);
             int daysForPreparation = (int) Math.ceil(
                     (double) totalCandles / Timeframe.velasPorDiaOrDefault(timeframe));
             String strategyPath = PathConfig.getValidStrategyPath(strategyName);
 
-            log.info("Modo estrategia dinámica: strategy='{}', velas_requeridas={}, dias_efectivos={}",
-                    strategyName, totalCandles, daysForPreparation);
+            log.info("Modo estrategia dinámica: strategy='{}', warmup={}, velas_requeridas={}, dias_efectivos={}",
+                    strategyName, warmupCandles, totalCandles, daysForPreparation);
 
-            return new TrainingWindow(daysForPreparation, strategyPath);
+            return new TrainingWindow(daysForPreparation, strategyPath, warmupCandles);
         } catch (Exception e) {
             throw new StrategyExecutionException(
                     "Error al inspeccionar estrategia '" + strategyName + "': " + e.getMessage(),
@@ -152,6 +154,6 @@ public class AITrainingService implements TrainModelUseCase {
         return gson.toJson(output);
     }
 
-    private record TrainingWindow(int daysForPreparation, String strategyPath) {
+    private record TrainingWindow(int daysForPreparation, String strategyPath, int warmupCandles) {
     }
 }
