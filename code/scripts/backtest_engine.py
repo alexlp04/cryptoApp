@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CAPITAL: float = 10_000.0
 _DEFAULT_RISK: float = 0.02
 
+# Vocabulario del campo 'resultado' del CSV de stats. Este modulo es la fuente de
+# verdad: el paper trading en vivo (PaperTradingService) escribe en el mismo fichero
+# y replica estos valores en AppConstants.RESULTADO_*. Mantenerlos sincronizados.
+RESULTADO_GANANCIA: str = "GANANCIA"
+RESULTADO_PERDIDA: str = "PERDIDA"
+RESULTADO_NEUTRO: str = "NEUTRO"
+
 
 # =============================================================================
 # HELPERS PRIVADOS DE GESTIÓN DE POSICIÓN
@@ -348,11 +355,11 @@ def _calculate_backtest_stats(
             df["timestamp"].iloc[-1] / 1000, UTC
         ).isoformat()
 
-    resultado = "NEUTRO"
+    resultado = RESULTADO_NEUTRO
     if retorno_total > 0:
-        resultado = "GANANCIA"
+        resultado = RESULTADO_GANANCIA
     elif retorno_total < 0:
-        resultado = "PERDIDA"
+        resultado = RESULTADO_PERDIDA
 
     return {
         "symbol": symbol,
@@ -388,5 +395,5 @@ def _generate_empty_stats(symbol: str, strategy) -> dict[str, Any]:
         "profit_factor": 0.0,
         "fecha_inicio": "N/A",
         "fecha_fin": "N/A",
-        "resultado": "NEUTRO",
+        "resultado": RESULTADO_NEUTRO,
     }
