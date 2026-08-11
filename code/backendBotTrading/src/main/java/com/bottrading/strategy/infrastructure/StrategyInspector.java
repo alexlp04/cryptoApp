@@ -80,6 +80,23 @@ public final class StrategyInspector {
         throw new RuntimeException("No se pudo parsear warmup de stdout: '" + stdout + "'");
     }
 
+    /**
+     * Variante para llamantes que ya han resuelto el warmup y no quieren pagar
+     * un segundo arranque del interprete de Python.
+     */
+    public static int getCandlesRequired(String timeframe, int days, int warmup) {
+        int candlesPerDay = switch (timeframe == null ? "" : timeframe.toLowerCase()) {
+            case "1m" -> 1440;
+            case "5m" -> 288;
+            case "15m" -> 96;
+            case "1h" -> 24;
+            case "4h" -> 6;
+            case "1d" -> 1;
+            default -> 288;
+        };
+        return (candlesPerDay * days) + warmup;
+    }
+
     public static int getCandlesRequired(String strategyName, String timeframe, int days) throws Exception {
         int warmup = getWarmupPeriod(strategyName);
         int candlesPerDay = switch (timeframe == null ? "" : timeframe.toLowerCase()) {

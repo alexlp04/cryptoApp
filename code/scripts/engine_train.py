@@ -49,7 +49,14 @@ def main() -> None:
         timeframe: str = str(payload.get("timeframe", "UNKNOWN"))
         dataset: list = payload.get("dataset", [])
         strategy_name: str | None = payload.get("strategy_name") or None
-        warmup_candles: int = int(payload.get("warmup_candles") or 0)
+        # Clave obligatoria del contrato: sin ella se entrenaria sobre las velas de
+        # calentamiento, con los indicadores a medio formar y sin ningun error visible.
+        if payload.get("warmup_candles") is None:
+            raise ValueError(
+                "warmup_candles es obligatorio en el payload de entrenamiento: "
+                "sin el, el modelo se entrena sobre velas con indicadores incompletos."
+            )
+        warmup_candles: int = int(payload["warmup_candles"])
         hyperparams: dict = payload.get("hyperparameters", {})
 
         if not dataset:

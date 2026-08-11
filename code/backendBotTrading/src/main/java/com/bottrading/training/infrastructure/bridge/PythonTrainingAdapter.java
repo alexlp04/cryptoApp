@@ -42,10 +42,11 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
             Map<String, Object> hyperparameters,
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
-            String timeframe) {
+            String timeframe,
+            int warmupCandles) {
         try {
             Map<String, Object> payload = construirPayload(modelType, hyperparameters, strategyPath, symbolCandles,
-                    timeframe);
+                    timeframe, warmupCandles);
 
             PythonBridgeRequest<TrainingResult> request = PythonBridgeRequest
                     .<TrainingResult>builder(PathConfig.ENGINE_TRAIN_PATH)
@@ -72,7 +73,8 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
             Map<String, Object> hyperparameters,
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
-            String timeframe) {
+            String timeframe,
+            int warmupCandles) {
         Map<String, Object> payload = new LinkedHashMap<>();
         String primarySymbol = symbolCandles.keySet().stream().findFirst().orElse("UNKNOWN");
 
@@ -81,6 +83,9 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
         payload.put("timeframe", timeframe);
         payload.put("dataset", serializarVelas(symbolCandles));
         payload.put("hyperparameters", hyperparameters == null ? Map.of() : hyperparameters);
+        // Obligatorio: sin el, engine_train entrena sobre las velas de calentamiento,
+        // cuyos indicadores aun no estan formados (engine_optimize si lo enviaba).
+        payload.put("warmup_candles", warmupCandles);
 
         if (strategyPath != null && !strategyPath.isBlank()) {
             payload.put("strategy_path", strategyPath);

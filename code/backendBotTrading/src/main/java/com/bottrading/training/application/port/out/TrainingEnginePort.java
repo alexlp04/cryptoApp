@@ -21,12 +21,19 @@ public interface TrainingEnginePort {
     default TrainingResult ejecutarEntrenamiento(String strategyPath,
             Map<String, List<Vela>> symbolCandles,
             String timeframe) {
-        return ejecutarEntrenamiento("random_forest", Map.of(), strategyPath, symbolCandles, timeframe);
+        return ejecutarEntrenamiento("random_forest", Map.of(), strategyPath, symbolCandles, timeframe, 0);
     }
 
+    /**
+     * @param warmupCandles velas iniciales que la estrategia necesita para que sus
+     *                      indicadores esten formados. El engine las descarta del dataset
+     *                      de entrenamiento. Debe enviarse siempre: si no llega, el modelo
+     *                      se entrena sobre velas con indicadores a medio formar.
+     */
     TrainingResult ejecutarEntrenamiento(String modelType,
             Map<String, Object> hyperparameters,
             String strategyPath,
             Map<String, List<Vela>> symbolCandles,
-            String timeframe);
+            String timeframe,
+            int warmupCandles);
 }
