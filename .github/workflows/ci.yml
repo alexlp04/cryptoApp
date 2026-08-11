@@ -33,7 +33,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip==26.2.1
           # ta no publica wheel en PyPI, solo sdist: se exceptúa del --only-binary.
-          pip install --only-binary :all: --no-binary ta -r requirements.txt
+          # Sintaxis "=" (no espacio) por el parser bug de SonarCloud S8544, que
+          # confunde ":all:" con un nombre de paquete sin versión si va separado.
+          pip install --only-binary=:all: --no-binary=ta -r requirements.txt
 
       - name: ruff
         run: ruff check code/

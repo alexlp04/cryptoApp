@@ -74,7 +74,7 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar pip-audit
-        run: pip install --only-binary :all: pip-audit==2.10.1
+        run: pip install --only-binary=:all: pip-audit==2.10.1
 
       # Se audita requirements.txt directamente en lugar del entorno instalado: es la
       # lista que declara el proyecto y evita instalar TensorFlow solo para escanear.
