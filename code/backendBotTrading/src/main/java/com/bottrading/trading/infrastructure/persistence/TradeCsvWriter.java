@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import com.bottrading.shared.exceptions.FileOperationException;
 import com.bottrading.shared.utils.AppConstants;
+import com.bottrading.shared.utils.PathConfig;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -25,12 +26,6 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class TradeCsvWriter {
-
-    private final TradingCsvUtilities csvUtils;
-
-    public TradeCsvWriter(TradingCsvUtilities csvUtils) {
-        this.csvUtils = csvUtils;
-    }
 
     /**
      * Guarda un trade individual en su archivo CSV correspondiente.
@@ -47,7 +42,7 @@ public class TradeCsvWriter {
         try {
             String suffix = isBacktest ? "_backtest.csv" : ".csv";
             String fileName = String.format("%s-%s-trades%s", symbol, timeframe, suffix);
-            Path filePath = csvUtils.getCarpetaEstrategia(nombreEstrategia).resolve(fileName);
+            Path filePath = PathConfig.getCarpetaEstrategia(nombreEstrategia).resolve(fileName);
 
             boolean isNew = !Files.exists(filePath);
 

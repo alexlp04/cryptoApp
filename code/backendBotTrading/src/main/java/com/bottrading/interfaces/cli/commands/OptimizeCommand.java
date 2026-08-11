@@ -46,7 +46,8 @@ public final class OptimizeCommand implements CliCommand {
         int cvFolds = args.getCvFolds() != null ? args.getCvFolds() : DEFAULT_CV_FOLDS;
 
         String coin = args.getCoins().get(0);
-        int diasEntrenamiento = validarYCalcularDias(args.getTimeframe(), args.getDays(), context);
+        int diasEntrenamiento = CliInputValidator.resolveTrainingDays(
+                args.getTimeframe(), args.getDays(), context);
         if (diasEntrenamiento == -1) {
             context.println().accept("Operacion cancelada.");
             return;
@@ -85,57 +86,4 @@ public final class OptimizeCommand implements CliCommand {
         return val;
     }
 
-    private int validarYCalcularDias(String timeframe, Integer requestedDays, CliCommandContext context) {
-        int maxDays;
-        int defaultDays;
-
-        switch (timeframe.toLowerCase()) {
-            case "1m" -> {
-                maxDays = 180;
-                defaultDays = 30;
-            }
-            case "5m" -> {
-                maxDays = 365;
-                defaultDays = 90;
-            }
-            case "15m" -> {
-                maxDays = 730;
-                defaultDays = 180;
-            }
-            case "1h" -> {
-            maxDays = 1095;
-                defaultDays = 365;
-            }
-            case "4h" -> {
-                maxDays = 1825;
-                defaultDays = 730;
-            }
-            case "1d" -> {
-                maxDays = 3650;
-                defaultDays = 1095;
-            }
-            default -> {
-                maxDays = 365;
-                defaultDays = 90;
-            }
-        }
-
-        if (requestedDays == null) {
-            context.println().accept("No se especificaron dias (-d). Usando valor recomendado para "
-                    + timeframe + ": " + defaultDays + " dias.");
-            return defaultDays;
-        }
-
-        if (requestedDays > maxDays) {
-            context.println().accept("ADVERTENCIA: Para el timeframe " + timeframe
-                    + ", el maximo recomendado es " + maxDays + " dias.");
-            context.println().accept("Usar " + requestedDays
-                    + " dias podria provocar un error de Memoria (Out Of Memory) y confundir a la IA.");
-            if (!CliInputValidator.readYesNo(context, "Estas seguro de que quieres intentar continuar? (s/n): ")) {
-                return -1;
-            }
-        }
-
-        return requestedDays;
-    }
 }

@@ -14,14 +14,34 @@ import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_TRAIN;
 import static com.bottrading.shared.utils.AppConstants.FILE_FETCHER;
 import static com.bottrading.shared.utils.AppConstants.FILE_INDICATORS;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Optional;
+
+import com.bottrading.shared.exceptions.FileOperationException;
 
 public final class PathConfig {
 
     private PathConfig() {
         throw new UnsupportedOperationException("Clase de utilidad, no instanciar.");
+    }
+
+    /** Extensiones reconocidas para un modelo entrenado, en orden de preferencia. */
+    private static final String[] MODEL_EXTENSIONS = {".pkl", ".keras", ".h5"};
+
+    /**
+     * Rechaza cualquier componente de ruta que permita escapar del directorio previsto.
+     * Criterio único para estrategias y modelos.
+     */
+    private static boolean contieneTraversal(String... partes) {
+        for (String parte : partes) {
+            if (parte == null || parte.contains("..") || parte.contains("/") || parte.contains("\\")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Detectamos dinámicamente la raíz real del proyecto (carpeta cryptoapp/)
@@ -68,14 +88,17 @@ public final class PathConfig {
         return Paths.get(PROJECT_ROOT, parts).toString();
     }
 
+    /** Añade la extensión .py si no la trae ya. */
+    private static String conExtensionPython(String nombre) {
+        return nombre.endsWith(EXTENSION_PYTHON) ? nombre : nombre + EXTENSION_PYTHON;
+    }
+
     public static String getValidStrategyPath(String nombreEntrada) {
-        if (nombreEntrada.contains("..") || nombreEntrada.contains("/") || nombreEntrada.contains("\\")) {
+        if (contieneTraversal(nombreEntrada)) {
             throw new IllegalArgumentException("Nombre de archivo inválido por seguridad.");
         }
 
-        String nombreLimpio = nombreEntrada.endsWith(EXTENSION_PYTHON)
-                ? nombreEntrada
-                : nombreEntrada + EXTENSION_PYTHON;
+        String nombreLimpio = conExtensionPython(nombreEntrada);
 
         Path rutaFinal = Paths.get(STRATEGIES_DIR, nombreLimpio);
 
@@ -85,103 +108,96 @@ public final class PathConfig {
         return rutaFinal.toAbsolutePath().toString();
     }
 
+    /**
+     * Localiza el fichero de un modelo entrenado siguiendo el mismo orden de precedencia
+     * que usa {@code engine_ai_rt.load_model} en Python:
+     * 1) nombre libre, 2) formato estándar {modelo}_{timeframe}_{symbol},
+     * 3) variante con sufijo de estrategia.
+     */
+    private static Optional<String> findModelPath(String nombreModelo, String timeframe, String symbol) {
+        Path modelDir = Paths.get(MODELS_DIR);
+
+        // 1. Buscar por nombre libre (usuario ha renombrado el archivo)
+        // 2. Buscar con formato estándar {modelo}_{timeframe}_{symbol}
+        String baseName = String.format("%s_%s_%s", nombreModelo, timeframe, symbol);
+        for (String name : new String[]{nombreModelo, baseName}) {
+            for (String ext : MODEL_EXTENSIONS) {
+                Path candidate = modelDir.resolve(name + ext);
+                if (Files.exists(candidate)) {
+                    return Optional.of(candidate.toAbsolutePath().toString());
+                }
+            }
+        }
+
+        // 3. Buscar variantes con sufijo de estrategia: {baseName}_{strategy}.ext
+        try (var stream = Files.list(modelDir)) {
+            return stream
+                .filter(p -> esVarianteDeEstrategia(p, baseName))
+                .findFirst()
+                .map(p -> p.toAbsolutePath().toString());
+        } catch (IOException e) {
+            // Carpeta de modelos ilegible o inexistente: se trata como "no encontrado"
+            return Optional.empty();
+        }
+    }
+
+    private static boolean esVarianteDeEstrategia(Path candidate, String baseName) {
+        String name = candidate.getFileName().toString();
+        if (!name.startsWith(baseName + "_")) {
+            return false;
+        }
+        for (String ext : MODEL_EXTENSIONS) {
+            if (name.endsWith(ext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static String getValidModelPath(String nombreModelo, String timeframe, String symbol) {
-        // Validación de seguridad
-        if (nombreModelo.contains("..") || nombreModelo.contains("/") || nombreModelo.contains("\\") ||
-            timeframe.contains("..") || timeframe.contains("/") || timeframe.contains("\\") ||
-            symbol.contains("..") || symbol.contains("/") || symbol.contains("\\")) {
+        if (contieneTraversal(nombreModelo, timeframe, symbol)) {
             throw new IllegalArgumentException("Nombre de modelo inválido por seguridad.");
         }
 
-        Path modelDir = Paths.get(MODELS_DIR);
-        
-        // 1. Buscar por nombre libre (usuario ha renombrado el archivo)
-        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
-            Path candidate = modelDir.resolve(nombreModelo + ext);
-            if (Files.exists(candidate)) {
-                return candidate.toAbsolutePath().toString();
-            }
-        }
-        
-        // 2. Buscar con formato estándar {modelo}_{timeframe}_{symbol}
-        String baseName = String.format("%s_%s_%s", nombreModelo, timeframe, symbol);
-        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
-            Path candidate = modelDir.resolve(baseName + ext);
-            if (Files.exists(candidate)) {
-                return candidate.toAbsolutePath().toString();
-            }
-        }
-        
-        // 3. Buscar variantes con sufijo de estrategia: {baseName}_{strategy}.ext
-        try (var stream = Files.list(modelDir)) {
-            var optionalPath = stream
-                .filter(p -> {
-                    String name = p.getFileName().toString();
-                    return name.startsWith(baseName + "_") &&
-                           (name.endsWith(".pkl") || name.endsWith(".keras") || name.endsWith(".h5"));
-                })
-                .findFirst();
-            
-            if (optionalPath.isPresent()) {
-                return optionalPath.get().toAbsolutePath().toString();
-            }
-        } catch (Exception e) {
-            // Ignorar error de listado, continuar con mensaje de no encontrado
-        }
-        
-        throw new IllegalArgumentException(
-            "No existe el modelo '" + nombreModelo + "' para " + timeframe + ":" + symbol + 
+        return findModelPath(nombreModelo, timeframe, symbol).orElseThrow(() -> new IllegalArgumentException(
+            "No existe el modelo '" + nombreModelo + "' para " + timeframe + ":" + symbol +
             " en la carpeta: " + MODELS_DIR + "\n" +
             "Buscado como: 1) nombre libre (.pkl/.keras/.h5), " +
             "2) formato estándar ({modelo}_{timeframe}_{symbol}), " +
             "3) variantes con sufijo de estrategia. " +
             "¿Has ejecutado el comando 'train'?"
-        );
+        ));
     }
 
     /**
      * Comprueba si el script de Python de la estrategia existe.
      */
     public static boolean existeEstrategia(String nombreAlgoritmo) {
-        if (nombreAlgoritmo.contains("..") || nombreAlgoritmo.contains("/") || nombreAlgoritmo.contains("\\")) {
-            return false;
-        }
-        String nombreLimpio = nombreAlgoritmo.endsWith(EXTENSION_PYTHON)
-                ? nombreAlgoritmo
-                : nombreAlgoritmo + EXTENSION_PYTHON;
-
-        return Files.exists(Paths.get(STRATEGIES_DIR, nombreLimpio));
+        return !contieneTraversal(nombreAlgoritmo)
+                && Files.exists(Paths.get(STRATEGIES_DIR, conExtensionPython(nombreAlgoritmo)));
     }
 
     /**
      * Comprueba si el archivo del modelo entrenado existe para ese algoritmo, timeframe y símbolo.
-     * Busca los formatos .pkl, .keras y .h5, incluyendo modelos con sufijo de estrategia.
+     * Aplica exactamente los mismos criterios de búsqueda que {@link #getValidModelPath}.
      */
     public static boolean existeModelo(String modelo, String timeframe, String symbol) {
-        if (modelo.contains("..") || modelo.contains("/") || modelo.contains("\\") ||
-            timeframe.contains("..") || symbol.contains("..")) {
-            return false;
-        }
-        // 0. Aceptar nombre libre: el usuario ha renombrado el fichero directamente
-        Path dir = Paths.get(MODELS_DIR);
-        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
-            if (Files.exists(dir.resolve(modelo + ext))) return true;
-        }
-        // 1+2. Construcción estándar {modelo}_{timeframe}_{symbol} + variante con sufijo de estrategia
-        String baseName = String.format("%s_%s_%s", modelo, timeframe, symbol);
-        // Verificar nombre exacto con las extensiones conocidas
-        for (String ext : new String[]{".pkl", ".keras", ".h5"}) {
-            if (Files.exists(dir.resolve(baseName + ext))) return true;
-        }
-        // También aceptar variantes con sufijo de estrategia: baseName_{strategy}.{ext}
-        try (var stream = Files.list(dir)) {
-            return stream.anyMatch(p -> {
-                String name = p.getFileName().toString();
-                return name.startsWith(baseName + "_") &&
-                       (name.endsWith(".pkl") || name.endsWith(".keras") || name.endsWith(".h5"));
-            });
-        } catch (Exception e) {
-            return false;
+        return !contieneTraversal(modelo, timeframe, symbol)
+                && findModelPath(modelo, timeframe, symbol).isPresent();
+    }
+
+    /**
+     * Obtiene (creándola si hace falta) la carpeta de resultados de una estrategia.
+     */
+    public static Path getCarpetaEstrategia(String nombreEstrategia) {
+        try {
+            Path path = Paths.get(RESULTS_DIR, nombreEstrategia);
+            if (!Files.exists(path)) {
+                Files.createDirectories(path);
+            }
+            return path;
+        } catch (IOException e) {
+            throw new FileOperationException("Error al crear carpeta de estrategia: " + e.getMessage(), e);
         }
     }
 }

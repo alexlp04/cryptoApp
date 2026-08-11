@@ -19,11 +19,8 @@ import com.bottrading.interfaces.cli.commands.CreatePaperWalletCommand;
 import com.bottrading.interfaces.cli.commands.FetchCommand;
 import com.bottrading.interfaces.cli.commands.FetchGapDetector;
 import com.bottrading.interfaces.cli.commands.HelpCommand;
-import com.bottrading.interfaces.cli.commands.ListActiveStrategiesCommand;
-import com.bottrading.interfaces.cli.commands.ListStoppedStrategiesCommand;
-import com.bottrading.interfaces.cli.commands.ListStrategiesCommand;
+import com.bottrading.interfaces.cli.commands.ListStrategiesByStateCommand;
 import com.bottrading.interfaces.cli.commands.ListStrategyFilesCommand;
-import com.bottrading.interfaces.cli.commands.ListTerminatedStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListWalletsCommand;
 import com.bottrading.interfaces.cli.commands.LoginCommand;
 import com.bottrading.interfaces.cli.commands.LogoutCommand;
@@ -122,10 +119,10 @@ public class AppBot implements CommandLineRunner {
         registerCommand(new CreatePaperWalletCommand());
         registerCommand(new ListWalletsCommand());
         registerCommand(new ListStrategyFilesCommand());
-        registerCommand(new ListStrategiesCommand());
-        registerCommand(new ListActiveStrategiesCommand());
-        registerCommand(new ListStoppedStrategiesCommand());
-        registerCommand(new ListTerminatedStrategiesCommand());
+        registerCommand(ListStrategiesByStateCommand.todas());
+        registerCommand(ListStrategiesByStateCommand.activas());
+        registerCommand(ListStrategiesByStateCommand.detenidas());
+        registerCommand(ListStrategiesByStateCommand.terminadas());
         registerCommand(new ModelsCommand());
         registerCommand(new CbiCommand());
     }
