@@ -7,6 +7,7 @@ import java.util.Map;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
@@ -120,8 +121,8 @@ public class AITrainingService implements TrainModelUseCase {
 
         try {
             int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
-            int candlesPerDay = resolveCandlesPerDay(timeframe);
-            int daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
+            int daysForPreparation = (int) Math.ceil(
+                    (double) totalCandles / Timeframe.velasPorDiaOrDefault(timeframe));
             String strategyPath = PathConfig.getValidStrategyPath(strategyName);
 
             log.info("Modo estrategia dinámica: strategy='{}', velas_requeridas={}, dias_efectivos={}",
@@ -149,18 +150,6 @@ public class AITrainingService implements TrainModelUseCase {
             output.put("trading_simulation_test", result.tradingSimulation());
         }
         return gson.toJson(output);
-    }
-
-    private int resolveCandlesPerDay(String timeframe) {
-        return switch (timeframe == null ? "" : timeframe.toLowerCase()) {
-            case "1m" -> 1440;
-            case "5m" -> 288;
-            case "15m" -> 96;
-            case "1h" -> 24;
-            case "4h" -> 6;
-            case "1d" -> 1;
-            default -> 288;
-        };
     }
 
     private record TrainingWindow(int daysForPreparation, String strategyPath) {

@@ -185,8 +185,13 @@ def _build_sample_weight(
     except ImportError:
         return None
 
+    # Se recorre el diccionario de clases (unas pocas) en vez de las muestras (muchas):
+    # esto se ejecuta en cada fit, es decir por fold y por trial de Optuna.
     y_np = np.asarray(y_train)
-    return np.array([float(class_weight.get(int(label), 1.0)) for label in y_np], dtype=float)
+    pesos = np.ones(len(y_np), dtype=float)
+    for clase, peso in class_weight.items():
+        pesos[y_np == clase] = float(peso)
+    return pesos
 
 
 def _fit_supports_sample_weight(model: Any) -> bool:

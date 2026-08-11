@@ -5,10 +5,7 @@ import com.bottrading.shared.utils.PathConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,17 +23,7 @@ public class CsvUtilities {
      * Obtiene o crea la carpeta de una estrategia.
      */
     public Path getCarpetaEstrategia(String nombreEstrategia) throws FileOperationException {
-        try {
-            Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
-            if (!Files.exists(path)) {
-                Files.createDirectories(path);
-                log.debug("Carpeta creada: {}", path);
-            }
-            return path;
-        } catch (IOException e) {
-            throw new FileOperationException(
-                "Error al crear carpeta de estrategia: " + e.getMessage(), e);
-        }
+        return PathConfig.getCarpetaEstrategia(nombreEstrategia);
     }
 
     /**
