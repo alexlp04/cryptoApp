@@ -1,5 +1,6 @@
 package com.bottrading.interfaces.cli;
 
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.shared.utils.CommandParser;
 import java.math.BigDecimal;
 
@@ -83,5 +84,36 @@ public final class CliInputValidator {
     public static boolean readYesNo(CliCommandContext context, String prompt) {
         context.print().accept(prompt);
         return context.scanner().nextLine().trim().toLowerCase().startsWith("s");
+    }
+
+    /**
+     * Resuelve cuantos dias de historico usar para entrenar u optimizar.
+     * Si no se pidieron dias, aplica el recomendado del timeframe; si se piden mas
+     * del maximo, avisa y pide confirmacion.
+     *
+     * @return los dias a usar, o -1 si el usuario cancela.
+     */
+    public static int resolveTrainingDays(String timeframe, Integer requestedDays, CliCommandContext context) {
+        Timeframe politica = Timeframe.politicaEntrenamiento(timeframe);
+
+        if (requestedDays == null) {
+            int recomendado = politica.diasEntrenamientoPorDefecto();
+            context.println().accept("No se especificaron dias (-d). Usando valor recomendado para "
+                    + timeframe + ": " + recomendado + " dias.");
+            return recomendado;
+        }
+
+        int maxDias = politica.maxDiasEntrenamiento();
+        if (requestedDays > maxDias) {
+            context.println().accept("ADVERTENCIA: Para el timeframe " + timeframe
+                    + ", el maximo recomendado es " + maxDias + " dias.");
+            context.println().accept("Usar " + requestedDays
+                    + " dias podria provocar un error de Memoria (Out Of Memory) y confundir a la IA.");
+            if (!readYesNo(context, "Estas seguro de que quieres intentar continuar? (s/n): ")) {
+                return -1;
+            }
+        }
+
+        return requestedDays;
     }
 }

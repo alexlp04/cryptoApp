@@ -257,8 +257,7 @@ def run_backtest_with_predictions(
     pos_pnl = neg_pnl = 0.0
 
     for i, row in enumerate(df.itertuples(index=False)):
-        row_data = row._asdict()
-        price = float(row_data["close"])
+        price = float(row.close)
         pred = int(predictions[i])
 
         if not in_position and pred == 1:
@@ -267,7 +266,9 @@ def run_backtest_with_predictions(
             current_position_size = _open_long(capital, risk_per_trade, price)
             trade_count += 1
 
-        elif in_position and (pred != 1 or strategy.should_close(row_data, entry_price)):
+        # row._asdict() solo se materializa si de verdad hay que consultar la estrategia:
+        # esta funcion es el bucle caliente de Optuna (una pasada por trial).
+        elif in_position and (pred != 1 or strategy.should_close(row._asdict(), entry_price)):
             in_position = False
             (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
              peak_capital, max_drawdown, _) = _close_long(

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import com.bottrading.config.ProcessExecutorConfig;
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.shared.utils.AppConstants;
 import com.bottrading.shared.utils.PathConfig;
 import com.bottrading.trading.infrastructure.bridge.PythonProcessSupport;
@@ -81,17 +82,15 @@ public final class StrategyInspector {
     }
 
     public static int getCandlesRequired(String strategyName, String timeframe, int days) throws Exception {
-        int warmup = getWarmupPeriod(strategyName);
-        int candlesPerDay = switch (timeframe == null ? "" : timeframe.toLowerCase()) {
-            case "1m" -> 1440;
-            case "5m" -> 288;
-            case "15m" -> 96;
-            case "1h" -> 24;
-            case "4h" -> 6;
-            case "1d" -> 1;
-            default -> 288;
-        };
-        return (candlesPerDay * days) + warmup;
+        return getCandlesRequired(timeframe, days, getWarmupPeriod(strategyName));
+    }
+
+    /**
+     * Variante para llamantes que ya han resuelto el warmup y no quieren pagar
+     * un segundo arranque del interprete de Python.
+     */
+    public static int getCandlesRequired(String timeframe, int days, int warmup) {
+        return (Timeframe.velasPorDiaOrDefault(timeframe) * days) + warmup;
     }
 
     private static String readStream(InputStream inputStream) throws IOException {

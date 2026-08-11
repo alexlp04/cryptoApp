@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
 import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.VelaDTO;
 import com.bottrading.shared.exceptions.DataFetchException;
 import com.bottrading.shared.utils.ConsoleLoader;
@@ -67,10 +68,10 @@ public class FetchService implements FetchMarketDataUseCase {
         private static final int BINANCE_PAGE_LIMIT = 1000;
         private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/uiKlines";
         private static final Duration BINANCE_HTTP_TIMEOUT = Duration.ofSeconds(30);
-        private static final String SQL_INSERT_VELA_PLAIN =
-            "INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, "
-                + "taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                + " ON DUPLICATE KEY UPDATE close = VALUES(close), volume = VALUES(volume)";
+        private static final String SQL_INSERT_VELA_PLAIN = """
+            INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, \
+            taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) \
+            ON DUPLICATE KEY UPDATE close = VALUES(close), volume = VALUES(volume)""";
 
             private record PageProcessResult(long lastOpenTime, int inserted) {
             }
@@ -484,21 +485,9 @@ public class FetchService implements FetchMarketDataUseCase {
         if (batch.isEmpty()) {
             return 0;
         }
-        
-        String sql = "INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, taker_base_volume, taker_quote_volume, symbol, time_interval) " +
-                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-                     "ON DUPLICATE KEY UPDATE " +
-                     "  close = VALUES(close), volume = VALUES(volume)";
-
-        try {
-            int[] resultados = jdbcTemplate.batchUpdate(sql, batch);
-            int insertadas = (int) Arrays.stream(resultados).filter(r -> r > 0).count();
-            log.debug("Batch inserted: {} records", batch.size());
-            return insertadas;
-        } catch (Exception e) {
-            log.error("Error inserting batch of {} records: {}", batch.size(), e.getMessage());
-            throw new DataFetchException("Batch insert failed", e);
-        }
+        int insertadas = executePlainInsertBatch(batch);
+        log.debug("Batch inserted: {} records", batch.size());
+        return insertadas;
     }
 
     private int executePlainInsertBatch(@org.springframework.lang.NonNull List<Object[]> batch) {
@@ -506,7 +495,8 @@ public class FetchService implements FetchMarketDataUseCase {
             int[] results = jdbcTemplate.batchUpdate(SQL_INSERT_VELA_PLAIN, batch);
             return (int) Arrays.stream(results).filter(r -> r > 0).count();
         } catch (Exception e) {
-            throw new DataFetchException("Plain batch insert failed", e);
+            log.error("Error inserting batch of {} records: {}", batch.size(), e.getMessage());
+            throw new DataFetchException("Batch insert failed", e);
         }
     }
 
@@ -562,27 +552,14 @@ public class FetchService implements FetchMarketDataUseCase {
     }
 
     private long resolveIntervalMillisStrict(String interval) {
-        return switch (interval) {
-            case "1m" -> 60_000L;
-            case "5m" -> 300_000L;
-            case "15m" -> 900_000L;
-            case "1h" -> 3_600_000L;
-            case "4h" -> 14_400_000L;
-            case "1d" -> 86_400_000L;
-            default -> throw new IllegalArgumentException("Timeframe no soportado para fetchRange: " + interval);
-        };
+        return Timeframe.buscar(interval)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Timeframe no soportado para fetchRange: " + interval))
+                .millis();
     }
 
     public static long getIntervalMillis(String interval) {
-        return switch (interval) {
-            case "1m" -> 60_000L;
-            case "5m" -> 300_000L;
-            case "15m" -> 900_000L;
-            case "1h" -> 3_600_000L;
-            case "4h" -> 14_400_000L;
-            case "1d" -> 86_400_000L;
-            default -> 60_000L;
-        };
+        return Timeframe.millisOrDefault(interval, Timeframe.M1.millis());
     }
 
     @PreDestroy

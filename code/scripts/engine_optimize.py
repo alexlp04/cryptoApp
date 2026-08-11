@@ -92,7 +92,6 @@ DEFAULT_MIN_COMPOSITE: float = 0.55
 # con optuna-dashboard. Sobrescribible por entorno para apuntar a otro backend.
 OPTUNA_STORAGE_ENV_VAR: str = "CRYPTOAPP_OPTUNA_STORAGE"
 DEFAULT_OPTUNA_DB_RELPATH: str = os.path.join("results", "optuna", "studies.db")
-MIN_SAMPLES_REQUIRED: int = 50
 RESULTS_SUBDIR: str = "optimize"
 # Máximo de filas usadas durante la búsqueda con Optuna para modelos NN.
 # El entrenamiento final siempre usa el dataset completo.
@@ -526,6 +525,22 @@ def _make_objective(
     # TimeSeriesSplit garantiza que la validación siempre es posterior al entrenamiento
     tss = TimeSeriesSplit(n_splits=cv_folds)
 
+    # Invariantes de todo el estudio: no dependen del trial ni del fold, así que se
+    # calculan una sola vez en lugar de una por fold y por trial.
+    clases_search = np.unique(search_y)
+    avg_mode_search = "binary" if len(clases_search) <= 2 else "weighted"
+    cw_search_dict = dict(zip(
+        clases_search.tolist(),
+        compute_class_weight("balanced", classes=clases_search, y=search_y).tolist(),
+    ))
+
+    # tss.split() es determinista y search_x no cambia entre trials: el conjunto de
+    # validación del último fold (y por tanto su df_val) es siempre el mismo.
+    ultimo_val_idx = list(tss.split(search_x))[-1][1]
+    df_val_ultimo_fold = df_enriched[
+        df_enriched["timestamp"].isin(set(search_timestamps[ultimo_val_idx].tolist()))
+    ].sort_values("timestamp").reset_index(drop=True)
+
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
         trial_params = _prepare_optuna_sklearn_params(model_type, params)
@@ -567,22 +582,16 @@ def _make_objective(
                     y_tr, y_val = search_y[train_idx], search_y[val_idx]
 
                     # class_weight para compensar desbalanceo (problema 1)
-                    cw_fold = compute_class_weight(
-                        "balanced", classes=np.unique(search_y), y=search_y
-                    )
-                    cw_fold_dict = dict(zip(np.unique(search_y).tolist(), cw_fold.tolist()))
                     model_fold = fit_sklearn_model(
                         model_type,
                         trial_params,
                         x_tr,
                         y_tr,
-                        class_weight=cw_fold_dict,
+                        class_weight=cw_search_dict,
                     )
                     y_pred_val = model_fold.predict(x_val)
 
-                    n_classes_cur = len(np.unique(search_y))
-                    avg_mode = "binary" if n_classes_cur <= 2 else "weighted"
-                    fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode, zero_division=0))
+                    fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode_search, zero_division=0))
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
@@ -599,12 +608,9 @@ def _make_objective(
                 # Backtest UNA VEZ sobre el último fold (datos más recientes)
                 if last_y_pred_sk is not None and last_val_idx_sk is not None:
                     y_pred_original = label_encoder.inverse_transform(last_y_pred_sk)
-                    val_timestamps = search_timestamps[last_val_idx_sk]
-                    df_val = df_enriched[
-                        df_enriched["timestamp"].isin(set(val_timestamps.tolist()))
-                    ].sort_values("timestamp").reset_index(drop=True)
-
-                    sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
+                    sim = run_backtest_with_predictions(
+                        strategy, df_val_ultimo_fold, y_pred_original, symbol
+                    )
 
                     win_rate_frac = sim["win_rate"] / 100.0
                     pf_norm = min(sim["profit_factor"], 5.0) / 5.0
@@ -1037,7 +1043,7 @@ def _construir_payload_respuesta(
     csv_rel_path: str,
     final_metrics: dict[str, float],
     test_stats: dict[str, Any],
-    x_np: np.ndarray,
+    total_filas: int,
     x_train_full: np.ndarray,
     X_test: np.ndarray,
     cv_folds: int,
@@ -1093,7 +1099,7 @@ def _construir_payload_respuesta(
         "all_trials": trial_log,
         "data_info": {
             "modelo_usado": model_type.upper(),
-            "total_filas": len(x_np),
+            "total_filas": total_filas,
             "filas_entrenamiento": len(x_train_full),
             "filas_test": len(X_test),
             "num_features": len(feature_cols),
@@ -1146,8 +1152,6 @@ def main() -> None:
             df_enriched_full, strategy,
             label_distribution,
         ) = _preparar_dataset(payload, strategy_name, warmup_candles)
-
-        x_np = np.concatenate([x_train_full, X_test])
 
         if _SUGGEST_FN.get(model_type) is None:
             raise ValueError(
@@ -1249,7 +1253,6 @@ def main() -> None:
         logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
         is_neural_final = model_type in ("neural_network", "deep_learning", "keras")
         if is_neural_final:
-            import tensorflow as _tf_final  # noqa: F401
             y_test_pred_final = (final_model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
         else:
             y_test_pred_final = final_model.predict(X_test)
@@ -1294,7 +1297,7 @@ def main() -> None:
             csv_rel_path=csv_rel_path,
             final_metrics=final_metrics,
             test_stats=test_stats,
-            x_np=x_np,
+            total_filas=len(x_train_full) + len(X_test),
             x_train_full=x_train_full,
             X_test=X_test,
             cv_folds=cv_folds,
