@@ -65,6 +65,18 @@ public final class AppConstants {
     public static final String KEY_FECHA_INICIO = "fecha_inicio";
     public static final String KEY_FECHA_FIN = "fecha_fin";
     public static final String KEY_RESULTADO = "resultado";
+
+    /**
+     * Vocabulario del campo 'resultado' del CSV de stats.
+     * La fuente de verdad es Python (backtest_engine.py), que es quien produce los
+     * backtests; el paper trading en vivo escribe en el mismo fichero y debe usar
+     * exactamente estos valores. Antes emitia PROFIT/LOSS y el campo quedaba con dos
+     * vocabularios mezclados segun quien hubiera escrito la fila.
+     */
+    public static final String RESULTADO_GANANCIA = "GANANCIA";
+    public static final String RESULTADO_PERDIDA = "PERDIDA";
+    public static final String RESULTADO_NEUTRO = "NEUTRO";
+
     public static final String KEY_ERROR = "ERROR";
         public static final String KEY_ACTIVA = "ACTIVA";
     public static final String KEY_DETENIDA = "DETENIDA";

@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.bottrading.shared.utils.AppConstants;
 import com.bottrading.shared.utils.SafeParser;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
@@ -203,7 +204,7 @@ public class PaperTradingService implements ProcessSignalUseCase {
         newStats.put("op_totales", totales);
         newStats.put("retorno_total", retornoTotal);
         newStats.put("win_rate", String.format("%.2f%%", winRate));
-        newStats.put("resultado", retornoTotal.compareTo(BigDecimal.ZERO) >= 0 ? "PROFIT" : "LOSS");
+        newStats.put(AppConstants.KEY_RESULTADO, clasificarResultado(retornoTotal));
         newStats.put("fecha_fin", new Date().toString());
 
         // Actualizar en caché (se guardará a disco automáticamente)
@@ -212,5 +213,17 @@ public class PaperTradingService implements ProcessSignalUseCase {
         log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {}%",
                 ganadas, perdidas, String.format("%.2f", winRate));
         return newStats;
+    }
+
+    /**
+     * Clasifica el retorno con el mismo vocabulario y los mismos cortes que
+     * backtest_engine.py, que escribe en este mismo CSV.
+     */
+    private String clasificarResultado(BigDecimal retornoTotal) {
+        int signo = retornoTotal.compareTo(BigDecimal.ZERO);
+        if (signo > 0) {
+            return AppConstants.RESULTADO_GANANCIA;
+        }
+        return signo < 0 ? AppConstants.RESULTADO_PERDIDA : AppConstants.RESULTADO_NEUTRO;
     }
 }
