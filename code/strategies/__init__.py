@@ -21,7 +21,7 @@ ESTRATEGIAS_DISPONIBLES: dict[str, type[BaseStrategy]] = {
 }
 
 __all__ = [
+    "ESTRATEGIAS_DISPONIBLES",
     "BaseStrategy",
     "StressTestStrategy",
-    "ESTRATEGIAS_DISPONIBLES",
 ]

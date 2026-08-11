@@ -1,11 +1,12 @@
-import json
-import msgpack
 import struct
 import sys
 import uuid
-from typing import Any, Dict
+from typing import Any
+
+import msgpack
 
 PROTOCOL_VERSION = "1.0"
+HEADER_BYTES = 4
 
 
 def _to_text_keys(value: Any) -> Any:
@@ -19,43 +20,62 @@ def _to_text_keys(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray)):
         try:
             return value.decode("utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001 - bytes no decodificables: se devuelven crudos
             return value
     return value
 
 
-def read_request_payload() -> Dict[str, Any]:
+def read_request_payload() -> dict[str, Any]:
+    """Lee el request IPC de stdin. Contrato ÚNICO y estricto (v1):
+
+    ``[4 bytes big-endian: longitud] [cuerpo: envelope MessagePack]``
+
+    El envelope es un objeto con ``protocol_version``, ``message_type``,
+    ``correlation_id`` y ``payload`` (objeto). Devuelve el ``payload``.
+    Cualquier otra forma (JSON plano, msgpack sin frame, frame truncado) se
+    rechaza con ``ValueError``: no hay rutas legacy.
+    """
     raw = sys.stdin.buffer.read()
     if not raw:
         raise ValueError("No input data provided")
+    if len(raw) < HEADER_BYTES:
+        raise ValueError(
+            f"IPC frame inválido: faltan los {HEADER_BYTES} bytes de longitud "
+            f"(recibidos {len(raw)})"
+        )
 
-    # Framing v1: 4-byte big-endian length + msgpack envelope.
-    if len(raw) >= 4:
-        frame_len = struct.unpack(">I", raw[:4])[0]
-        if frame_len > 0 and len(raw) >= 4 + frame_len:
-            body = raw[4:4 + frame_len]
-            envelope = msgpack.unpackb(body, raw=False)
-            envelope = _to_text_keys(envelope)
-            payload = envelope.get("payload")
-            if isinstance(payload, dict):
-                return _to_text_keys(payload)
+    frame_len = struct.unpack(">I", raw[:HEADER_BYTES])[0]
+    if frame_len <= 0:
+        raise ValueError(f"IPC frame inválido: longitud declarada {frame_len}")
+    if len(raw) < HEADER_BYTES + frame_len:
+        raise ValueError(
+            f"IPC frame truncado: se esperaban {frame_len} bytes de cuerpo, "
+            f"se recibieron {len(raw) - HEADER_BYTES}"
+        )
 
-    # Legacy fallback: JSON plano.
+    body = raw[HEADER_BYTES:HEADER_BYTES + frame_len]
     try:
-        legacy_msgpack = msgpack.unpackb(raw, raw=False)
-        legacy_msgpack = _to_text_keys(legacy_msgpack)
-        if isinstance(legacy_msgpack, dict):
-            return legacy_msgpack
-        if isinstance(legacy_msgpack, list):
-            return {"velas": legacy_msgpack}
-    except Exception:
-        pass
+        envelope = msgpack.unpackb(body, raw=False)
+    except Exception as exc:
+        raise ValueError(f"IPC frame no es MessagePack válido: {exc}") from exc
 
-    text = raw.decode("utf-8")
-    parsed = json.loads(text)
-    if not isinstance(parsed, dict):
-        raise ValueError("Payload must be a JSON object")
-    return parsed
+    envelope = _to_text_keys(envelope)
+    if not isinstance(envelope, dict):
+        raise ValueError("IPC envelope debe ser un objeto")  # noqa: TRY004 - error de protocolo
+
+    version = envelope.get("protocol_version")
+    if version is not None and version != PROTOCOL_VERSION:
+        raise ValueError(
+            f"Versión de protocolo IPC no soportada: {version!r} "
+            f"(esperada {PROTOCOL_VERSION!r})"
+        )
+
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError(  # noqa: TRY004 - error de protocolo, no de tipo
+            "IPC envelope sin 'payload' de tipo objeto"
+        )
+    return _to_text_keys(payload)
 
 
 def write_response(message_type: str, payload: Any) -> None:

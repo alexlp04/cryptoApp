@@ -72,6 +72,21 @@ public class SignalDTO {
         this.timeframe = timeframe;
     }
 
+    /**
+     * Clave de idempotencia determinista de la señal.
+     *
+     * <p>Identifica de forma única una señal por símbolo, timeframe, acción y
+     * timestamp de la vela. Dentro de una misma vela una estrategia emite como
+     * mucho un BUY o un SELL por símbolo, por lo que una reentrega o un reintento
+     * de la misma señal produce la misma clave y puede deduplicarse.
+     */
+    public String idempotencyKey() {
+        return (symbol == null ? "" : symbol) + "|"
+                + (timeframe == null ? "" : timeframe) + "|"
+                + (action == null ? "" : action) + "|"
+                + timestamp;
+    }
+
     @Override
     public String toString() {
         return "SignalDTO{" +

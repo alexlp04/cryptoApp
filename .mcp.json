@@ -1,0 +1,33 @@
+{
+  "mcpServers": {
+    "code-graph": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@sdsrs/code-graph",
+        "serve"
+      ],
+      "env": {}
+    },
+    "mysql": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@benborla29/mcp-server-mysql"
+      ],
+      "env": {
+        "MYSQL_HOST": "${MYSQL_HOST:-127.0.0.1}",
+        "MYSQL_PORT": "${MYSQL_PORT:-3306}",
+        "MYSQL_USER": "${MYSQL_USER:-bottradinguser}",
+        "MYSQL_DB": "${MYSQL_DB:-bottradingdb}",
+        "MYSQL_PASS": "${MYSQL_PASS}",
+        "ALLOW_INSERT_OPERATION": "false",
+        "ALLOW_UPDATE_OPERATION": "false",
+        "ALLOW_DELETE_OPERATION": "false",
+        "ALLOW_DDL_OPERATION": "false"
+      }
+    }
+  }
+}

@@ -43,35 +43,33 @@ from __future__ import annotations
 
 import gc
 import json
-import logging
 import math
 import os
 import sys
+import time
 import warnings
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import joblib
 import numpy as np
 import optuna
 import pandas as pd
+from backtest_engine import run_backtest_with_predictions
+from ipc_protocol import read_request_payload, write_error, write_response
 from optuna.pruners import MedianPruner
+from shared_utils import (
+    PROJECT_ROOT,
+    apply_strategy_features,
+    configure_tensorflow_runtime,
+    fit_sklearn_model,
+    load_strategy_by_name,
+    setup_engine_logging,
+)
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
-
-from ipc_protocol import read_request_payload, write_error, write_response
-from backtest_engine import run_backtest_with_predictions
-from shared_utils import (
-    load_strategy_by_name,
-    apply_strategy_features,
-    setup_engine_logging,
-    build_sklearn_model,
-    configure_tensorflow_runtime,
-    fit_sklearn_model,
-    PROJECT_ROOT,
-)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -88,12 +86,61 @@ project_root = PROJECT_ROOT  # alias utilizado en el módulo para rutas de model
 DEFAULT_N_TRIALS: int = 100
 DEFAULT_CV_FOLDS: int = 5
 DEFAULT_MIN_COMPOSITE: float = 0.55
-MIN_SAMPLES_REQUIRED: int = 50
+
+# Almacén persistente de estudios Optuna. Sin él los estudios viven solo en memoria y
+# se pierden al terminar el proceso, impidiendo comparar ejecuciones o inspeccionarlas
+# con optuna-dashboard. Sobrescribible por entorno para apuntar a otro backend.
+OPTUNA_STORAGE_ENV_VAR: str = "CRYPTOAPP_OPTUNA_STORAGE"
+DEFAULT_OPTUNA_DB_RELPATH: str = os.path.join("results", "optuna", "studies.db")
 RESULTS_SUBDIR: str = "optimize"
 # Máximo de filas usadas durante la búsqueda con Optuna para modelos NN.
 # El entrenamiento final siempre usa el dataset completo.
 OPTUNA_NN_MAX_SAMPLES: int = 50_000
 OPTUNA_SVM_MAX_SAMPLES: int = 12_000
+
+
+# =============================================================================
+# PERSISTENCIA DE ESTUDIOS OPTUNA
+# =============================================================================
+
+def resolve_optuna_storage(root: str | None = None) -> str | None:
+    """
+    Devuelve la URL del almacén persistente de estudios Optuna.
+
+    Prioriza la variable de entorno CRYPTOAPP_OPTUNA_STORAGE (útil para apuntar a
+    MySQL/PostgreSQL); si no está, usa un SQLite bajo results/optuna/.
+
+    Devuelve None cuando el directorio no se puede preparar: en ese caso el estudio
+    corre en memoria, que es peor para reproducibilidad pero preferible a abortar
+    una optimización de horas por un problema de disco.
+    """
+    override = os.environ.get(OPTUNA_STORAGE_ENV_VAR, "").strip()
+    if override:
+        return override
+
+    db_path = os.path.join(root or project_root, DEFAULT_OPTUNA_DB_RELPATH)
+    try:
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "No se pudo preparar el almacén Optuna (%s); el estudio correrá en memoria", exc,
+        )
+        return None
+
+    return "sqlite:///" + db_path.replace("\\", "/")
+
+
+def build_study_name(model_type: str, symbol: str, timeframe: str,
+                     moment: datetime | None = None) -> str:
+    """
+    Nombre único por ejecución.
+
+    Se incluye timestamp a propósito: reutilizar el nombre haría que Optuna acumulase
+    trials de datasets o rangos distintos en el mismo estudio, invalidando cualquier
+    comparación posterior.
+    """
+    stamp = (moment or datetime.now(UTC)).strftime("%Y%m%d-%H%M%S")
+    return f"optimize_{model_type}_{symbol}_{timeframe}_{stamp}"
 
 
 # =============================================================================
@@ -378,7 +425,7 @@ def _build_and_eval_neural_network(
 
     # Backtest UNA VEZ sobre el último fold (datos más recientes — respeta causalidad)
     if has_backtest_data and last_y_pred_fold is not None and last_val_idx_nn is not None:
-        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)  # type: ignore[union-attr]
+        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)
         val_timestamps = timestamps[last_val_idx_nn]  # type: ignore[index]
         df_val = df_enriched[
             df_enriched["timestamp"].isin(set(val_timestamps.tolist()))  # type: ignore[index]
@@ -478,10 +525,26 @@ def _make_objective(
     # TimeSeriesSplit garantiza que la validación siempre es posterior al entrenamiento
     tss = TimeSeriesSplit(n_splits=cv_folds)
 
+    # Invariantes de todo el estudio: no dependen del trial ni del fold, así que se
+    # calculan una sola vez en lugar de una por fold y por trial.
+    clases_search = np.unique(search_y)
+    avg_mode_search = "binary" if len(clases_search) <= 2 else "weighted"
+    cw_search_dict = dict(zip(
+        clases_search.tolist(),
+        compute_class_weight("balanced", classes=clases_search, y=search_y).tolist(),
+    ))
+
+    # tss.split() es determinista y search_x no cambia entre trials: el conjunto de
+    # validación del último fold (y por tanto su df_val) es siempre el mismo.
+    ultimo_val_idx = list(tss.split(search_x))[-1][1]
+    df_val_ultimo_fold = df_enriched[
+        df_enriched["timestamp"].isin(set(search_timestamps[ultimo_val_idx].tolist()))
+    ].sort_values("timestamp").reset_index(drop=True)
+
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
         trial_params = _prepare_optuna_sklearn_params(model_type, params)
-        trial_start = datetime.now()
+        trial_start = time.monotonic()
 
         logger.info(
             "Trial %3d | %s | iniciando sobre %d filas",
@@ -519,22 +582,16 @@ def _make_objective(
                     y_tr, y_val = search_y[train_idx], search_y[val_idx]
 
                     # class_weight para compensar desbalanceo (problema 1)
-                    cw_fold = compute_class_weight(
-                        "balanced", classes=np.unique(search_y), y=search_y
-                    )
-                    cw_fold_dict = dict(zip(np.unique(search_y).tolist(), cw_fold.tolist()))
                     model_fold = fit_sklearn_model(
                         model_type,
                         trial_params,
                         x_tr,
                         y_tr,
-                        class_weight=cw_fold_dict,
+                        class_weight=cw_search_dict,
                     )
                     y_pred_val = model_fold.predict(x_val)
 
-                    n_classes_cur = len(np.unique(search_y))
-                    avg_mode = "binary" if n_classes_cur <= 2 else "weighted"
-                    fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode, zero_division=0))
+                    fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode_search, zero_division=0))
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
@@ -551,12 +608,9 @@ def _make_objective(
                 # Backtest UNA VEZ sobre el último fold (datos más recientes)
                 if last_y_pred_sk is not None and last_val_idx_sk is not None:
                     y_pred_original = label_encoder.inverse_transform(last_y_pred_sk)
-                    val_timestamps = search_timestamps[last_val_idx_sk]
-                    df_val = df_enriched[
-                        df_enriched["timestamp"].isin(set(val_timestamps.tolist()))
-                    ].sort_values("timestamp").reset_index(drop=True)
-
-                    sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
+                    sim = run_backtest_with_predictions(
+                        strategy, df_val_ultimo_fold, y_pred_original, symbol
+                    )
 
                     win_rate_frac = sim["win_rate"] / 100.0
                     pf_norm = min(sim["profit_factor"], 5.0) / 5.0
@@ -584,7 +638,7 @@ def _make_objective(
                 f1_cv, win_rate_cv, pf_norm_cv, sharpe_norm_cv, overfit_gap
             )
 
-            elapsed = (datetime.now() - trial_start).total_seconds()
+            elapsed = time.monotonic() - trial_start
             logger.info(
                 "Trial %3d | %s | f1_cv=%.4f acc_cv=%.4f win_rate=%.4f pf_norm=%.4f "
                 "sharpe_norm=%.4f gap=%.4f → composite=%.4f (%.1fs)",
@@ -743,12 +797,12 @@ def _train_sklearn_final(
     model = fit_sklearn_model(model_type, fit_params, X, y)
     y_pred = model.predict(X_test)
 
-    setattr(model, "feature_cols", feature_cols)
-    setattr(model, "strategy_name", strategy_name)
-    setattr(model, "warmup_candles", warmup_candles)
-    setattr(model, "best_params", best_params)
-    setattr(model, "fit_params", fit_params)
-    setattr(model, "label_encoder", label_encoder)
+    model.feature_cols = feature_cols
+    model.strategy_name = strategy_name
+    model.warmup_candles = warmup_candles
+    model.best_params = best_params
+    model.fit_params = fit_params
+    model.label_encoder = label_encoder
 
     suffix = f"_{strategy_name}" if strategy_name else ""
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
@@ -898,18 +952,18 @@ def _preparar_dataset(
     )
 
     logger.info("Calculando indicadores — conjunto TRAIN...")
-    t0 = datetime.now()
+    t0 = time.monotonic()
     df_train_enriched = strategy.populate_indicators(df_train_raw.copy())
     logger.info("populate_indicators TRAIN: %.2fs (%d filas)",
-                (datetime.now() - t0).total_seconds(), len(df_train_enriched))
+                time.monotonic() - t0, len(df_train_enriched))
 
     logger.info("Calculando indicadores — conjunto TEST (con buffer de calentamiento)...")
-    t1 = datetime.now()
+    t1 = time.monotonic()
     df_test_enriched_buf = strategy.populate_indicators(df_test_buffer_raw.copy())
     buffer_rows = raw_split_idx - buffer_start
     df_test_enriched = df_test_enriched_buf.iloc[buffer_rows:].reset_index(drop=True)
     logger.info("populate_indicators TEST: %.2fs (%d filas)",
-                (datetime.now() - t1).total_seconds(), len(df_test_enriched))
+                time.monotonic() - t1, len(df_test_enriched))
 
     del df_train_raw, df_test_buffer_raw, df_test_enriched_buf
 
@@ -989,7 +1043,7 @@ def _construir_payload_respuesta(
     csv_rel_path: str,
     final_metrics: dict[str, float],
     test_stats: dict[str, Any],
-    x_np: np.ndarray,
+    total_filas: int,
     x_train_full: np.ndarray,
     X_test: np.ndarray,
     cv_folds: int,
@@ -1045,7 +1099,7 @@ def _construir_payload_respuesta(
         "all_trials": trial_log,
         "data_info": {
             "modelo_usado": model_type.upper(),
-            "total_filas": len(x_np),
+            "total_filas": total_filas,
             "filas_entrenamiento": len(x_train_full),
             "filas_test": len(X_test),
             "num_features": len(feature_cols),
@@ -1099,8 +1153,6 @@ def main() -> None:
             label_distribution,
         ) = _preparar_dataset(payload, strategy_name, warmup_candles)
 
-        x_np = np.concatenate([x_train_full, X_test])
-
         if _SUGGEST_FN.get(model_type) is None:
             raise ValueError(
                 f"Tipo de modelo no reconocido: '{model_type}'. "
@@ -1116,11 +1168,28 @@ def main() -> None:
         )
 
         trial_log: list[dict[str, Any]] = []
-        study = optuna.create_study(
-            direction="maximize",
-            pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10),
-            study_name=f"optimize_{model_type}_{symbol}_{timeframe}",
-        )
+        study_name = build_study_name(model_type, symbol, timeframe)
+        storage = resolve_optuna_storage()
+        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+
+        try:
+            study = optuna.create_study(
+                direction="maximize",
+                pruner=pruner,
+                study_name=study_name,
+                storage=storage,
+            )
+            if storage:
+                logger.info("Estudio '%s' persistido en %s", study_name, storage)
+        except Exception as exc:  # noqa: BLE001 - degradar a memoria antes que abortar
+            logger.warning(
+                "Almacén Optuna no disponible (%s); el estudio correrá solo en memoria", exc,
+            )
+            study = optuna.create_study(
+                direction="maximize",
+                pruner=pruner,
+                study_name=study_name,
+            )
         study.optimize(
             _make_objective(
                 model_type, x_train_full, y_train_full,
@@ -1184,7 +1253,6 @@ def main() -> None:
         logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
         is_neural_final = model_type in ("neural_network", "deep_learning", "keras")
         if is_neural_final:
-            import tensorflow as _tf_final  # noqa: F401
             y_test_pred_final = (final_model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
         else:
             y_test_pred_final = final_model.predict(X_test)
@@ -1229,7 +1297,7 @@ def main() -> None:
             csv_rel_path=csv_rel_path,
             final_metrics=final_metrics,
             test_stats=test_stats,
-            x_np=x_np,
+            total_filas=len(x_train_full) + len(X_test),
             x_train_full=x_train_full,
             X_test=X_test,
             cv_folds=cv_folds,
@@ -1241,7 +1309,7 @@ def main() -> None:
         logger.info("=== engine_optimize.py finalizado con éxito ===")
 
     except Exception as exc:
-        logger.error("Fallo durante la optimización: %s", str(exc), exc_info=True)
+        logger.exception("Fallo durante la optimización")
         write_error("ERROR", str(exc))
         sys.exit(1)
 

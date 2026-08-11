@@ -6,6 +6,7 @@ import java.util.Map;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
@@ -61,28 +62,26 @@ public class AIOptimizationService implements OptimizeModelUseCase {
             nombreModelo, symbol, timeframe, dias, strategyName, minComposite);
 
         long now = System.currentTimeMillis();
-        final boolean useDynamicStrategy = true;
 
-        Integer warmupCandles = null;
-        int daysForPreparation = dias;
-        String strategyPath = null;
+        Integer warmupCandles;
+        int daysForPreparation;
+        String strategyPath;
 
-        if (useDynamicStrategy) {
-            try {
-                loader.updateMessage("Calculando ventana de datos necesaria para la estrategia...");
-                warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
-                int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
-                int candlesPerDay = resolveCandlesPerDay(timeframe);
-                daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
-                strategyPath = PathConfig.getValidStrategyPath(strategyName);
-            } catch (Exception e) {
-                throw new StrategyExecutionException(
-                        "Error al inspeccionar estrategia '" + strategyName + "': " + e.getMessage(), e);
-            }
-
-            log.info("Modo estrategia dinámica: strategy='{}', warmup={}, dias_efectivos={}",
-                    strategyName, warmupCandles, daysForPreparation);
+        try {
+            loader.updateMessage("Calculando ventana de datos necesaria para la estrategia...");
+            // Un solo arranque del interprete: getCandlesRequired reutiliza el warmup ya leido.
+            warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+            int totalCandles = StrategyInspector.getCandlesRequired(timeframe, dias, warmupCandles);
+            daysForPreparation = (int) Math.ceil(
+                    (double) totalCandles / Timeframe.velasPorDiaOrDefault(timeframe));
+            strategyPath = PathConfig.getValidStrategyPath(strategyName);
+        } catch (Exception e) {
+            throw new StrategyExecutionException(
+                    "Error al inspeccionar estrategia '" + strategyName + "': " + e.getMessage(), e);
         }
+
+        log.info("Modo estrategia dinámica: strategy='{}', warmup={}, dias_efectivos={}",
+                strategyName, warmupCandles, daysForPreparation);
 
         loader.updateMessage("Descargando y actualizando velas históricas...");
         fetchMarketDataUseCase.fetchIncremental(symbol, timeframe, daysForPreparation, now);
@@ -99,8 +98,8 @@ public class AIOptimizationService implements OptimizeModelUseCase {
             return "Error: No hay datos suficientes de " + symbol + " para optimizar.";
         }
 
-        log.info("Enviando {} velas crudas al motor de optimización — modo: {}",
-                velas.size(), useDynamicStrategy ? "estrategia dinámica (" + strategyName + ")" : "legacy");
+        log.info("Enviando {} velas crudas al motor de optimización — estrategia dinámica ({})",
+                velas.size(), strategyName);
 
         loader.updateMessage("Buscando hiperparámetros óptimos ("
                 + velas.size() + " velas) — puede tardar varios minutos...");
@@ -220,16 +219,5 @@ public class AIOptimizationService implements OptimizeModelUseCase {
         }
     }
 
-    private int resolveCandlesPerDay(String timeframe) {
-        return switch (timeframe == null ? "" : timeframe.toLowerCase()) {
-            case "1m" -> 1440;
-            case "5m" -> 288;
-            case "15m" -> 96;
-            case "1h" -> 24;
-            case "4h" -> 6;
-            case "1d" -> 1;
-            default -> 288;
-        };
-    }
 }
 

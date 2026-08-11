@@ -1,19 +1,19 @@
 import asyncio
 import json
 import sys
-import pandas as pd
-import websockets
-import os
 import types
-import logging
 from collections import deque
 from decimal import Decimal
+
+import pandas as pd
+import websockets
 from ipc_protocol import read_request_payload
 from shared_utils import (
+    CODE_DIR,
+    build_signal_line,
+    emit_heartbeats,
     load_strategy_by_path,
     setup_engine_logging,
-    emit_heartbeats,
-    CODE_DIR,
 )
 
 logger = setup_engine_logging("engine_rt")
@@ -107,11 +107,11 @@ async def run_symbol(
 
                     if action:
                         signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
-                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
-        except Exception as e:
-            logger.error("Error en loop de %s: %s", symbol, str(e), exc_info=True)
+        except Exception:
+            logger.exception("Error en loop de %s", symbol)
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
 

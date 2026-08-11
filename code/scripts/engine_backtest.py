@@ -1,23 +1,21 @@
 import sys
-import pandas as pd
-import numpy as np
-import os
 import traceback
-import logging
-from ipc_protocol import read_request_payload, write_response, write_error
-from shared_utils import load_strategy_by_path, setup_engine_logging, CODE_DIR
+
+import numpy as np
+import pandas as pd
+from ipc_protocol import read_request_payload, write_error, write_response
+from shared_utils import CODE_DIR, load_strategy_by_path, setup_engine_logging
 
 # --- IMPORTAR MOTOR COMPARTIDO ---
 if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
-from backtest_engine import (  # noqa: E402
+from backtest_engine import (
     crear_carpeta_estrategia,
-    guardar_trade_a_csv,
     run_backtest,
     run_backtest_with_predictions,
 )
-from engine_ai_rt import load_model  # noqa: E402
+from engine_ai_rt import load_model
 
 logger = setup_engine_logging("engine_backtest")
 
@@ -94,9 +92,21 @@ def main() -> None:
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico
 
+        # Campos obligatorios: si faltan, un None viajaría hasta load_strategy_by_path o
+        # crear_carpeta_estrategia y fallaría allí de forma opaca. Mismo criterio que
+        # engine_train.py: el error se reporta en la frontera del protocolo.
+        # Se comprueban uno a uno (y no en bucle) para que el análisis estático pueda
+        # descartar el None en el resto de la función.
+        if not strategy_path:
+            raise ValueError("'strategy_path' es obligatorio en el payload de backtest.")
+        if not strategy_name:
+            raise ValueError("'strategy_name' es obligatorio en el payload de backtest.")
+        if not timeframe:
+            raise ValueError("'timeframe' es obligatorio en el payload de backtest.")
+
         logger.info("Loading strategy from: %s", strategy_path)
         strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
-        setattr(strategy, "timeframe", timeframe)
+        strategy.timeframe = timeframe
 
         # Cargar modelo si se especificó
         model = None
@@ -129,7 +139,7 @@ def main() -> None:
             if df.empty:
                 continue
 
-            if model is not None:
+            if model is not None and model_type is not None:
                 # Backtest con predicciones del modelo IA
                 df_con_indicadores = strategy.populate_indicators(df.copy())
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)
@@ -161,8 +171,8 @@ def main() -> None:
             "mode": "ai_model" if model_name else "classic",
         })
 
-    except Exception as e:
-        error_msg = "Backtest engine error: %s\n%s" % (str(e), traceback.format_exc())
+    except Exception as e:  # noqa: BLE001 - frontera del engine: todo fallo se reporta por IPC
+        error_msg = f"Backtest engine error: {e}\n{traceback.format_exc()}"
         logger.error(error_msg)
         write_error("ERROR", error_msg)
         sys.exit(1)

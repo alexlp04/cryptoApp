@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import types
-import logging
 import warnings
 from collections import deque
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 import websockets
-
 from ipc_protocol import read_request_payload
-from shared_utils import load_strategy_by_path, setup_engine_logging, emit_heartbeats, CODE_DIR, PROJECT_ROOT
+from shared_utils import (
+    CODE_DIR,
+    PROJECT_ROOT,
+    build_signal_line,
+    emit_heartbeats,
+    load_strategy_by_path,
+    setup_engine_logging,
+)
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -32,13 +39,8 @@ if sys.platform == "win32" and "posix" not in sys.modules:
 if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
-def _find_model_path(base_filename: str, models_dir: str, extensions: tuple[str, ...]) -> str | None:
-    """Devuelve el primer path existente que coincida con base_filename + alguna extensión."""
-    for ext in extensions:
-        path = os.path.join(models_dir, f"{base_filename}{ext}")
-        if os.path.exists(path):
-            return path
-    return None
+#: Extensiones reconocidas para un modelo entrenado, en orden de preferencia.
+MODEL_EXTENSIONS = (".pkl", ".keras", ".h5")
 
 
 def _load_label_classes(model_path: str) -> list[int] | None:
@@ -61,6 +63,40 @@ def _load_label_classes(model_path: str) -> list[int] | None:
 # =========================
 # CARGA DE MODELO IA UNIVERSAL
 # =========================
+def _load_from_path(path: str) -> tuple[Any, str, list[int] | None]:
+    """Carga un modelo ya localizado, eligiendo el backend por su extensión."""
+    if path.endswith(".pkl"):
+        logger.info("Cargando modelo clasico (PKL): %s", path)
+        loaded = joblib.load(path)
+        encoder = getattr(loaded, "label_encoder", None)
+        classes = list(encoder.classes_) if encoder is not None else None
+        return loaded, "ml_standard", classes
+
+    logger.info("Cargando modelo de Red Neuronal (Keras/TF): %s", path)
+    from tensorflow.keras.models import load_model as load_keras_model
+    return load_keras_model(path), "deep_learning", _load_label_classes(path)
+
+
+def _candidate_model_paths(models_dir: str, model_name: str, base_filename: str) -> list[str]:
+    """
+    Rutas candidatas en orden de precedencia:
+    0) nombre libre (el usuario ha renombrado el modelo),
+    1-2) formato estándar {modelo}_{timeframe}_{symbol},
+    3) variantes con sufijo de estrategia.
+    """
+    candidates = [
+        os.path.join(models_dir, f"{name}{ext}")
+        for name in (model_name, base_filename)
+        for ext in MODEL_EXTENSIONS
+    ]
+    candidates.extend(
+        os.path.join(models_dir, fname)
+        for fname in sorted(os.listdir(models_dir))
+        if fname.startswith(f"{base_filename}_") and fname.endswith(MODEL_EXTENSIONS)
+    )
+    return candidates
+
+
 def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, list[int] | None]:
     """
     Carga dinámicamente diferentes tipos de modelos basados en su extensión y librería.
@@ -71,56 +107,14 @@ def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, 
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     base_filename = f"{model_name}_{timeframe}_{symbol}"
 
-    # 0. Buscar por nombre libre (el usuario ha renombrado el modelo)
-    for ext in (".pkl", ".keras", ".h5"):
-        bare_path = os.path.join(models_dir, f"{model_name}{ext}")
-        if os.path.exists(bare_path):
-            if ext == ".pkl":
-                logger.info("Cargando modelo (nombre libre, PKL): %s", bare_path)
-                loaded = joblib.load(bare_path)
-                lc = getattr(loaded, "label_encoder", None)
-                lc = list(lc.classes_) if lc is not None else None
-                return loaded, "ml_standard", lc
-            else:
-                logger.info("Cargando modelo (nombre libre, Keras/TF): %s", bare_path)
-                from tensorflow.keras.models import load_model as load_keras_model
-                return load_keras_model(bare_path), "deep_learning", _load_label_classes(bare_path)
-
-    # 1. Buscar modelos estándar (Scikit-Learn, XGBoost, LightGBM)
-    pkl_path = os.path.join(models_dir, f"{base_filename}.pkl")
-    if os.path.exists(pkl_path):
-        logger.info("Cargando modelo clasico (PKL): %s", pkl_path)
-        loaded = joblib.load(pkl_path)
-        lc = getattr(loaded, "label_encoder", None)
-        lc = list(lc.classes_) if lc is not None else None
-        return loaded, "ml_standard", lc
-
-    # 2. Buscar modelos de Deep Learning (TensorFlow / Keras)
-    dl_path = _find_model_path(base_filename, models_dir, (".keras", ".h5"))
-    if dl_path:
-        logger.info("Cargando modelo de Red Neuronal (Keras/TF): %s", dl_path)
-        from tensorflow.keras.models import load_model as load_keras_model
-        return load_keras_model(dl_path), "deep_learning", _load_label_classes(dl_path)
-
-    # 3. Buscar variantes con sufijo de estrategia: {base_filename}_{strategy}.ext
-    for fname in os.listdir(models_dir):
-        if fname.startswith(f"{base_filename}_") and fname.endswith((".pkl", ".keras", ".h5")):
-            candidate = os.path.join(models_dir, fname)
-            if fname.endswith(".pkl"):
-                logger.info("Cargando modelo con sufijo de estrategia (PKL): %s", candidate)
-                loaded = joblib.load(candidate)
-                lc = getattr(loaded, "label_encoder", None)
-                lc = list(lc.classes_) if lc is not None else None
-                return loaded, "ml_standard", lc
-            else:
-                logger.info("Cargando modelo con sufijo de estrategia (Keras/TF): %s", candidate)
-                from tensorflow.keras.models import load_model as load_keras_model
-                return load_keras_model(candidate), "deep_learning", _load_label_classes(candidate)
+    for path in _candidate_model_paths(models_dir, model_name, base_filename):
+        if os.path.exists(path):
+            return _load_from_path(path)
 
     raise FileNotFoundError(
         f"No se encontró ningún modelo para '{model_name}' "
         f"(buscado como nombre libre, {base_filename}, y variantes con sufijo de estrategia). "
-        f"Extensiones probadas: .pkl, .keras, .h5"
+        f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
     )
 
 # =========================
@@ -130,13 +124,13 @@ def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, 
 def _prepare_feature_row(
     df_buffer: deque,
     strategy,
-    feature_cols: list[str],
     symbol: str,
     model_name: str,
 ):
     """
     Construye y valida la fila de features para predicción.
-    Devuelve (ultima_fila_df, x_pred_np) o (None, None) si hay problema.
+    Devuelve el array de features listo para el modelo, o None si hay problema.
+    Las columnas las dicta siempre la estrategia vía get_feature_columns().
     """
     df = pd.DataFrame(list(df_buffer))
     df_con_indicadores = strategy.populate_indicators(df.copy())
@@ -144,7 +138,7 @@ def _prepare_feature_row(
     actual_feature_cols = strategy.get_feature_columns(df_con_indicadores)
     if not actual_feature_cols:
         logger.warning("[%s] La estrategia no devolvio feature columns; se omite predicción.", symbol)
-        return None, None
+        return None
 
     missing_cols = [col for col in actual_feature_cols if col not in df_con_indicadores.columns]
     if missing_cols:
@@ -152,7 +146,7 @@ def _prepare_feature_row(
             "[%s] Feature columns faltantes para %s. Esperadas: %s. Faltantes: %s.",
             symbol, model_name, actual_feature_cols, missing_cols,
         )
-        return None, None
+        return None
 
     ultima_fila = df_con_indicadores[actual_feature_cols].iloc[[-1]].copy()
 
@@ -169,7 +163,7 @@ def _prepare_feature_row(
         .fillna(0.0)
         .astype("float32")
     )
-    return ultima_fila, ultima_fila.to_numpy(dtype="float32", copy=False)
+    return ultima_fila.to_numpy(dtype="float32", copy=False)
 
 
 def _predict_ml_standard(model, x_pred, model_name: str, symbol: str) -> str | None:
@@ -283,7 +277,7 @@ def _emit_signal(
         "is_real": is_real,
         "source": f"AI_{model_name.upper()}",
     }
-    print("SIGNAL\t" + json.dumps(signal), flush=True)
+    print(build_signal_line(signal), flush=True)
     logger.info("SEÑAL %s ENVIADA: %s para %s a %s", model_name.upper(), action, symbol, signal["price"])
 
 
@@ -309,7 +303,6 @@ async def run_symbol(
     model, model_type, label_classes = load_model(model_name, timeframe, symbol)
     df_buffer: deque = deque(maxlen=max_candles)
     last_processed_event_id = 0
-    feature_cols: list[str] = []
 
     while True:
         try:
@@ -345,7 +338,7 @@ async def run_symbol(
                     if len(df_buffer) < 50:
                         continue
 
-                    _, x_pred = _prepare_feature_row(df_buffer, strategy, feature_cols, symbol, model_name)
+                    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
                     if x_pred is None:
                         continue
 
@@ -362,8 +355,8 @@ async def run_symbol(
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
             await asyncio.sleep(2)
-        except Exception as e:
-            logger.error("Error en loop WS de %s: %s", symbol, str(e), exc_info=True)
+        except Exception:
+            logger.exception("Error en loop WS de %s", symbol)
             await asyncio.sleep(5)
 
 # =========================

@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.bottrading.shared.utils.AppConstants;
 import com.bottrading.shared.utils.SafeParser;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
@@ -20,6 +21,7 @@ import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
 import com.bottrading.trading.application.port.out.TradeResultsPort;
 import com.bottrading.trading.domain.Posicion;
+import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
 import com.bottrading.trading.infrastructure.cache.StatsCache;
 
@@ -39,18 +41,21 @@ public class PaperTradingService implements ProcessSignalUseCase {
     private final PosicionRepositoryPort posicionRepo;
     private final TradeResultsPort tradeResultsPort;
     private final StatsCache statsCache;
+    private final ProcessedSignalRegistry signalRegistry;
 
     @Autowired
     public PaperTradingService(AccountingUseCase accountingService,
             InstanciaEstrategiaRepository instanciaRepo,
             PosicionRepositoryPort posicionRepo,
             TradeResultsPort tradeResultsPort,
-            StatsCache statsCache) {
+            StatsCache statsCache,
+            ProcessedSignalRegistry signalRegistry) {
         this.accountingService = accountingService;
         this.instanciaRepo = instanciaRepo;
         this.posicionRepo = posicionRepo;
         this.tradeResultsPort = tradeResultsPort;
         this.statsCache = statsCache;
+        this.signalRegistry = signalRegistry;
     }
 
     /**
@@ -66,6 +71,15 @@ public class PaperTradingService implements ProcessSignalUseCase {
     @Transactional
     @Override
     public void onSignal(Long instanciaId, SignalDTO signal) {
+        // Idempotencia: una señal ya aplicada con éxito (reentregada o reintentada
+        // tras un fallo posterior) no debe volver a ejecutarse.
+        String idempotencyKey = signal.idempotencyKey();
+        if (signalRegistry.seen(instanciaId, idempotencyKey)) {
+            log.debug("Señal duplicada ignorada por idempotencia: [{}] {} {} @ {}",
+                    instanciaId, signal.getAction(), signal.getSymbol(), signal.getTimestamp());
+            return;
+        }
+
         InstanciaEstrategia instancia = instanciaRepo.findByIdWithLock(instanciaId)
                 .orElseThrow(() -> new RuntimeException("Instancia no encontrada: " + instanciaId));
 
@@ -78,6 +92,10 @@ public class PaperTradingService implements ProcessSignalUseCase {
         } else if ("SELL".equals(signal.getAction())) {
             handleSell(instancia, signal);
         }
+
+        // Marcar solo tras aplicar con éxito: si algún handle lanzó, no se marca y
+        // el reintento podrá volver a intentarlo (la @Transactional revierte el efecto parcial).
+        signalRegistry.mark(instanciaId, idempotencyKey);
     }
 
     /**
@@ -186,7 +204,7 @@ public class PaperTradingService implements ProcessSignalUseCase {
         newStats.put("op_totales", totales);
         newStats.put("retorno_total", retornoTotal);
         newStats.put("win_rate", String.format("%.2f%%", winRate));
-        newStats.put("resultado", retornoTotal.compareTo(BigDecimal.ZERO) >= 0 ? "PROFIT" : "LOSS");
+        newStats.put(AppConstants.KEY_RESULTADO, clasificarResultado(retornoTotal));
         newStats.put("fecha_fin", new Date().toString());
 
         // Actualizar en caché (se guardará a disco automáticamente)
@@ -195,5 +213,17 @@ public class PaperTradingService implements ProcessSignalUseCase {
         log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {}%",
                 ganadas, perdidas, String.format("%.2f", winRate));
         return newStats;
+    }
+
+    /**
+     * Clasifica el retorno con el mismo vocabulario y los mismos cortes que
+     * backtest_engine.py, que escribe en este mismo CSV.
+     */
+    private String clasificarResultado(BigDecimal retornoTotal) {
+        int signo = retornoTotal.compareTo(BigDecimal.ZERO);
+        if (signo > 0) {
+            return AppConstants.RESULTADO_GANANCIA;
+        }
+        return signo < 0 ? AppConstants.RESULTADO_PERDIDA : AppConstants.RESULTADO_NEUTRO;
     }
 }

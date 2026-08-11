@@ -17,7 +17,7 @@ import csv
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -36,13 +36,19 @@ os.makedirs(results_root, exist_ok=True)
 if code_dir not in sys.path:
     sys.path.insert(0, code_dir)
 
-from strategies.BaseStrategy import BaseStrategy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 # Capital y riesgo por defecto cuando la estrategia no tiene valores explícitos
 _DEFAULT_CAPITAL: float = 10_000.0
 _DEFAULT_RISK: float = 0.02
+
+# Vocabulario del campo 'resultado' del CSV de stats. Este modulo es la fuente de
+# verdad: el paper trading en vivo (PaperTradingService) escribe en el mismo fichero
+# y replica estos valores en AppConstants.RESULTADO_*. Mantenerlos sincronizados.
+RESULTADO_GANANCIA: str = "GANANCIA"
+RESULTADO_PERDIDA: str = "PERDIDA"
+RESULTADO_NEUTRO: str = "NEUTRO"
 
 
 # =============================================================================
@@ -115,7 +121,7 @@ def guardar_trade_a_csv(carpeta_estrategia: str, symbol: str, timeframe: str, tr
                 trade.get("pnl", ""),
                 trade.get("capital", ""),
             ])
-    except IOError as exc:
+    except OSError as exc:
         logger.error("Error escribiendo trade a CSV: %s", exc)
         raise
 
@@ -258,8 +264,7 @@ def run_backtest_with_predictions(
     pos_pnl = neg_pnl = 0.0
 
     for i, row in enumerate(df.itertuples(index=False)):
-        row_data = row._asdict()
-        price = float(row_data["close"])
+        price = float(row.close)
         pred = int(predictions[i])
 
         if not in_position and pred == 1:
@@ -268,7 +273,9 @@ def run_backtest_with_predictions(
             current_position_size = _open_long(capital, risk_per_trade, price)
             trade_count += 1
 
-        elif in_position and (pred != 1 or strategy.should_close(row_data, entry_price)):
+        # row._asdict() solo se materializa si de verdad hay que consultar la estrategia:
+        # esta funcion es el bucle caliente de Optuna (una pasada por trial).
+        elif in_position and (pred != 1 or strategy.should_close(row._asdict(), entry_price)):
             in_position = False
             (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
              peak_capital, max_drawdown, _) = _close_long(
@@ -343,17 +350,17 @@ def _calculate_backtest_stats(
     fecha_fin = "N/A"
     if not df.empty and "timestamp" in df.columns:
         fecha_inicio = datetime.fromtimestamp(
-            df["timestamp"].iloc[0] / 1000, timezone.utc
+            df["timestamp"].iloc[0] / 1000, UTC
         ).isoformat()
         fecha_fin = datetime.fromtimestamp(
-            df["timestamp"].iloc[-1] / 1000, timezone.utc
+            df["timestamp"].iloc[-1] / 1000, UTC
         ).isoformat()
 
-    resultado = "NEUTRO"
+    resultado = RESULTADO_NEUTRO
     if retorno_total > 0:
-        resultado = "GANANCIA"
+        resultado = RESULTADO_GANANCIA
     elif retorno_total < 0:
-        resultado = "PERDIDA"
+        resultado = RESULTADO_PERDIDA
 
     return {
         "symbol": symbol,
@@ -389,5 +396,5 @@ def _generate_empty_stats(symbol: str, strategy) -> dict[str, Any]:
         "profit_factor": 0.0,
         "fecha_inicio": "N/A",
         "fecha_fin": "N/A",
-        "resultado": "NEUTRO",
+        "resultado": RESULTADO_NEUTRO,
     }

@@ -2,9 +2,7 @@ package com.bottrading.trading.application;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.Objects;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +17,7 @@ import com.bottrading.trading.domain.LedgerType;
 import com.bottrading.wallet.application.port.out.WalletRepositoryPort;
 import com.bottrading.wallet.domain.Wallet;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -28,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Slf4j
 @Transactional
+@RequiredArgsConstructor
 public class AccountingService implements AccountingUseCase {
 
     private final WalletRepositoryPort walletRepo;
@@ -35,14 +35,6 @@ public class AccountingService implements AccountingUseCase {
     private final InstanciaEstrategiaRepository estrategiaRepo;
 
     private final LedgerRepositoryPort ledgerRepo;
-
-    @Autowired
-    public AccountingService(WalletRepositoryPort walletRepo, InstanciaEstrategiaRepository estrategiaRepo,
-            LedgerRepositoryPort ledgerRepo) {
-        this.walletRepo = walletRepo;
-        this.estrategiaRepo = estrategiaRepo;
-        this.ledgerRepo = ledgerRepo;
-    }
 
     /**
      * Activa una estrategia reservando el capital especificado de la Wallet.
@@ -139,7 +131,7 @@ public class AccountingService implements AccountingUseCase {
 
         e.setEstado(EstadoEstrategia.TERMINADA);
         
-        walletRepo.save(Objects.requireNonNull(w, "Wallet no puede ser null"));
+        walletRepo.save(w);
         estrategiaRepo.save(e);
     }
 

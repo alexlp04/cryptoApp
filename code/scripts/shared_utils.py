@@ -17,9 +17,14 @@ import os
 import sys
 import time
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    # Solo para anotaciones: numpy se importa de forma diferida dentro de las
+    # funciones que lo necesitan para no encarecer el arranque de los engines.
+    import numpy as np
 
 # =============================================================================
 # RUTAS DEL PROYECTO
@@ -83,6 +88,21 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
 
 
 # =============================================================================
+# PROTOCOLO DE LÍNEA DEL CANAL RT (Python -> Java)
+# =============================================================================
+# El canal de tiempo real NO usa MessagePack framed (a diferencia del canal
+# request/response): es NDJSON, una línea por mensaje con el formato
+# ``PREFIJO\tJSON`` sobre stdout. Java lo parsea línea a línea. Este es el punto
+# único donde se define el formato de las líneas de señal (ver IPC_PROTOCOL.md).
+SIGNAL_PREFIX: str = "SIGNAL\t"
+
+
+def build_signal_line(signal: dict) -> str:
+    """Construye una línea de señal RT para stdout (``SIGNAL\\tJSON``)."""
+    return SIGNAL_PREFIX + json.dumps(signal)
+
+
+# =============================================================================
 # HEARTBEAT DEL CANAL RT (liveness)
 # =============================================================================
 HEARTBEAT_PREFIX: str = "HEARTBEAT\t"
@@ -129,7 +149,7 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
             tf.config.experimental.set_memory_growth(gpu, True)
         except RuntimeError:
             break
-        except Exception as exc:  # pragma: no cover - depende del runtime CUDA real
+        except Exception as exc:  # noqa: BLE001 # pragma: no cover - runtime CUDA real
             logging.getLogger(__name__).debug(
                 "No se pudo activar memory growth para %s: %s",
                 gpu.name,
@@ -165,8 +185,13 @@ def _build_sample_weight(
     except ImportError:
         return None
 
+    # Se recorre el diccionario de clases (unas pocas) en vez de las muestras (muchas):
+    # esto se ejecuta en cada fit, es decir por fold y por trial de Optuna.
     y_np = np.asarray(y_train)
-    return np.array([float(class_weight.get(int(label), 1.0)) for label in y_np], dtype=float)
+    pesos = np.ones(len(y_np), dtype=float)
+    for clase, peso in class_weight.items():
+        pesos[y_np == clase] = float(peso)
+    return pesos
 
 
 def _fit_supports_sample_weight(model: Any) -> bool:
@@ -211,11 +236,14 @@ def _disable_gpu_backend_for_process(model_type: str, exc: Exception) -> None:
 
 def _describe_model_backend(model: Any) -> str:
     module_name = type(model).__module__
+    # El fallback `dict` cubre modelos sin get_params (dobles de test, por ejemplo);
+    # se anota porque sin ello el tipo inferido es dict[Never, Never] y .get() no encaja.
+    params: dict[str, Any] = getattr(model, "get_params", dict)()
     if module_name.startswith("xgboost."):
-        device = getattr(model, "get_params", lambda: {})().get("device", "cpu")
+        device = params.get("device", "cpu")
         return "GPU (XGBoost CUDA)" if str(device).lower() == "cuda" else "CPU (XGBoost)"
     if module_name.startswith("lightgbm."):
-        device_type = getattr(model, "get_params", lambda: {})().get("device_type", "cpu")
+        device_type = params.get("device_type", "cpu")
         return "GPU (LightGBM)" if str(device_type).lower() == "gpu" else "CPU (LightGBM)"
     if module_name.startswith("sklearn."):
         return "CPU (sklearn)"
@@ -266,7 +294,7 @@ def load_strategy_by_name(
         try:
             module = importlib.import_module(module_name)
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - se prueban varias rutas antes de rendirse
             errors.append(f"{module_name}: {exc}")
 
     if module is None:
@@ -280,7 +308,9 @@ def load_strategy_by_name(
         raise ValueError(f"No existe la clase '{strategy_name}' en el módulo de estrategia.")
 
     if not isinstance(strategy_class, type) or not issubclass(strategy_class, BaseStrategy):
-        raise ValueError(f"La clase '{strategy_name}' no hereda de BaseStrategy.")
+        raise ValueError(  # noqa: TRY004 - coherente con las validaciones vecinas
+            f"La clase '{strategy_name}' no hereda de BaseStrategy."
+        )
 
     return strategy_class(capital=capital, risk_per_trade=risk_per_trade)
 
@@ -427,8 +457,8 @@ def build_sklearn_model(
     import joblib as _jl  # noqa: F401 — importado aquí para no añadir dep al nivel de módulo
 
     try:
-        import xgboost as xgb
         import lightgbm as lgb
+        import xgboost as xgb
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
         from sklearn.svm import SVC
@@ -446,7 +476,10 @@ def build_sklearn_model(
 
     if model_type == "xgboost":
         clean.pop("use_label_encoder", None)  # clave obsoleta de versiones antiguas
-        base = {"n_estimators": 150, "learning_rate": 0.05,
+        # Bolsa heterogénea de hiperparámetros (str/int/float/bool): sin la anotación
+        # se infiere dict[str, object] y el desempaquetado **base choca con las firmas
+        # tipadas de los estimadores.
+        base: dict[str, Any] = {"n_estimators": 150, "learning_rate": 0.05,
                 "max_depth": 6, "random_state": 42, "eval_metric": "logloss"}
         if use_gpu:
             base.update({"tree_method": "hist", "device": "cuda"})
@@ -526,13 +559,13 @@ def fit_sklearn_model(
 
 
 def build_and_train_neural_network(
-    X_train: "np.ndarray",
-    y_train: "np.ndarray",
-    X_test: "np.ndarray",
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
     hyperparams: dict[str, Any],
     n_classes: int = 2,
     class_weight: dict[int, float] | None = None,
-) -> "tuple[Any, np.ndarray]":
+) -> tuple[Any, np.ndarray]:
     """
     Construye, entrena y evalúa una Red Neuronal Feed-Forward.
 

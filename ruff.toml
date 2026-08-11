@@ -1,0 +1,26 @@
+# Configuración de ruff para CryptoApp.
+#
+# Sin este fichero ruff aplica sus valores por defecto, que cambian entre versiones:
+# el conjunto de reglas dependería de la versión instalada en cada máquina y el CI
+# acabaría juzgando el código con un criterio distinto al local. La versión concreta
+# se fija en requirements.txt.
+#
+# No se amplía el conjunto de reglas respecto al comportamiento por defecto: aquí solo
+# se declara el objetivo del lenguaje y las excepciones que responden a decisiones
+# deliberadas del proyecto.
+
+target-version = "py311"
+line-length = 100
+
+exclude = [
+    ".venv",
+    "models",
+    "results",
+    "logs",
+]
+
+[lint.per-file-ignores]
+# Los módulos de estrategia usan PascalCase a propósito: un fichero por clase, con el
+# mismo nombre que la clase, porque load_strategy_by_name() resuelve módulo y clase a
+# partir del mismo identificador (ver shared_utils.load_strategy_by_name).
+"code/strategies/*.py" = ["N999"]
