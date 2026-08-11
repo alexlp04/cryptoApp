@@ -37,7 +37,6 @@ def _build_session() -> requests.Session:
         pool_maxsize=MAX_PARALLEL_WORKERS,
     )
     session.mount("https://", adapter)
-    session.mount("http://", adapter)
     return session
 
 
