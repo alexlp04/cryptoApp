@@ -308,17 +308,17 @@ def _simulate(
         # Tras un stop no se reentra en la misma vela; tras una salida por señal solo si hay cortos (giro).
         if not in_position and not stopped and (shorts or len(capital_history) == closed_before):
             if entry_signal(i, row):
-                levels = strategy_levels(strategy, price, row())
+                new_levels = strategy_levels(strategy, price, row())
                 if limit:
-                    if levels and valid_stop(price, levels[0]):
-                        pending_buy = (price, levels)
+                    if new_levels and valid_stop(price, new_levels[0]):
+                        pending_buy = (price, new_levels)
                     else:
                         skipped_no_stop += 1
-                elif not (levels and open_position(price * (1 + slippage), levels, price, timestamp)):
+                elif not (new_levels and open_position(price * (1 + slippage), new_levels, price, timestamp)):
                     skipped_no_stop += 1
             elif short_entry_signal is not None and short_entry_signal(i, row):
-                levels = strategy_levels(strategy, price, row(), short=True)
-                if not (levels and open_position(price * (1 - slippage), levels, price, timestamp, is_short=True)):
+                new_levels = strategy_levels(strategy, price, row(), short=True)
+                if not (new_levels and open_position(price * (1 - slippage), new_levels, price, timestamp, is_short=True)):
                     skipped_no_stop += 1
 
         if not in_position:
