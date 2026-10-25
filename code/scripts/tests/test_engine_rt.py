@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from collections import deque
 
-from engine_rt import _buffer_size, _upsert_candle
+from engine_rt import _buffer_size
+from shared_utils import upsert_candle as _upsert_candle
 
 
 def _candle(ts: int, close: float) -> dict:

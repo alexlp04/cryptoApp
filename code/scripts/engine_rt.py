@@ -14,6 +14,7 @@ from shared_utils import (
     emit_heartbeats,
     load_strategy_by_path,
     setup_engine_logging,
+    upsert_candle,
 )
 
 logger = setup_engine_logging("engine_rt")
@@ -37,14 +38,6 @@ class StrategyFailure(RuntimeError):
 def _buffer_size(max_candles: int, warmup: int) -> int:
     """Tamaño del buffer: nunca menor que el calentamiento que exige la estrategia."""
     return max(max_candles, warmup)
-
-
-def _upsert_candle(buffer: deque, candle: dict) -> None:
-    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden."""
-    if buffer and buffer[-1]["timestamp"] == candle["timestamp"]:
-        buffer[-1] = candle
-    else:
-        buffer.append(candle)
 
 
 def _build_rt_signal(
@@ -107,7 +100,7 @@ async def run_symbol(
                     # con precisión total (Decimal) sin depender del redondeo de float64.
                     raw_close: str = k["c"]
 
-                    _upsert_candle(buffer, {
+                    upsert_candle(buffer, {
                         "timestamp": int(k["t"]),
                         "open": float(k["o"]),
                         "high": float(k["h"]),

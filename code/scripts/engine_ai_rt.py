@@ -20,8 +20,10 @@ from shared_utils import (
     PROJECT_ROOT,
     build_signal_line,
     emit_heartbeats,
+    fetch_recent_klines,
     load_strategy_by_path,
     setup_engine_logging,
+    upsert_candle,
 )
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
@@ -160,9 +162,11 @@ def _prepare_feature_row(
         ultima_fila
         .apply(pd.to_numeric, errors="coerce")
         .replace([float("inf"), float("-inf")], float("nan"))
-        .fillna(0.0)
-        .astype("float32")
     )
+    if ultima_fila.isna().any(axis=None):
+        # Rellenar con 0.0 daría al modelo features que nunca vio al entrenar (train descarta estas filas).
+        logger.warning("[%s] Features con NaN/inf (indicadores sin calentar); se omite predicción.", symbol)
+        return None
     return ultima_fila.to_numpy(dtype="float32", copy=False)
 
 
@@ -295,6 +299,44 @@ def _emit_signal(
 # =========================
 # LOOP POR SÍMBOLO
 # =========================
+MAX_CONSECUTIVE_FAILURES = 5
+MIN_WARMUP_CANDLES = 50
+BACKFILL_MARGIN = 50
+
+
+class ModelFailure(RuntimeError):
+    """La predicción falla de forma persistente: reconectar el WebSocket no lo arregla."""
+
+
+def _warmup_candles(strategy) -> int:
+    """Velas mínimas antes de predecir: lo que pide la estrategia, con un suelo."""
+    return max(strategy.get_warmup_period(), MIN_WARMUP_CANDLES)
+
+
+def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_name, label_classes):
+    """Features + predicción (trabajo de CPU, se ejecuta fuera del event loop)."""
+    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
+    if x_pred is None:
+        return None
+    if model_type == "ml_standard":
+        return _predict_ml_standard(model, x_pred, model_name, symbol, label_classes)
+    if model_type == "deep_learning":
+        return _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
+    return None
+
+
+async def _seed_buffer(df_buffer: deque, symbol: str, timeframe: str) -> None:
+    """Rellena el buffer con velas cerradas por REST: sin esperar horas y sin huecos tras reconectar."""
+    try:
+        klines = await asyncio.to_thread(fetch_recent_klines, symbol, timeframe, df_buffer.maxlen)
+    except Exception:
+        logger.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
+        return
+    df_buffer.clear()
+    df_buffer.extend(klines)
+    logger.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(df_buffer))
+
+
 async def run_symbol(
     symbol: str,
     timeframe: str,
@@ -312,16 +354,24 @@ async def run_symbol(
     logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
     model, model_type, label_classes = load_model(model_name, timeframe, symbol)
-    df_buffer: deque = deque(maxlen=max_candles)
+    min_candles = _warmup_candles(strategy)
+    df_buffer: deque = deque(maxlen=max(max_candles, min_candles + BACKFILL_MARGIN))
     last_processed_event_id = 0
+    consecutive_failures = 0
+    retry_delay = 5
+    max_retry_delay = 300
 
     while True:
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
+                await _seed_buffer(df_buffer, symbol, timeframe)
                 async for msg in ws:
                     data = json.loads(msg)
-                    k = data["k"]
+                    k = data.get("k")
+                    if not k:
+                        continue  # mensajes que no son kline
+                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
                     is_candle_closed = k["x"]
 
                     if not is_candle_closed and not high_activity_test_mode:
@@ -344,31 +394,36 @@ async def run_symbol(
                         "close": float(k["c"]),
                         "volume": float(k["v"]),
                     }
-                    df_buffer.append(new_row)
+                    upsert_candle(df_buffer, new_row)
 
-                    if len(df_buffer) < 50:
+                    if len(df_buffer) < min_candles:
                         continue
 
-                    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
-                    if x_pred is None:
+                    try:
+                        action = await asyncio.to_thread(
+                            _decide_action, df_buffer, strategy, symbol,
+                            model, model_type, model_name, label_classes)
+                        consecutive_failures = 0
+                    except Exception:
+                        # Un fallo del modelo/estrategia no es una caída de red: no reconectar.
+                        consecutive_failures += 1
+                        logger.exception("Error de predicción en %s (%d/%d)",
+                                         symbol, consecutive_failures, MAX_CONSECUTIVE_FAILURES)
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
                         continue
-
-                    if model_type == "ml_standard":
-                        action = _predict_ml_standard(model, x_pred, model_name, symbol, label_classes)
-                    elif model_type == "deep_learning":
-                        action = _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
-                    else:
-                        action = None
 
                     if action:
                         _emit_signal(symbol, action, timeframe, new_row, model_name, is_real)
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
-            await asyncio.sleep(2)
+            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+        except ModelFailure:
+            raise  # termina el proceso con código != 0 para que Java lo supervise
         except Exception:
             logger.exception("Error en loop WS de %s", symbol)
-            await asyncio.sleep(5)
+
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, max_retry_delay)
 
 # =========================
 # MAIN
