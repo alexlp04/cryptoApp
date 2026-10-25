@@ -140,10 +140,7 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return;
         }
 
-        // Bloquear capital en la cuenta
-        accountingService.commitCapital(e.getId(), montoAInvertir, e.getRiskPerTrade());
-
-        // Crear registro de posición
+        // Primero la posición (para tener su id) y luego el capital: la referencia del ledger la cita.
         Posicion pos = new Posicion();
         pos.setInstancia(e);
         pos.setSimbolo(signal.getSymbol());
@@ -151,6 +148,8 @@ public class PaperTradingService implements ProcessSignalUseCase {
         pos.setMargenInvertido(montoAInvertir);
         pos.setAbierta(true);
         posicionRepo.save(pos);
+
+        accountingService.commitCapital(e.getId(), montoAInvertir, e.getRiskPerTrade(), "posicion:" + pos.getId() + ":open");
         log.info("[{}] BUY {} @ {} (margen {})", e.getId(), signal.getSymbol(), signal.getPrice(), montoAInvertir);
     }
 
@@ -170,7 +169,7 @@ public class PaperTradingService implements ProcessSignalUseCase {
 
         // Liquidar contablemente: liberar el mismo riesgo que se comprometió al abrir
         accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto,
-                e.getRiskPerTrade());
+                e.getRiskPerTrade(), "posicion:" + pos.getId() + ":close");
 
         // Cerrar posición lógica
         pos.setAbierta(false);

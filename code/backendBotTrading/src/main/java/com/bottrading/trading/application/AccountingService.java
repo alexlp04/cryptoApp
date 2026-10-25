@@ -54,10 +54,10 @@ public class AccountingService implements AccountingUseCase {
     public InstanciaEstrategia activateStrategy(long walletId, long estrategiaId, BigDecimal capital) {
         try {
             // Bloqueo pesimista en ambas entidades para evitar condiciones de carrera
-            Wallet w = walletRepo.findByIdWithLock(walletId)
-                    .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
             InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                     .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
+            Wallet w = walletRepo.findByIdWithLock(walletId)
+                    .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
 
             validarActivacion(w, e, capital);
 
@@ -69,7 +69,7 @@ public class AccountingService implements AccountingUseCase {
             e.setCapitalAsignado(capital);
             e.setEstado(EstadoEstrategia.ACTIVA);
 
-            saveLedger(w, e, LedgerType.RESERVED, capital.negate());
+            saveLedger(w, e, LedgerType.RESERVED, capital.negate(), "estrategia:" + estrategiaId + ":activar");
 
             walletRepo.save(w);
             return estrategiaRepo.save(e);
@@ -89,10 +89,10 @@ public class AccountingService implements AccountingUseCase {
      */
     @Override
     public void closeStrategy(Long walletId, Long estrategiaId) {
-        Wallet w = walletRepo.findByIdWithLock(walletId)
-                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                 .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
+        Wallet w = walletRepo.findByIdWithLock(walletId)
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
         
         liquidarPosicionesAbiertas(w, e);
 
@@ -102,7 +102,7 @@ public class AccountingService implements AccountingUseCase {
 
             w.setBalanceDisponible(w.getBalanceDisponible().add(liberar));
             
-            saveLedger(w, e, LedgerType.AVAILABLE, liberar);
+            saveLedger(w, e, LedgerType.AVAILABLE, liberar, "estrategia:" + estrategiaId + ":cerrar");
             
             // Reset contadores estrategia
             e.setCapitalReservado(BigDecimal.ZERO);
@@ -125,9 +125,11 @@ public class AccountingService implements AccountingUseCase {
      * @param risk Riesgo calculado para esta operación.
      */
     @Override
-    public void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk) {
+    public void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk, String reference) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                 .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
+        Wallet w = walletRepo.findByIdWithLock(e.getWalletAsociada())
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + e.getWalletAsociada()));
 
         exigirPositivo(margin, "margen");
         if (risk == null || risk.signum() < 0) {
@@ -141,15 +143,7 @@ public class AccountingService implements AccountingUseCase {
         e.setCapitalComprometido(e.getCapitalComprometido().add(margin));
         e.setRiesgoAbierto(e.getRiesgoAbierto().add(risk));
 
-        // Registrar en Ledger para auditoria completa
-        LedgerEntry le = new LedgerEntry();
-        le.setWalletId(e.getWalletAsociada());
-        le.setEstrategiaId(e.getId());
-        le.setType(LedgerType.MARGIN_COMMITTED);
-        le.setAmount(margin.negate());
-        le.setBalanceAfter(e.getCapitalReservado());
-        le.setTimestamp(Instant.now());
-        ledgerRepo.save(le);
+        saveLedger(w, e, LedgerType.MARGIN_COMMITTED, margin.negate(), reference);
 
         estrategiaRepo.save(e);
     }
@@ -165,11 +159,12 @@ public class AccountingService implements AccountingUseCase {
      * @param risk Riesgo a reducir.
      */
     @Override
-    public void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk) {
-        Wallet w = walletRepo.findByIdWithLock(walletId)
-                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
+    public void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk,
+            String reference) {
         InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
                 .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
+        Wallet w = walletRepo.findByIdWithLock(walletId)
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
 
         exigirPositivo(margin, "margen");
         if (pnl == null || risk == null || risk.signum() < 0) {
@@ -184,7 +179,7 @@ public class AccountingService implements AccountingUseCase {
 
         w.setBalanceReal(w.getBalanceReal().add(pnl));
 
-        saveLedger(w, e, LedgerType.REALIZED_PNL, pnl);
+        saveLedger(w, e, LedgerType.REALIZED_PNL, pnl, reference);
 
         walletRepo.save(w);
         estrategiaRepo.save(e);
@@ -202,7 +197,7 @@ public class AccountingService implements AccountingUseCase {
         w.setBalanceReal(w.getBalanceReal().subtract(fee));
         w.setBalanceDisponible(w.getBalanceDisponible().subtract(fee));
 
-        saveLedger(w, null, LedgerType.FEE, fee.negate());
+        saveLedger(w, null, LedgerType.FEE, fee.negate(), null);
         walletRepo.save(w);
     }
 
@@ -260,16 +255,21 @@ public class AccountingService implements AccountingUseCase {
         e.setCapitalReservado(e.getCapitalReservado().add(comprometido));
         e.setCapitalComprometido(BigDecimal.ZERO);
         e.setRiesgoAbierto(BigDecimal.ZERO);
-        saveLedger(w, e, LedgerType.REALIZED_PNL, BigDecimal.ZERO);
+        saveLedger(w, e, LedgerType.REALIZED_PNL, BigDecimal.ZERO, "estrategia:" + e.getId() + ":liquidacion");
     }
 
-    private void saveLedger(Wallet w, InstanciaEstrategia e, LedgerType type, BigDecimal amount) {
+    /**
+     * balanceAfter es siempre el balanceReal de la wallet tras el movimiento (así el ledger se lee con un
+     * único significado); reference liga la entrada con lo que la causó, p. ej. "posicion:12:open".
+     */
+    private void saveLedger(Wallet w, InstanciaEstrategia e, LedgerType type, BigDecimal amount, String reference) {
         LedgerEntry le = new LedgerEntry();
         le.setWalletId(w.getId());
         le.setEstrategiaId(e != null ? e.getId() : null);
         le.setType(type);
         le.setAmount(amount);
         le.setBalanceAfter(w.getBalanceReal());
+        le.setReference(reference);
         le.setTimestamp(Instant.now());
         ledgerRepo.save(le);
     }

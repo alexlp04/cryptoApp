@@ -17,13 +17,13 @@ public class LedgerPersistenceAdapter implements LedgerRepositoryPort {
     private final LedgerRepository ledgerRepository;
 
     @Override
-    public List<LedgerEntry> findByWalletIdOrderByTimestampDesc(Long walletId) {
-        return ledgerRepository.findByWalletIdOrderByTimestampDesc(walletId);
+    public List<LedgerEntry> findByWalletIdOrderByIdDesc(Long walletId) {
+        return ledgerRepository.findByWalletIdOrderByIdDesc(walletId);
     }
 
     @Override
-    public List<LedgerEntry> findByEstrategiaIdOrderByTimestampDesc(Long estrategiaId) {
-        return ledgerRepository.findByEstrategiaIdOrderByTimestampDesc(estrategiaId);
+    public List<LedgerEntry> findByEstrategiaIdOrderByIdDesc(Long estrategiaId) {
+        return ledgerRepository.findByEstrategiaIdOrderByIdDesc(estrategiaId);
     }
 
     @Override
