@@ -128,3 +128,108 @@ class TestOptimizationSearchSpaces:
         assert model.get_params()["C"] == pytest.approx(1.5)
         assert model.get_params()["kernel"] == "poly"
         assert model.get_params()["degree"] == 3
+
+# ── Clases ausentes y métricas (#79) ─────────────────────────────────────────
+
+def test_encode_labels_descarta_del_test_las_clases_que_train_no_vio():
+    from shared_utils import encode_labels
+
+    enc, _y_train, y_test, keep = encode_labels(np.array([-1, 0, 1, 0]), np.array([0, 1, 2, -1]))
+
+    assert enc.classes_.tolist() == [-1, 0, 1]
+    assert keep.tolist() == [True, True, False, True]
+    assert y_test.tolist() == [1, 2, 0]
+
+
+def test_metric_average_es_binary_solo_con_etiquetas_0_1():
+    from shared_utils import metric_average
+
+    assert metric_average(np.array([0, 1]), np.array([1, 1])) == "binary"
+    # 3 clases entrenadas pero test ⊂ {0, 2}: pos_label=1 no existe → no puede ser binary
+    assert metric_average(np.array([0, 2]), np.array([2, 0])) == "weighted"
+
+
+def test_contiguous_classes():
+    from engine_optimize import _contiguous_classes
+
+    assert _contiguous_classes(np.array([0, 1, 2, 1]))
+    assert not _contiguous_classes(np.array([0, 2, 2]))
+
+
+# ── Objetivo de Optuna: errores = FAIL, poda real (#90) ──────────────────────
+
+def _objective_fixture(monkeypatch, model_type="random_forest"):
+    import engine_optimize as eo
+    import pandas as pd
+    from sklearn.preprocessing import LabelEncoder
+
+    rng = np.random.default_rng(1)
+    n = 120
+    x = rng.normal(size=(n, 3))
+    y = rng.integers(0, 3, size=n)
+    ts = np.arange(n, dtype=np.int64)
+    df = pd.DataFrame({"timestamp": ts, "close": 1.0})
+    enc = LabelEncoder().fit([-1, 0, 1])
+    monkeypatch.setattr(eo, "run_backtest_with_predictions",
+                        lambda *a, **k: {"win_rate": 50.0, "profit_factor": 1.0, "sharpe": 0.5})
+    log: list = []
+    objective = eo._make_objective(model_type, x, y, df, object(), ts, "BTCUSDT", 3, log, enc)
+    return eo, objective, log
+
+
+def test_un_trial_roto_queda_como_fail_y_no_como_pruned(monkeypatch):
+    eo, objective, log = _objective_fixture(monkeypatch)
+    monkeypatch.setattr(eo, "fit_sklearn_model", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=2, catch=(Exception,))
+
+    estados = {t.state for t in study.trials}
+    assert estados == {optuna.trial.TrialState.FAIL}
+    assert "ValueError: boom" in log[0]["error"]
+
+
+def test_el_objetivo_reporta_por_fold_y_el_pruner_puede_podar(monkeypatch):
+    _, objective, _ = _objective_fixture(monkeypatch)
+
+    # ThresholdPruner(lower=2): f1 ∈ [0,1] < 2 → poda en cuanto hay un report
+    study = optuna.create_study(direction="maximize", pruner=optuna.pruners.ThresholdPruner(lower=2.0))
+    study.optimize(objective, n_trials=2, catch=(Exception,))
+
+    assert all(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+
+
+# ── El modelo final se entrena como se puntuó en los trials (#74) ────────────
+
+def test_balanced_class_weight_compensa_la_clase_minoritaria():
+    from engine_optimize import _balanced_class_weight
+
+    pesos = _balanced_class_weight(np.array([0] * 9 + [1]))
+
+    assert pesos[1] > pesos[0]
+    assert pesos[1] == pytest.approx(5.0)
+
+
+def test_el_modelo_sklearn_final_recibe_class_weight(monkeypatch, tmp_path):
+    import engine_optimize as eo
+
+    capturado = {}
+
+    class _Modelo:
+        def predict(self, x):
+            return np.zeros(len(x), dtype=int)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        capturado["class_weight"] = class_weight
+        return _Modelo()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())  # noqa: SIM115
+    y = np.array([0] * 9 + [1])
+
+    eo._train_sklearn_final(
+        "random_forest", {}, np.zeros((10, 2)), y, np.zeros((3, 2)), ["a", "b"],
+        "S", 1, str(tmp_path), "1h", "BTCUSDT", None,
+    )
+
+    assert capturado["class_weight"] == eo._balanced_class_weight(y)

@@ -120,6 +120,36 @@ def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[d
     ]
 
 
+def encode_labels(y_train_raw: Any, y_test_raw: Any) -> tuple[Any, Any, Any, Any]:
+    """Codifica labels a 0..K-1 con las clases de train y descarta del test las que no vio.
+
+    Devuelve (encoder, y_train, y_test, keep): keep es la máscara de filas de test conservadas
+    (el llamador debe filtrar con ella X_test y los timestamps). Sin esto, una clase rara que
+    solo aparece en el tramo final aborta la ejecución con 'unseen labels'.
+    """
+    import numpy as np
+    from sklearn.preprocessing import LabelEncoder
+
+    encoder = LabelEncoder()
+    y_train = encoder.fit_transform(y_train_raw)
+    y_test_raw = np.asarray(y_test_raw)
+    keep = np.isin(y_test_raw, encoder.classes_)
+    if not keep.all():
+        logging.getLogger(__name__).warning(
+            "Test: %d filas con clases ausentes en train (%s) descartadas",
+            int((~keep).sum()), sorted(set(y_test_raw[~keep].tolist())),
+        )
+    return encoder, y_train, encoder.transform(y_test_raw[keep]), keep
+
+
+def metric_average(*labels: Any) -> str:
+    """'binary' solo si todas las etiquetas son 0/1 (pos_label=1 existe); si no, 'weighted'."""
+    import numpy as np
+
+    present = set(np.unique(np.concatenate([np.asarray(x).ravel() for x in labels])).tolist())
+    return "binary" if present <= {0, 1} else "weighted"
+
+
 def atomic_save(path: str, save_fn: Any) -> None:
     """Guarda en un temporal y renombra: un RT que lee el modelo nunca ve un fichero a medias."""
     base, ext = os.path.splitext(path)
@@ -192,20 +222,6 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
             )
 
     return True, gpu_names
-
-
-def _apply_class_weight_if_supported(model: Any, class_weight: dict[int, float] | None) -> None:
-    if class_weight is None or not hasattr(model, "class_weight"):
-        return
-
-    try:
-        model.set_params(class_weight=class_weight)
-    except (TypeError, ValueError):
-        logging.getLogger(__name__).debug(
-            "El modelo %s ignora class_weight=%s",
-            type(model).__name__,
-            class_weight,
-        )
 
 
 def _build_sample_weight(
@@ -505,6 +521,8 @@ def build_sklearn_model(
     # Eliminar params propios de redes neuronales que no aplican a sklearn
     nn_keys = {"epochs", "batch_size", "hidden_layers", "neurons",
                "learning_rate", "dropout_rate"}
+    if model_type in ("xgboost", "lightgbm"):
+        nn_keys = nn_keys - {"learning_rate"}  # hiperparámetro propio de los árboles con boosting
     clean = {k: v for k, v in params.items() if k not in nn_keys}
 
     use_gpu = _gpu_backend_allowed(model_type, prefer_gpu)
@@ -562,10 +580,13 @@ def fit_sklearn_model(
     y_train: Any,
     class_weight: dict[int, float] | None = None,
 ) -> Any:
-    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado."""
+    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado.
+
+    El peso de clase se aplica solo vía sample_weight: sklearn y LightGBM multiplican
+    class_weight por sample_weight, así que usar ambos elevaría el peso al cuadrado.
+    """
     model = build_sklearn_model(model_type, params, prefer_gpu=True)
     _log_model_backend_once(model_type, model)
-    _apply_class_weight_if_supported(model, class_weight)
     sample_weight = _build_sample_weight(y_train, class_weight)
     fit_kwargs: dict[str, Any] = {}
     if sample_weight is not None and _fit_supports_sample_weight(model):
@@ -585,7 +606,6 @@ def fit_sklearn_model(
             prefer_gpu=False,
         )
         _log_model_backend_once(model_type, cpu_model)
-        _apply_class_weight_if_supported(cpu_model, class_weight)
         cpu_fit_kwargs: dict[str, Any] = {}
         if sample_weight is not None and _fit_supports_sample_weight(cpu_model):
             cpu_fit_kwargs["sample_weight"] = sample_weight
