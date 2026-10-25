@@ -31,8 +31,8 @@ public class StrategyQueryService implements QueryStrategiesUseCase {
      * Lista todas las estrategias.
      */
     @Override
-    public List<String> listarEstrategias() {
-        return instanciaRepo.findAll()
+    public List<String> listarEstrategias(Long usuarioId) {
+        return instanciaRepo.findByUsuarioId(usuarioId)
                 .stream()
                 .map(InstanciaEstrategia::toString)
                 .toList();
@@ -42,29 +42,29 @@ public class StrategyQueryService implements QueryStrategiesUseCase {
      * Lista estrategias activas.
      */
     @Override
-    public List<String> listarEstrategiasActivas() {
-        return listarPorEstado(EstadoEstrategia.ACTIVA, "No hay estrategias activas.");
+    public List<String> listarEstrategiasActivas(Long usuarioId) {
+        return listarPorEstado(usuarioId, EstadoEstrategia.ACTIVA, "No hay estrategias activas.");
     }
 
     /**
      * Lista estrategias en pausa.
      */
     @Override
-    public List<String> listarEstrategiasDetenidas() {
-        return listarPorEstado(EstadoEstrategia.DETENIDA, "No hay estrategias en pausa.");
+    public List<String> listarEstrategiasDetenidas(Long usuarioId) {
+        return listarPorEstado(usuarioId, EstadoEstrategia.DETENIDA, "No hay estrategias en pausa.");
     }
 
     /**
      * Lista estrategias terminadas.
      */
     @Override
-    public List<String> listarEstrategiasTerminadas() {
-        return listarPorEstado(EstadoEstrategia.TERMINADA, "No hay estrategias terminadas.");
+    public List<String> listarEstrategiasTerminadas(Long usuarioId) {
+        return listarPorEstado(usuarioId, EstadoEstrategia.TERMINADA, "No hay estrategias terminadas.");
     }
 
 
-    private List<String> listarPorEstado(EstadoEstrategia estado, String mensajeVacio) {
-        List<InstanciaEstrategia> lista = instanciaRepo.findByEstado(estado);
+    private List<String> listarPorEstado(Long usuarioId, EstadoEstrategia estado, String mensajeVacio) {
+        List<InstanciaEstrategia> lista = instanciaRepo.findByUsuarioIdAndEstado(usuarioId, estado);
         if (lista.isEmpty()) {
             return List.of(mensajeVacio);
         }

@@ -54,11 +54,6 @@ class TestBaseStrategyContract:
     def test_should_return_class_name_from_get_name(self, strategy):
         assert strategy.get_name() == "StressTestStrategy"
 
-    def test_should_calculate_position_size_correctly(self, strategy):
-        # 10000 * 0.02 / 50000 = 0.004
-        size = strategy.get_position_size(50_000.0)
-        assert abs(float(size) - 0.004) < 1e-9
-
     def test_should_return_warmup_period_at_least_strategy_constant(self, strategy):
         assert strategy.get_warmup_period() >= StressTestStrategy.WARMUP_PERIOD
 

@@ -72,23 +72,7 @@ public final class PythonProcessSupport {
      * Si es ruta relativa (e.g., ".venv/bin/python3"), se resuelve respecto al PROJECT_ROOT.
      */
     private static String resolvePythonExecutable() throws IOException {
-        String pythonExe = AppConstants.PYTHON_EXECUTABLE;
-        File pythonFile = new File(pythonExe);
-        
-        // Si ya es ruta absoluta y existe, usarla
-        if (pythonFile.isAbsolute() && pythonFile.exists()) {
-            return pythonExe;
-        }
-        
-        // Si es ruta relativa, resolver respecto a PROJECT_ROOT
-        File resolvedFile = Paths.get(PathConfig.PROJECT_ROOT, pythonExe).toFile();
-        if (resolvedFile.exists()) {
-            return resolvedFile.getAbsolutePath();
-        }
-        
-        // Fallback: intentar usar el ejecutable directamente (podría estar en PATH global)
-        // Esto permite que funcione si se recupera a "python3" en AppConstants
-        return pythonExe;
+        return PathConfig.resolvePythonExecutable();
     }
 
     /**

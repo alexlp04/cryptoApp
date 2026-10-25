@@ -26,7 +26,7 @@ public final class TermCommand implements CliCommand {
 
         if (parts[1].equalsIgnoreCase("-all")) {
             if (CliInputValidator.readYesNo(context, "Seguro que quieres LIQUIDAR TODAS las estrategias? (s/n): ")) {
-                context.strategyLifecycleUseCase().terminarTodas();
+                context.strategyLifecycleUseCase().terminarTodas(context.sessionManager().getCurrentUser().getId());
                 context.println().accept("Todas las estrategias han sido liquidadas.");
             } else {
                 context.println().accept("Operacion cancelada.");
@@ -39,8 +39,14 @@ public final class TermCommand implements CliCommand {
             return;
         }
 
+        if (!CliInputValidator.readYesNo(context,
+                "Liquidar la estrategia " + id + " cierra sus posiciones y devuelve los fondos. Seguro? (s/n): ")) {
+            context.println().accept("Operacion cancelada.");
+            return;
+        }
+
         try {
-            context.strategyLifecycleUseCase().terminarEstrategia(id);
+            context.strategyLifecycleUseCase().terminarEstrategia(id, context.sessionManager().getCurrentUser().getId());
             context.println().accept("Estrategia " + id + " liquidada.");
         } catch (Exception e) {
             context.println().accept("Error critico: " + e.getMessage());

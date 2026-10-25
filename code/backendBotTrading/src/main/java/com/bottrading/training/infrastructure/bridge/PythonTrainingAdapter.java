@@ -52,8 +52,8 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
                     .<TrainingResult>builder(PathConfig.ENGINE_TRAIN_PATH)
                     .operationName("train-model")
                     .inactivityTimeout(ProcessExecutorConfig.TRAIN_INACTIVITY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
-                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
+                    // No idempotente ni barato: un fallo del script debe llegar al usuario, no relanzar horas de trabajo.
+                    .maxRetries(1)
                     .stdinWriter(os -> IpcMessagePackCodec.writeEnvelope(os, IpcMessageType.TRAIN_REQUEST, payload))
                     .stdoutReader(this::leerTrainingResult)
                     .onStderrLine(line -> log.info("PY [train]: {}", line))
@@ -121,7 +121,7 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
         return fileName.endsWith(".py") ? fileName.substring(0, fileName.length() - 3) : fileName;
     }
 
-    private TrainingResult leerTrainingResult(InputStream inputStream) throws IOException {
+    TrainingResult leerTrainingResult(InputStream inputStream) throws IOException {
         Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
         Object payload = envelope.get("payload");
         if (!(payload instanceof Map<?, ?> rawPayload)) {
@@ -147,9 +147,17 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
             ? (Map<String, Object>) rawSim
             : Map.of();
 
-        Object errorValue = rawPayload.containsKey(KEY_ERROR) ? rawPayload.get(KEY_ERROR) : "Entrenamiento fallido";
+        Object errorValue = firstPresent(rawPayload, "message", KEY_ERROR, "Entrenamiento fallido");
         String errorMessage = success ? null : String.valueOf(errorValue);
 
         return new TrainingResult(modelPath, metrics, tradingSimulation, success, errorMessage);
+    }
+
+    /** Python escribe el error en "message" (ipc_protocol.write_error); "error" se mantiene por compatibilidad. */
+    private static Object firstPresent(Map<?, ?> payload, String key, String fallbackKey, String defaultValue) {
+        if (payload.get(key) != null) {
+            return payload.get(key);
+        }
+        return payload.get(fallbackKey) != null ? payload.get(fallbackKey) : defaultValue;
     }
 }

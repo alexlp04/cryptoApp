@@ -11,18 +11,16 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.stereotype.Service;
 
-import com.bottrading.market.application.port.in.CalculateIndicatorsUseCase;
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
 import com.bottrading.market.application.port.in.MarketDataUseCase;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
-import com.bottrading.market.domain.Vela;
 
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Servicio de orquestación de datos de mercado.
- * Coordina descarga histórica, recálculo de indicadores y preparación de datasets.
+ * Coordina la descarga de datos de mercado de varios símbolos en paralelo.
  */
 @Slf4j
 @Service
@@ -30,15 +28,12 @@ public class MarketOrchestrationService implements MarketDataUseCase {
 
     private final VelaRepositoryPort velaRepo;
     private final FetchMarketDataUseCase fetchService;
-    private final CalculateIndicatorsUseCase indicatorsService;
     private final ExecutorService marketDataExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public MarketOrchestrationService(VelaRepositoryPort velaRepo,
-            FetchMarketDataUseCase fetchService,
-            CalculateIndicatorsUseCase indicatorsService) {
+            FetchMarketDataUseCase fetchService) {
         this.velaRepo = velaRepo;
         this.fetchService = fetchService;
-        this.indicatorsService = indicatorsService;
     }
 
     @Override
@@ -80,48 +75,6 @@ public class MarketOrchestrationService implements MarketDataUseCase {
                 log.error("Fallo en una descarga de mercado: {}", e.getMessage(), e);
             }
         }
-    }
-
-    @Override
-    public void calcularIndicadoresParaSimbolo(String symbol, String interval) {
-        log.info("Calculando indicadores técnicos masivos para {} en {}...", symbol, interval);
-
-        List<Vela> velas = velaRepo.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, interval);
-
-        if (velas.isEmpty()) {
-            log.warn("No hay velas en la base de datos para calcular indicadores.");
-            return;
-        }
-
-        indicatorsService.calculateBasicIndicators(symbol, velas, true);
-    }
-
-    @Override
-    public void prepararDatosParaEntrenamiento(String symbol, String interval, int dias, long now) {
-        log.info("--- PREPARANDO DATASET PARA IA: {} [{}] ---", symbol, interval);
-
-        log.info("Sincronizando Velas (OHLCV)...");
-        long fetchedFrom = fetchService.fetchIncremental(symbol, interval, dias, now);
-
-        long margenWarmup = 50L * FetchService.getIntervalMillis(interval);
-        long calcFromTimestamp = fetchedFrom - margenWarmup;
-
-        long millisPerDay = 24L * 60L * 60L * 1000L;
-        boolean esDescargaCompleta = fetchedFrom == (now - dias * millisPerDay);
-
-        log.info("Generando variables predictivas desde el anclaje (con warmup)...");
-
-        List<Vela> velas = velaRepo.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(symbol,
-                interval, calcFromTimestamp);
-
-        if (velas.isEmpty()) {
-            log.warn("No hay velas en la base de datos para calcular indicadores.");
-            return;
-        }
-
-        indicatorsService.calculateBasicIndicators(symbol, velas, esDescargaCompleta);
-
-        log.info("--- DATASET LISTO ---");
     }
 
     @PreDestroy

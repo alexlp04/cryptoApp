@@ -37,6 +37,10 @@ public final class OptimizeCommand implements CliCommand {
             return;
         }
 
+        if (!CliInputValidator.requireSingleCoin(args, "optimize", context)) {
+            return;
+        }
+
         double minComposite = resolverMinComposite(args, context);
         if (minComposite < 0) {
             return;

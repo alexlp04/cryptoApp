@@ -34,12 +34,12 @@ public final class BacktestCommand implements CliCommand {
             return;
         }
 
-        BigDecimal capitalAsignado = CliInputValidator.readBigDecimal(context, "Capital a asignar: ", "capital");
+        BigDecimal capitalAsignado = CliInputValidator.readPositiveBigDecimal(context, "Capital a asignar: ", "capital");
         if (capitalAsignado == null) {
             return;
         }
 
-        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
+        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade, fracción del capital que se pierde si salta el stop (0.01 = 1 %, máx. 0.10): ");
         if (risk == null) {
             return;
         }

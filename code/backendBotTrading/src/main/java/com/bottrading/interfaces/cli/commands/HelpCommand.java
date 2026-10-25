@@ -20,12 +20,19 @@ public final class HelpCommand implements CliCommand {
                 -----------------------------------------------------
                  [USUARIO]  signup, login, logout
                  [WALLETS]  mkpwallet <nombre>, lw
-                 [DATOS]    fetch <tf> <coin1> ...
-                 [TRADING]  le (Listar scripts), lsa (Activas), lsd (Detenidas)
-                            backtest <estra> <tf> <coins...>
-                            trade -v|-r <estra> <tf> <coins...>
-                            stop <ID> | stop -all
-                            term <ID> (Liquidar y devolver fondos)
+                 [DATOS]    fetch -tf <tf> -coins <coin1> [coin2...] [-d <dias>]
+                            fetch <coin> <tf> [-d <dias>] [--detect-gaps]
+                 [IA]       train -model <modelo> -tf <tf> -coins <coin> [-strategy <nombre>] [-d <dias>] [-params k=v,...]
+                            optimize -model <modelo> -tf <tf> -coins <coin> [-strategy <nombre>] [-d <dias>]
+                                     [-min-composite <1-100>] [-n-trials <n>] [-cv-folds <2-20>]
+                            models, test
+                 [TRADING]  backtest -strategy <nombre> [-model <nombre>] -tf <tf> -coins <coin1> [coin2...]
+                            trade -v|-r -strategy <nombre> [-model <nombre>] -tf <tf> -coins <coin1> [coin2...]
+                                  [-signal close|open|both]  (cuándo evalúa: al cierre, a la apertura o ambos)
+                            le (scripts), lsa (activas), lsd (detenidas), lst (terminadas), ls (todas)
+                            start <ID> | start -all   (reanudar)
+                            stop <ID> | stop -all     (pausar, fondos en reserva)
+                            term <ID>                 (liquidar y devolver fondos)
                  [SISTEMA]  exit, quit, ayuda
                 -----------------------------------------------------
                 """);

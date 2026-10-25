@@ -169,13 +169,12 @@ class StatsCsvRepositoryTest {
         }
 
         @Test
-        @DisplayName("✓ No debe lanzar excepción cuando stats es null en el JSON")
-        void should_not_throw_when_stats_key_is_absent_in_json() {
-            // Given — JSON sin clave "stats"
+        @DisplayName("✓ Debe lanzar FileOperationException cuando falta la clave stats en el JSON")
+        void should_throw_when_stats_key_is_absent_in_json() {
             String jsonSinStats = "{\"otro_campo\":\"valor\"}";
 
-            // When / Then — no debe lanzar
-            statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, jsonSinStats);
+            assertThrows(FileOperationException.class, () -> statsCsvRepository
+                    .guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, jsonSinStats));
         }
 
         @Test
@@ -385,5 +384,33 @@ class StatsCsvRepositoryTest {
 
     private Path buildModelBacktestPath(String timeframe, String modelName, String symbol) {
         return tempDir.resolve(String.format("backtest_result_%s_%s_%s.csv", timeframe, modelName, symbol));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Números y estadísticas vacías (#94)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("✓ Los enteros no salen como 3.0 y los importes grandes no usan notación científica")
+    void should_write_integers_and_large_amounts_without_decimal_noise() throws IOException {
+        String json = "{\"stats\":[{\"symbol\":\"BTCUSDT\",\"timeframe\":\"1h\",\"op_ganadas\":3,"
+                + "\"op_perdidas\":1,\"op_totales\":4,\"max_drawdown\":12345678.9,\"abs_drawdown\":0.5,"
+                + "\"retorno_acumulado\":1.5,\"retorno_total\":12345678.9,\"win_rate\":75.0,"
+                + "\"profit_factor\":2.5,\"fecha_inicio\":\"a\",\"fecha_fin\":\"b\",\"resultado\":\"GANANCIA\"}]}";
+
+        statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, json);
+
+        String dataLine = Files.readAllLines(buildModelBacktestPath("1h", MODEL_NAME, "BTCUSDT"),
+                StandardCharsets.UTF_8).get(1);
+        assertThat(dataLine, org.hamcrest.Matchers.startsWith("BTCUSDT,1h,3,1,4,12345678.9,0.5,1.5,12345678.9,75.0,2.5"));
+    }
+
+    @Test
+    @DisplayName("✓ Sin estadísticas lanza FileOperationException en vez de fingir que guardó")
+    void should_throw_when_engine_returns_no_stats() {
+        assertThrows(FileOperationException.class, () ->
+                statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME,
+                        "{\"stats\":[]}"));
+        assertThrows(FileOperationException.class, () ->
+                statsCsvRepository.guardarEstadisticasDelBacktest("RSISMAStrategy", "1h", MODEL_NAME, "{}"));
     }
 }

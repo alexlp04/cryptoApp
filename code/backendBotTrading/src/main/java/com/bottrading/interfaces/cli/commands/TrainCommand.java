@@ -32,6 +32,10 @@ public final class TrainCommand implements CliCommand {
             return;
         }
 
+        if (!CliInputValidator.requireSingleCoin(args, "train", context)) {
+            return;
+        }
+
         String coin = args.getCoins().get(0);
         int diasEntrenamiento = CliInputValidator.resolveTrainingDays(
                 args.getTimeframe(), args.getDays(), context);

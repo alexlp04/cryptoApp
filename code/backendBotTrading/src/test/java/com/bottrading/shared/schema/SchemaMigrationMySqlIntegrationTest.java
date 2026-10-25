@@ -59,8 +59,7 @@ class SchemaMigrationMySqlIntegrationTest {
                 String.class);
 
         for (String esperada : List.of("usuario", "vela", "wallet", "instancia_estrategia",
-                "instancia_simbolos", "posicion", "ledger_entry",
-                "indicador_tecnico", "capital_reservado")) {
+                "instancia_simbolos", "posicion", "ledger_entry")) {
             assertTrue(tablas.stream().anyMatch(t -> t.equalsIgnoreCase(esperada)),
                     "Falta la tabla " + esperada + " en MySQL");
         }

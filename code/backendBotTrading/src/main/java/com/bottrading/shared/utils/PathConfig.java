@@ -12,7 +12,6 @@ import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_OPTIMIZE;
 import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_RT;
 import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_TRAIN;
 import static com.bottrading.shared.utils.AppConstants.FILE_FETCHER;
-import static com.bottrading.shared.utils.AppConstants.FILE_INDICATORS;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -61,7 +60,6 @@ public final class PathConfig {
     public static final String ENGINE_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_RT);
     public static final String ENGINE_BACKTEST_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_BACKTEST);
     public static final String FETCHER_PATH = resolvePath("code", DIR_SCRIPTS, FILE_FETCHER);
-    public static final String INDICATORS_PATH = resolvePath("code", DIR_SCRIPTS, FILE_INDICATORS);
     public static final String ENGINE_TRAIN_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_TRAIN);
     public static final String ENGINE_OPTIMIZE_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_OPTIMIZE);
     public static final String ENGINE_AI_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_AI_RT);
@@ -199,5 +197,19 @@ public final class PathConfig {
         } catch (IOException e) {
             throw new FileOperationException("Error al crear carpeta de estrategia: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Ejecutable Python a usar: absoluto si existe, relativo a PROJECT_ROOT si existe ahí, y si no el
+     * nombre tal cual (resolución por PATH). Única fuente de verdad para el validador y el runtime.
+     */
+    public static String resolvePythonExecutable() {
+        String pythonExe = AppConstants.PYTHON_EXECUTABLE;
+        java.io.File pythonFile = new java.io.File(pythonExe);
+        if (pythonFile.isAbsolute() && pythonFile.exists()) {
+            return pythonExe;
+        }
+        java.io.File resolved = Paths.get(PROJECT_ROOT, pythonExe).toFile();
+        return resolved.exists() ? resolved.getAbsolutePath() : pythonExe;
     }
 }

@@ -54,9 +54,6 @@ class BaseStrategy(ABC):
     def get_name(self) -> str:
         return self.__class__.__name__
 
-    def get_position_size(self, price: float | Decimal) -> Decimal:
-        return (self.capital * self.risk_per_trade) / Decimal(str(price))
-
     def should_close(self, row: dict, entry_price: float) -> bool:
         return (
             row["close"] <= self.get_stop_loss(entry_price, row)

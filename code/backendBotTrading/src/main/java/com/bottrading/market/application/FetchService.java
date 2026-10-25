@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -18,12 +19,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
-import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.VelaDTO;
@@ -40,7 +43,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -59,7 +61,6 @@ public class FetchService implements FetchMarketDataUseCase {
     private final Gson gson = new Gson();
 
     private final VelaRepositoryPort velaRepo;
-    private final IndicadorRepositoryPort indicadorRepo;
     private final JdbcTemplate jdbcTemplate;
     private final PythonBridgeFacade pythonBridgeFacade;
 
@@ -77,11 +78,9 @@ public class FetchService implements FetchMarketDataUseCase {
             }
 
         public FetchService(VelaRepositoryPort velaRepo,
-            IndicadorRepositoryPort indicadorRepo,
             JdbcTemplate jdbcTemplate,
             PythonBridgeFacade pythonBridgeFacade) {
         this.velaRepo = velaRepo;
-        this.indicadorRepo = indicadorRepo;
         this.jdbcTemplate = jdbcTemplate;
         this.pythonBridgeFacade = pythonBridgeFacade;
     }
@@ -97,11 +96,19 @@ public class FetchService implements FetchMarketDataUseCase {
     @Override
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
+        Long lastTimestamp;
+        Long minTimestamp = null;
         ConsoleLoader.getInstance().startDots("Verificando historial de " + symbol + " [" + interval + "]");
+        try {
+            lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+            if (lastTimestamp != null) {
+                minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
+            }
+        } finally {
+            ConsoleLoader.getInstance().stopClear(); // también si el repositorio lanza: el spinner no queda girando
+        }
 
-        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
         if (lastTimestamp == null) {
-            ConsoleLoader.getInstance().stopClear();
             log.info("No hay datos previos. Iniciando descarga completa...");
             callPythonAndSave(symbol, interval, null);
             return;
@@ -109,8 +116,6 @@ public class FetchService implements FetchMarketDataUseCase {
 
         long intervalMillis = getIntervalMillis(interval);
         long now = System.currentTimeMillis();
-        Long minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
-        ConsoleLoader.getInstance().stopClear();
 
         if (minTimestamp != null) {
             Long firstMissing = findFirstMissingPoint(symbol, interval, minTimestamp, lastTimestamp, intervalMillis);
@@ -148,7 +153,6 @@ public class FetchService implements FetchMarketDataUseCase {
                 .orElseGet(() -> velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval));
 
         if (deletionAnchor != null) {
-            indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
             velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
         }
 
@@ -201,21 +205,28 @@ public class FetchService implements FetchMarketDataUseCase {
         int totalInserted = 0;
 
         long cursor = fromMs;
-        boolean hasMore = true;
-        while (cursor <= toMs && hasMore) {
-            long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
+        try {
+            while (cursor <= toMs) {
+                long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
 
-            JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
-            hasMore = !klines.isEmpty();
-            if (hasMore) {
-                PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
-                totalInserted += pageResult.inserted();
-
-                hasMore = pageResult.lastOpenTime() >= cursor;
-                if (hasMore) {
-                    cursor = pageResult.lastOpenTime() + intervalMs;
+                JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
+                long next = pageEnd + intervalMs; // página vacía: hueco real de Binance, se sigue con la siguiente
+                if (!klines.isEmpty()) {
+                    PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
+                    totalInserted += pageResult.inserted();
+                    if (pageResult.lastOpenTime() >= cursor) {
+                        next = pageResult.lastOpenTime() + intervalMs;
+                    }
                 }
+                cursor = next;
             }
+        } catch (DataFetchException e) {
+            // Lo ya descargado no se pierde: se guarda y el error dice hasta dónde se llegó.
+            if (!insertBatch.isEmpty()) {
+                totalInserted += executePlainInsertBatch(insertBatch);
+            }
+            throw new DataFetchException("Relleno de [" + symbol + "][" + timeframe + "] interrumpido en "
+                    + Instant.ofEpochMilli(cursor) + " (" + totalInserted + " velas guardadas): " + e.getMessage(), e);
         }
 
         if (!insertBatch.isEmpty()) {
@@ -284,8 +295,12 @@ public class FetchService implements FetchMarketDataUseCase {
         long intervalMillis = getIntervalMillis(interval);
 
         ConsoleLoader.getInstance().startDots("Analizando datos para " + symbol + " [" + interval + "]");
-        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
-        ConsoleLoader.getInstance().stopClear();
+        Long lastTimestamp;
+        try {
+            lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        } finally {
+            ConsoleLoader.getInstance().stopClear();
+        }
 
         // Caso 1: Sin datos o historial insuficiente — descarga desde el inicio de la ventana
         if (lastTimestamp == null || lastTimestamp < windowStart) {
@@ -332,12 +347,52 @@ public class FetchService implements FetchMarketDataUseCase {
             return windowStart;
         }
 
-        if (firstExisting > windowStart + intervalMillis) {
+        // Un hueco ya pedido con éxito a Binance en esta ejecución es un hueco real del exchange (par
+        // más joven que la ventana, mantenimientos): volver a pedirlo no lo rellena y repetía la
+        // descarga completa en cada llamada.
+        if (firstExisting > windowStart + intervalMillis && !yaCubierto(symbol, interval, windowStart)) {
             return windowStart;
         }
 
-        return velaRepo.findFirstInternalGapOpenTime(
+        Long gap = velaRepo.findFirstInternalGapOpenTime(
                 symbol, interval, firstExisting, lastTimestamp, intervalMillis);
+        return gap != null && yaCubierto(symbol, interval, gap) ? null : gap;
+    }
+
+    /**
+     * Menor instante desde el que se ha descargado con éxito por (símbolo, timeframe). Vive en la
+     * tabla cobertura_velas; el mapa es una caché para no consultarla en cada llamada.
+     */
+    private final Map<String, Long> cubiertoDesde = new ConcurrentHashMap<>();
+
+    private static String clave(String symbol, String interval) {
+        return symbol + "|" + interval;
+    }
+
+    private boolean yaCubierto(String symbol, String interval, long desde) {
+        Long cubierto = cubiertoDesde.get(clave(symbol, interval));
+        if (cubierto == null) {
+            cubierto = jdbcTemplate.query(
+                    "SELECT cubierto_desde FROM cobertura_velas WHERE symbol = ? AND time_interval = ?",
+                    (ResultSetExtractor<Long>) rs -> rs.next() ? rs.getLong(1) : null, symbol, interval);
+            if (cubierto != null) {
+                cubiertoDesde.put(clave(symbol, interval), cubierto);
+            }
+        }
+        return cubierto != null && desde >= cubierto;
+    }
+
+    private void marcarCubierto(String symbol, String interval, long desde) {
+        cubiertoDesde.merge(clave(symbol, interval), desde, Math::min);
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO cobertura_velas (symbol, time_interval, cubierto_desde) VALUES (?, ?, ?) "
+                            + "ON DUPLICATE KEY UPDATE cubierto_desde = LEAST(cubierto_desde, VALUES(cubierto_desde))",
+                    symbol, interval, desde);
+        } catch (DataAccessException e) {
+            // La caché ya lo recuerda en esta ejecución; solo se pierde la memoria entre ejecuciones.
+            log.warn("No se pudo guardar la cobertura de {} [{}]: {}", symbol, interval, e.getMessage());
+        }
     }
 
     /**
@@ -347,6 +402,8 @@ public class FetchService implements FetchMarketDataUseCase {
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         try {
             ejecutarIntentoFetch(symbol, interval, fromTimestamp);
+            // null = descarga completa desde el listado
+            marcarCubierto(symbol, interval, fromTimestamp == null ? 0L : fromTimestamp);
         } catch (Exception e) {
             throw new DataFetchException("Data synchronization failed", e);
         }
@@ -397,6 +454,7 @@ public class FetchService implements FetchMarketDataUseCase {
         Optional<Map<String, Object>> maybeEnvelope;
         while ((maybeEnvelope = IpcMessagePackCodec.readEnvelopeOrEmpty(in)).isPresent()) {
             Map<String, Object> envelope = maybeEnvelope.get();
+            lanzarSiEsError(envelope);
             List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
             if (!velasChunk.isEmpty()) {
                 totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
@@ -461,6 +519,15 @@ public class FetchService implements FetchMarketDataUseCase {
         return insertadasEnChunk;
     }
 
+    /** Un frame ERROR de Python es un fallo de la descarga, no "0 velas". */
+    static void lanzarSiEsError(Map<String, Object> envelope) {
+        if ("ERROR".equals(envelope.get("message_type"))) {
+            Object payload = envelope.get("payload");
+            Object message = payload instanceof Map<?, ?> m ? m.get("message") : null;
+            throw new DataFetchException("Fetch fallido en Python: " + message);
+        }
+    }
+
     private List<VelaDTO> extraerVelasChunk(Map<String, Object> envelope) {
         Object payloadObj = envelope.get("payload");
         if (!(payloadObj instanceof Map<?, ?> payloadMap)) {
@@ -518,27 +585,61 @@ public class FetchService implements FetchMarketDataUseCase {
         };
     }
 
-    private JsonArray requestKlines(HttpClient client,
+    /** Tope de espera entre reintentos de una página: un 418 (baneo) puede pedir horas y no se espera. */
+    private static final long MAX_ESPERA_REINTENTO_MS = 60_000L;
+
+    JsonArray requestKlines(HttpClient client,
             String symbol,
             String timeframe,
             long startTime,
             long endTime) {
-        try {
-            URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
-            HttpRequest request = HttpRequest.newBuilder(uri)
-                    .GET()
-                    .timeout(BINANCE_HTTP_TIMEOUT)
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new DataFetchException("Binance returned HTTP " + response.statusCode());
+        URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
+        HttpRequest request = HttpRequest.newBuilder(uri).GET().timeout(BINANCE_HTTP_TIMEOUT).build();
+        for (int intento = 1; ; intento++) {
+            HttpResponse<String> response = enviar(client, request);
+            int status = response.statusCode();
+            if (status == 200) {
+                return JsonParser.parseString(response.body()).getAsJsonArray();
             }
+            // 429/418 = límite de peticiones, 5xx = fallo transitorio: se reintenta respetando Retry-After.
+            boolean transitorio = status == 429 || status == 418 || status >= 500;
+            long espera = esperaReintentoMs(response, intento);
+            if (!transitorio || intento >= MAX_RETRIES || espera > MAX_ESPERA_REINTENTO_MS) {
+                throw new DataFetchException("Binance returned HTTP " + status);
+            }
+            log.warn("Binance devolvió HTTP {} para {} [{}]: reintento {}/{} en {} ms",
+                    status, symbol, timeframe, intento, MAX_RETRIES, espera);
+            pausar(espera);
+        }
+    }
 
-            return JsonParser.parseString(response.body()).getAsJsonArray();
-        } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
+    private HttpResponse<String> enviar(HttpClient client, HttpRequest request) {
+        try {
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            // Un timeout de red no es una interrupción: marcarla rompía las operaciones bloqueantes siguientes.
             throw new DataFetchException("Error requesting klines for range", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DataFetchException("Interrupted requesting klines for range", e);
+        }
+    }
+
+    /** Retry-After en segundos (si es una fecha HTTP no se interpreta); sin él, 1 s, 2 s, 4 s... */
+    private static long esperaReintentoMs(HttpResponse<String> response, int intento) {
+        return response.headers().firstValue("Retry-After")
+                .map(String::trim)
+                .filter(v -> v.chars().allMatch(Character::isDigit) && !v.isEmpty())
+                .map(v -> Long.parseLong(v) * 1000L)
+                .orElse(1000L << (intento - 1));
+    }
+
+    void pausar(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DataFetchException("Interrupted waiting to retry klines request", e);
         }
     }
 
@@ -558,12 +659,8 @@ public class FetchService implements FetchMarketDataUseCase {
                 .millis();
     }
 
+    /** Un timeframe no soportado falla: antes caía a 1 min y la detección de huecos re-descargaba todo cada vez. */
     public static long getIntervalMillis(String interval) {
-        return Timeframe.millisOrDefault(interval, Timeframe.M1.millis());
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        log.info("FetchService shutdown completo");
+        return Timeframe.parse(interval).millis();
     }
 }

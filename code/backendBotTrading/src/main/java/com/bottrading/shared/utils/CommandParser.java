@@ -30,6 +30,7 @@ public class CommandParser {
     private Double minComposite = null;
     private Integer nTrials = null;
     private Integer cvFolds = null;
+    private String signalMode = null;
 
     // Variables de control de errores
     // El accesor se llama hasErrorSintaxis(), no isErrorSintaxis(): se mantiene a mano.
@@ -74,10 +75,23 @@ public class CommandParser {
                 }
                 case "-days", "--days", "-d" -> {
                     days = parseEntero(requireValue(parts, index), "-days", ".",
-                            Integer.MIN_VALUE, Integer.MAX_VALUE, null);
+                            1, Integer.MAX_VALUE, "-days debe ser un entero positivo.");
                     index += 2;
                 }
-                case "-coins", "-c" -> index = parseCoins(parts, index + 1);
+                case "-signal", "-sg" -> {
+                    String mode = requireValue(parts, index).toLowerCase();
+                    if (!errorSintaxis && !java.util.Set.of("close", "open", "both").contains(mode)) {
+                        fallo("Error de sintaxis: -signal debe ser close, open o both.");
+                    }
+                    signalMode = mode;
+                    index += 2;
+                }
+                case "-coins", "-c" -> {
+                    index = parseCoins(parts, index + 1);
+                    if (coins.isEmpty() && !errorSintaxis) {
+                        fallo("Error de sintaxis: -coins necesita al menos una moneda (ej: -coins BTCUSDT).");
+                    }
+                }
                 case "-params", "-p" -> {
                     parseParams(requireValue(parts, index));
                     index += 2;
@@ -99,6 +113,9 @@ public class CommandParser {
                 default -> {
                     if (!arg.startsWith("-")) {
                         positionalArgs.add(parts[index]);
+                    } else if (!esNumero(arg)) {
+                        // Antes se ignoraba en silencio ("-strategie X") y el comando solo respondía "Uso: ...".
+                        fallo("Error de sintaxis: bandera desconocida '" + parts[index] + "'.");
                     }
                     index++;
                 }
@@ -149,7 +166,7 @@ public class CommandParser {
         try {
             double parsed = Double.parseDouble(value);
             if (parsed <= 0 || parsed > 100) {
-                fallo("Error de sintaxis: -min-composite debe estar entre 1 y 100.");
+                fallo("Error de sintaxis: -min-composite debe ser mayor que 0 y como máximo 100.");
             } else {
                 this.minComposite = parsed;
             }
@@ -165,31 +182,54 @@ public class CommandParser {
     }
 
     private void parseSingleParam(String pair) {
-        String[] kv = pair.split("=");
-        if (kv.length != 2) {
+        // limit 2: "a=b=c" conserva "b=c" como valor en vez de descartarse
+        String[] kv = pair.split("=", 2);
+        String key = kv[0].trim();
+        String value = kv.length == 2 ? kv[1].trim() : "";
+        if (key.isEmpty() || value.isEmpty()) {
+            fallo("Error de sintaxis: par de -params inválido '" + pair + "' (usa clave=valor, ej: max_depth=6).");
             return;
         }
-
-        String key = kv[0].trim();
-        String value = kv[1].trim();
         hyperparams.put(key, parseTypedValue(value));
     }
 
+    /** Boolean, entero, long o decimal (incluida la notación científica 1e-3); si no, texto. */
     private Object parseTypedValue(String value) {
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.parseBoolean(value);
+        }
         try {
-            if (value.contains(".")) {
-                return Double.parseDouble(value);
-            }
             return Integer.parseInt(value);
+        } catch (NumberFormatException ignoredNotInt) {
+            // no cabe en int: se prueba long y luego decimal
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException ignoredNotLong) {
+            // no es entero: se prueba decimal
+        }
+        try {
+            return Double.parseDouble(value);
         } catch (NumberFormatException e) {
             return value;
         }
     }
 
+    private static boolean esNumero(String value) {
+        try {
+            Double.parseDouble(value);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private String requireValue(String[] parts, int flagIndex) {
         int valueIndex = flagIndex + 1;
-        if (valueIndex >= parts.length || parts[valueIndex].startsWith("-")) {
-            fallo("Error de sintaxis: Te ha faltado indicar un valor después de una bandera.");
+        // Un valor puede ser un número negativo (-d -5 debe dar "debe ser positivo", no "falta valor").
+        if (valueIndex >= parts.length
+                || (parts[valueIndex].startsWith("-") && !esNumero(parts[valueIndex]))) {
+            fallo("Error de sintaxis: Te ha faltado indicar un valor después de " + parts[flagIndex] + ".");
             return "";
         }
         return parts[valueIndex];

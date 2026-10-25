@@ -79,32 +79,4 @@ public class SafeParser {
         return toString(value, "");
     }
 
-    public static boolean toBoolean(Object value, boolean defaultValue) {
-        return Optional.ofNullable(value)
-                .map(String::valueOf)
-                .map(String::toLowerCase)
-                .map(s -> s.equals("true") || s.equals("1") || s.equals("yes"))
-                .orElse(defaultValue);
-    }
-
-    public static boolean toBoolean(Object value) {
-        return toBoolean(value, false);
-    }
-
-    public static long toLong(Object value, long defaultValue) {
-        return Optional.ofNullable(value)
-                .map(String::valueOf)
-                .flatMap(s -> {
-                    try {
-                        return Optional.of(Long.parseLong(s));
-                    } catch (NumberFormatException e) {
-                        return Optional.empty();
-                    }
-                })
-                .orElse(defaultValue);
-    }
-
-    public static long toLong(Object value) {
-        return toLong(value, 0L);
-    }
 }

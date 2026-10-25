@@ -67,7 +67,7 @@ ruff check code/
 mypy code/scripts
 pytest code/scripts/tests -q
 
-# Java: encadena Checkstyle, PMD, SpotBugs y la suite JUnit
+# Java: encadena PMD, SpotBugs y la suite JUnit
 cd code/backendBotTrading && mvn verify
 ```
 

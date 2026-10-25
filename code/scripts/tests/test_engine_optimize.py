@@ -128,3 +128,293 @@ class TestOptimizationSearchSpaces:
         assert model.get_params()["C"] == pytest.approx(1.5)
         assert model.get_params()["kernel"] == "poly"
         assert model.get_params()["degree"] == 3
+
+# ── Clases ausentes y métricas (#79) ─────────────────────────────────────────
+
+def test_encode_labels_descarta_del_test_las_clases_que_train_no_vio():
+    from shared_utils import encode_labels
+
+    enc, _y_train, y_test, keep = encode_labels(np.array([-1, 0, 1, 0]), np.array([0, 1, 2, -1]))
+
+    assert enc.classes_.tolist() == [-1, 0, 1]
+    assert keep.tolist() == [True, True, False, True]
+    assert y_test.tolist() == [1, 2, 0]
+
+
+def test_metric_average_es_binary_solo_con_etiquetas_0_1():
+    from shared_utils import metric_average
+
+    assert metric_average(np.array([0, 1]), np.array([1, 1])) == "binary"
+    # 3 clases entrenadas pero test ⊂ {0, 2}: pos_label=1 no existe → no puede ser binary
+    assert metric_average(np.array([0, 2]), np.array([2, 0])) == "weighted"
+
+
+def test_contiguous_classes():
+    from engine_optimize import _contiguous_classes
+
+    assert _contiguous_classes(np.array([0, 1, 2, 1]))
+    assert not _contiguous_classes(np.array([0, 2, 2]))
+
+
+# ── Objetivo de Optuna: errores = FAIL, poda real (#90) ──────────────────────
+
+def _objective_fixture(monkeypatch, model_type="random_forest"):
+    import engine_optimize as eo
+    import pandas as pd
+    from sklearn.preprocessing import LabelEncoder
+
+    rng = np.random.default_rng(1)
+    n = 120
+    x = rng.normal(size=(n, 3))
+    y = rng.integers(0, 3, size=n)
+    ts = np.arange(n, dtype=np.int64)
+    df = pd.DataFrame({"timestamp": ts, "close": 1.0})
+    enc = LabelEncoder().fit([-1, 0, 1])
+    monkeypatch.setattr(eo, "run_backtest_with_predictions",
+                        lambda *a, **k: {"win_rate": 50.0, "profit_factor": 1.0, "sharpe": 0.5})
+    log: list = []
+    objective = eo._make_objective(model_type, x, y, df, object(), ts, "BTCUSDT", 3, log, enc)
+    return eo, objective, log
+
+
+def test_un_trial_roto_queda_como_fail_y_no_como_pruned(monkeypatch):
+    eo, objective, log = _objective_fixture(monkeypatch)
+    monkeypatch.setattr(eo, "fit_sklearn_model", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=2, catch=(Exception,))
+
+    estados = {t.state for t in study.trials}
+    assert estados == {optuna.trial.TrialState.FAIL}
+    assert "ValueError: boom" in log[0]["error"]
+
+
+def test_el_objetivo_reporta_por_fold_y_el_pruner_puede_podar(monkeypatch):
+    _, objective, _ = _objective_fixture(monkeypatch)
+
+    # ThresholdPruner(lower=2): f1 ∈ [0,1] < 2 → poda en cuanto hay un report
+    study = optuna.create_study(direction="maximize", pruner=optuna.pruners.ThresholdPruner(lower=2.0))
+    study.optimize(objective, n_trials=2, catch=(Exception,))
+
+    assert all(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+
+
+# ── El modelo final se entrena como se puntuó en los trials (#74) ────────────
+
+def test_balanced_class_weight_compensa_la_clase_minoritaria():
+    from engine_optimize import _balanced_class_weight
+
+    pesos = _balanced_class_weight(np.array([0] * 9 + [1]))
+
+    assert pesos[1] > pesos[0]
+    assert pesos[1] == pytest.approx(5.0)
+
+
+def test_el_modelo_sklearn_final_recibe_class_weight(monkeypatch, tmp_path):
+    import engine_optimize as eo
+
+    capturado = {}
+
+    class _Modelo:
+        def predict(self, x):
+            return np.zeros(len(x), dtype=int)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        capturado["class_weight"] = class_weight
+        return _Modelo()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())
+    y = np.array([0] * 9 + [1])
+
+    eo._train_sklearn_final(
+        "random_forest", {}, np.zeros((10, 2)), y, np.zeros((3, 2)), ["a", "b"],
+        "S", 1, str(tmp_path), "1h", "BTCUSDT", None,
+    )
+
+    assert capturado["class_weight"] == eo._balanced_class_weight(y)
+
+
+# ── La red neuronal multiclase se puntúa con argmax, no con umbral 0,5 (#61) ─
+
+class _FakeKeras:
+    def __init__(self, raw):
+        self._raw = np.asarray(raw)
+
+    def predict(self, x, verbose=0):
+        return self._raw
+
+
+def test_predict_labels_multiclase_usa_argmax():
+    from engine_optimize import _predict_labels
+
+    # con el umbral 0,5 sobre softmax esto daba [1, 1, 0] aplanado y de forma incorrecta
+    probs = [[0.1, 0.2, 0.7], [0.6, 0.3, 0.1], [0.2, 0.5, 0.3]]
+
+    assert _predict_labels(_FakeKeras(probs), None).tolist() == [2, 0, 1]
+
+
+def test_predict_labels_binario_usa_umbral():
+    from engine_optimize import _predict_labels
+
+    assert _predict_labels(_FakeKeras([[0.9], [0.2]]), None).tolist() == [1, 0]
+
+
+def test_el_cv_deja_un_hueco_de_una_vela_entre_train_y_validacion(monkeypatch):
+    eo, objective, _ = _objective_fixture(monkeypatch)
+    tamanos = []
+
+    class _Modelo:
+        def predict(self, x):
+            return np.zeros(len(x), dtype=int)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        tamanos.append(len(x))
+        return _Modelo()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=1, catch=(Exception,))
+
+    # n=120, 3 folds → sin gap los trains medirían 30/60/90; con gap=1: 29/59/89
+    assert tamanos[:3] == [29, 59, 89]
+
+
+# ── Un único constructor Keras (#100) — requiere TensorFlow ─────────────────
+
+def _datos(n_classes: int, n: int = 120):
+    rng = np.random.default_rng(7)
+    x = rng.normal(size=(n, 4)).astype("float32")
+    y = rng.integers(0, n_classes, size=n)
+    return x, y
+
+
+_PARAMS_RAPIDOS = {"epochs": 2, "batch_size": 32, "hidden_layers": 1, "neurons": 8,
+                   "dropout_rate": 0.1, "learning_rate": 0.01}
+
+
+@pytest.mark.parametrize("n_classes, salida", [(2, 1), (3, 3)])
+def test_fit_keras_mlp_construye_la_salida_segun_las_clases(n_classes, salida):
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _fit_keras_mlp
+
+    x, y = _datos(n_classes)
+
+    model = _fit_keras_mlp(x, y, _PARAMS_RAPIDOS, n_classes, None)
+
+    assert model.output_shape[-1] == salida
+    assert model.predict(x[:5], verbose=0).shape == (5, salida)
+
+
+def test_fit_keras_mlp_fija_las_unidades_por_n_classes_aunque_al_fold_le_falte_una_clase():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _fit_keras_mlp
+
+    x, _ = _datos(3)
+    y_sin_clase_2 = np.random.default_rng(1).integers(0, 2, size=len(x))  # el fold solo ve 0 y 1
+
+    model = _fit_keras_mlp(x, y_sin_clase_2, _PARAMS_RAPIDOS, 3, None)
+
+    assert model.output_shape[-1] == 3
+
+
+def test_el_entrenamiento_final_neuronal_guarda_modelo_y_metadatos(tmp_path):
+    pytest.importorskip("tensorflow")
+    import json
+
+    from engine_optimize import _train_neural_final
+    from shared_utils import encode_labels
+
+    x, y = _datos(3)
+    encoder, y_enc, _, _ = encode_labels(y - 1, y - 1)  # etiquetas originales -1/0/1
+
+    _model, filename, y_pred = _train_neural_final(
+        "neural_network", _PARAMS_RAPIDOS, x, y_enc, x[:10], ["a", "b", "c", "d"], "Estrategia", 20,
+        str(tmp_path), "1h", "BTCUSDT", encoder, train_end_ts=12345)
+
+    assert (tmp_path / filename).exists()
+    meta = json.loads((tmp_path / filename.replace(".keras", ".metadata.json")).read_text())
+    assert meta["train_end_ts"] == 12345 and meta["label_classes"] == [-1, 0, 1]
+    assert y_pred.shape == (10,)
+    assert not list(tmp_path.glob("*.tmp*"))  # guardado atómico: sin temporales
+
+
+def test_la_evaluacion_cv_neuronal_devuelve_las_seis_metricas():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _build_and_eval_neural_network
+
+    x, y = _datos(3, n=150)
+
+    resultado = _build_and_eval_neural_network(x, y, _PARAMS_RAPIDOS, cv_folds=2)
+
+    assert len(resultado) == 6 and all(np.isfinite(v) for v in resultado)
+
+
+# ── Score con todos los folds, poda de la red y modelo final = modelo evaluado (#74 #90) ──
+
+def test_el_score_promedia_el_backtest_de_todos_los_folds(monkeypatch):
+    eo, objective, log = _objective_fixture(monkeypatch)
+    llamadas = []
+    monkeypatch.setattr(eo, "run_backtest_with_predictions",
+                        lambda *a, **k: llamadas.append(1) or {"win_rate": 50.0, "profit_factor": 1.0, "sharpe": 0.5})
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=1, catch=(Exception,))
+
+    assert len(llamadas) == 3  # cv_folds=3: antes solo se hacía backtest del último fold
+    assert log[0]["status"] == "COMPLETE"
+
+
+def test_la_red_se_poda_tras_el_primer_fold_si_el_pruner_lo_pide():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _build_and_eval_neural_network
+
+    class _Trial:
+        def __init__(self):
+            self.reports = []
+
+        def report(self, value, step):
+            self.reports.append(step)
+
+        def should_prune(self):
+            return True
+
+    trial = _Trial()
+    x, y = _datos(3, n=150)
+
+    with pytest.raises(optuna.TrialPruned):
+        _build_and_eval_neural_network(x, y, _PARAMS_RAPIDOS, cv_folds=3, trial=trial)
+
+    assert trial.reports == [0]  # no entrenó los otros folds
+
+
+def test_best_params_incluye_los_parametros_fijos():
+    from engine_optimize import _SUGGEST_FN
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(lambda t: float(_SUGGEST_FN["xgboost"](t)["max_depth"]), n_trials=1)
+
+    completos = _SUGGEST_FN["xgboost"](optuna.trial.FixedTrial(study.best_trial.params))
+
+    assert completos["random_state"] == 42 and completos["eval_metric"] == "logloss"
+    assert "random_state" not in study.best_trial.params
+
+
+def test_el_svm_final_usa_las_mismas_filas_que_optuna(monkeypatch, tmp_path):
+    import engine_optimize as eo
+
+    vistas = {}
+    monkeypatch.setattr(eo, "OPTUNA_SVM_MAX_SAMPLES", 50)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        vistas["n"] = len(x)
+        return type("M", (), {"predict": lambda self, xx: np.zeros(len(xx), dtype=int)})()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())
+    x, y = _datos(2, n=200)
+
+    eo._train_sklearn_final("svm", {"C": 1.0, "kernel": "rbf"}, x, y, x[:5], ["a"], "S", 1,
+                            str(tmp_path), "1h", "BTCUSDT", None)
+
+    assert vistas["n"] == 50

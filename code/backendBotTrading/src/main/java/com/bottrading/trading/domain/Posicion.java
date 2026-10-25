@@ -15,9 +15,28 @@ import jakarta.persistence.Table;
 @Table(name = "posicion")
 public class Posicion extends BaseEntity {
     private String simbolo;
+    @Column(precision = 18, scale = 8)
     private BigDecimal precioEntrada;
+    @Column(precision = 18, scale = 8)
     private BigDecimal margenInvertido; // USD exactos
     private boolean abierta = true;
+
+    /** Unidades compradas (null en posiciones anteriores a la gestión de riesgo). */
+    @Column(precision = 24, scale = 8)
+    private BigDecimal unidades;
+
+    @Column(name = "stop_loss", precision = 20, scale = 8)
+    private BigDecimal stopLoss;
+
+    @Column(name = "take_profit", precision = 20, scale = 8)
+    private BigDecimal takeProfit;
+
+    /** Dinero que se pierde si salta el stop: lo que cuenta como riesgo abierto de la estrategia. */
+    @Column(precision = 18, scale = 8)
+    private BigDecimal riesgo;
+
+    @Column(precision = 18, scale = 8)
+    private BigDecimal comisiones;
 
     @Column(precision = 20, scale = 8)
     private BigDecimal precioSalida;
@@ -93,6 +112,46 @@ public class Posicion extends BaseEntity {
 
     public void setFechaCierre(Instant fechaCierre) {
         this.fechaCierre = fechaCierre;
+    }
+
+    public BigDecimal getUnidades() {
+        return unidades;
+    }
+
+    public void setUnidades(BigDecimal unidades) {
+        this.unidades = unidades;
+    }
+
+    public BigDecimal getStopLoss() {
+        return stopLoss;
+    }
+
+    public void setStopLoss(BigDecimal stopLoss) {
+        this.stopLoss = stopLoss;
+    }
+
+    public BigDecimal getTakeProfit() {
+        return takeProfit;
+    }
+
+    public void setTakeProfit(BigDecimal takeProfit) {
+        this.takeProfit = takeProfit;
+    }
+
+    public BigDecimal getRiesgo() {
+        return riesgo;
+    }
+
+    public void setRiesgo(BigDecimal riesgo) {
+        this.riesgo = riesgo;
+    }
+
+    public BigDecimal getComisiones() {
+        return comisiones;
+    }
+
+    public void setComisiones(BigDecimal comisiones) {
+        this.comisiones = comisiones;
     }
 
 }

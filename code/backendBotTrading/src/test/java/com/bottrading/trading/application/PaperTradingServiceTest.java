@@ -1,6 +1,7 @@
 package com.bottrading.trading.application;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -8,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -37,11 +39,9 @@ import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
-import com.bottrading.trading.application.port.out.TradeResultsPort;
 import com.bottrading.trading.domain.Posicion;
 import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
-import com.bottrading.trading.infrastructure.cache.StatsCache;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -58,12 +58,6 @@ class PaperTradingServiceTest {
 
     @Mock
     private PosicionRepositoryPort posicionRepo;
-
-    @Mock
-    private TradeResultsPort tradeResultsPort;
-
-    @Mock
-    private StatsCache statsCache;
 
     @Mock
     private ProcessedSignalRegistry signalRegistry;
@@ -93,6 +87,8 @@ class PaperTradingServiceTest {
         s.setAction("BUY");
         s.setSymbol("BTCUSDT");
         s.setPrice(new BigDecimal("30000"));
+        s.setStopLoss(new BigDecimal("29000"));
+        s.setTakeProfit(new BigDecimal("33000"));
         s.setTimeframe("1h");
         s.setTimestamp(System.currentTimeMillis());
         return s;
@@ -121,11 +117,6 @@ class PaperTradingServiceTest {
     @BeforeEach
     void configurarDefaults() {
         when(posicionRepo.save(any(Posicion.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(statsCache.getStats(anyString(), anyString(), anyString())).thenReturn(Map.of());
-        doNothing().when(statsCache).updateStats(anyString(), anyString(), anyString(), any());
-        doNothing().when(tradeResultsPort).guardarTrade(
-                anyString(), anyString(), anyString(), anyString(), any(), anyLong(), any());
-        doNothing().when(tradeResultsPort).guardarStats(anyString(), anyString(), any(), anyBoolean());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -168,7 +159,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalBUY());
 
             verify(posicionRepo, never()).save(any());
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -192,7 +183,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -206,7 +197,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL());
 
-            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
         }
     }
 
@@ -220,7 +211,7 @@ class PaperTradingServiceTest {
         /** Servicio con un registro de idempotencia REAL (no mock) para ejercer el dedup. */
         private PaperTradingService serviceConRegistroReal() {
             return new PaperTradingService(
-                    accountingService, instanciaRepo, posicionRepo, tradeResultsPort, statsCache,
+                    accountingService, instanciaRepo, posicionRepo,
                     new ProcessedSignalRegistry());
         }
 
@@ -236,7 +227,7 @@ class PaperTradingServiceTest {
             svc.onSignal(10L, sig);
             svc.onSignal(10L, sig);   // reentrega idéntica
 
-            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, times(1)).save(any());
         }
 
@@ -249,13 +240,13 @@ class PaperTradingServiceTest {
             when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
             doThrow(new RuntimeException("fallo transitorio"))
                     .doNothing()
-                    .when(accountingService).commitCapital(anyLong(), any(), any());
+                    .when(accountingService).commitCapital(anyLong(), any(), any(), any());
 
             SignalDTO sig = crearSignalBUY();
             assertThrows(RuntimeException.class, () -> svc.onSignal(10L, sig));
             svc.onSignal(10L, sig);   // reintento tras fallo: debe volver a intentarlo
 
-            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -273,7 +264,7 @@ class PaperTradingServiceTest {
             svc.onSignal(10L, s1);
             svc.onSignal(10L, s2);
 
-            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any(), any());
         }
     }
 
@@ -294,10 +285,8 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalBUY());
 
             verify(accountingService, times(1)).commitCapital(
-                    eq(10L), any(BigDecimal.class), any(BigDecimal.class));
+                    eq(10L), any(BigDecimal.class), any(BigDecimal.class), any());
             verify(posicionRepo, times(1)).save(any(Posicion.class));
-            verify(tradeResultsPort, times(1)).guardarTrade(
-                    anyString(), anyString(), eq("BTCUSDT"), eq("BUY"), any(), anyLong(), any());
         }
 
         @Test
@@ -309,7 +298,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
 
@@ -322,22 +311,86 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
 
         @Test
-        @DisplayName("✓ El monto a invertir es capitalReservado * riskPerTrade")
-        void should_invest_correct_amount() {
+        @DisplayName("✓ El tamaño arriesga equity * riskPerTrade hasta el stop (#99)")
+        void should_size_the_position_by_risk_to_the_stop() {
             InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
-            // riskPerTrade = 0.05 → montoAInvertir = 1000 * 0.05 = 50
+            inst.setRiskPerTrade(new BigDecimal("0.01")); // 10 de riesgo
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO s = crearSignalBUY();
+            s.setStopLoss(new BigDecimal("15000")); // stop lejano: manda el riesgo, no el tope del 25 %
+
+            paperTradingService.onSignal(10L, s);
+
+            // entrada con slippage 30015; riesgo ≈ 10 → el margen es ≈ 20 y lo arriesgado ≈ 10
+            verify(accountingService).commitCapital(eq(10L),
+                    argThat(m -> m.subtract(new BigDecimal("19.99")).abs().compareTo(new BigDecimal("0.01")) < 0),
+                    argThat(r -> r.subtract(BigDecimal.TEN).abs().compareTo(new BigDecimal("0.01")) < 0), any());
+        }
+
+        @Test
+        @DisplayName("✓ Un stop muy estrecho lo limita el tope del 25 % del equity (#99)")
+        void should_cap_the_position_at_a_quarter_of_equity() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO s = crearSignalBUY();
+            s.setStopLoss(new BigDecimal("29990"));
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService).commitCapital(eq(10L),
+                    argThat(m -> m.compareTo(new BigDecimal("250")) <= 0 && m.compareTo(new BigDecimal("249")) > 0),
+                    any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Sin stop válido en la señal no se compra (#99)")
+        void should_reject_buy_without_a_valid_stop() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO sinStop = crearSignalBUY();
+            sinStop.setStopLoss(null);
+            SignalDTO stopArriba = crearSignalBUY();
+            stopArriba.setStopLoss(new BigDecimal("31000"));
+            stopArriba.setTimestamp(1L);
+
+            paperTradingService.onSignal(10L, sinStop);
+            paperTradingService.onSignal(10L, stopArriba);
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+            verify(posicionRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("✓ No se abre si el riesgo abierto superaría el 6 % del equity (#99)")
+        void should_reject_buy_beyond_the_open_risk_limit() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            inst.setRiesgoAbierto(new BigDecimal("59")); // el nuevo trade añade ≈ 8 y el límite es 60
             when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
             when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, times(1)).commitCapital(
-                    eq(10L), eq(new BigDecimal("50.00")), eq(new BigDecimal("0.05")));
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Una estrategia real no ejecuta señales: solo se simula (#99)")
+        void should_ignore_signals_of_real_strategies() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            inst.setEsReal(true);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+
+            paperTradingService.onSignal(10L, crearSignalBUY());
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
     }
 
@@ -359,12 +412,9 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL()); // precio salida 31000 > entrada 30000
 
-            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
             assertThat(pos.isAbierta(), is(false));
             verify(posicionRepo, times(1)).save(pos);
-            verify(tradeResultsPort, times(1)).guardarTrade(
-                    anyString(), anyString(), eq("BTCUSDT"), eq("SELL"), any(), anyLong(), any());
-            verify(tradeResultsPort, times(1)).guardarStats(anyString(), anyString(), any(), eq(false));
         }
 
         @Test
@@ -384,6 +434,42 @@ class PaperTradingServiceTest {
         }
 
         @Test
+        @DisplayName("✓ El PnL descuenta slippage y comisiones, y libera el riesgo de la posición (#99)")
+        void should_close_net_of_costs_and_release_the_position_risk() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            pos.setUnidades(new BigDecimal("0.01"));
+            pos.setPrecioEntrada(new BigDecimal("30015"));
+            pos.setRiesgo(new BigDecimal("10.15"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+
+            paperTradingService.onSignal(10L, crearSignalSELL()); // 31000 → sale a 30984,5
+
+            // bruto = 0.01 * (30984.5 - 30015) = 9.695; comisión = 0.001 * 0.01 * (30015 + 30984.5) = 0.609995
+            verify(accountingService).closeTrade(any(), eq(10L), any(),
+                    eq(new BigDecimal("9.08500500")), eq(new BigDecimal("10.15")), any());
+            assertThat(pos.getComisiones(), is(new BigDecimal("0.60999500")));
+        }
+
+        @Test
+        @DisplayName("✓ Un objetivo se llena a su precio, sin slippage (#99)")
+        void should_fill_a_target_without_slippage() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+            SignalDTO objetivo = crearSignalSELL();
+            objetivo.setReason("TARGET");
+
+            paperTradingService.onSignal(10L, objetivo);
+
+            assertThat(pos.getPrecioSalida(), is(new BigDecimal("31000.00000000")));
+        }
+
+        @Test
         @DisplayName("✓ No debe hacer nada cuando no hay posición abierta para el símbolo")
         void should_do_nothing_when_no_open_position() {
             InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
@@ -393,7 +479,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL());
 
-            verify(accountingService, never()).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, never()).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
     }
@@ -413,4 +499,88 @@ class PaperTradingServiceTest {
                     is(true));
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Señales no operables (#70) y PnL con precios baratos (#56)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Señales inválidas y cálculo de PnL")
+    class SenalesInvalidasYPnlTests {
+
+        @Test
+        @DisplayName("✓ Un símbolo que la estrategia no tiene configurado se descarta")
+        void foreign_symbol_is_discarded() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            SignalDTO s = crearSignalBUY();
+            s.setSymbol("DOGEUSDT");
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Un timeframe distinto del configurado se descarta")
+        void other_timeframe_is_discarded() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            SignalDTO s = crearSignalBUY();
+            s.setTimeframe("4h");
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Precio nulo o 0 no abre posición")
+        void non_positive_price_is_discarded() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            SignalDTO s = crearSignalBUY();
+            s.setPrice(BigDecimal.ZERO);
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ El PnL de un activo barato usa el precio exacto y una sola división")
+        void pnl_of_cheap_asset_is_exact() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            com.bottrading.trading.domain.Posicion pos = new com.bottrading.trading.domain.Posicion();
+            pos.setAbierta(true);
+            pos.setPrecioEntrada(new BigDecimal("0.62340000"));
+            pos.setMargenInvertido(new BigDecimal("50"));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(Optional.of(pos));
+            SignalDTO s = crearSignalSELL();
+            s.setPrice(new BigDecimal("0.7000"));
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService).closeTrade(any(), eq(10L), eq(new BigDecimal("50")),
+                    eq(new BigDecimal("6.11565608")), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Una posición heredada con precio de entrada 0 se cierra con PnL 0 en vez de lanzar")
+        void corrupt_entry_price_closes_with_zero_pnl() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            com.bottrading.trading.domain.Posicion pos = new com.bottrading.trading.domain.Posicion();
+            pos.setAbierta(true);
+            pos.setPrecioEntrada(BigDecimal.ZERO);
+            pos.setMargenInvertido(new BigDecimal("50"));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(Optional.of(pos));
+
+            paperTradingService.onSignal(10L, crearSignalSELL());
+
+            verify(accountingService).closeTrade(any(), eq(10L), eq(new BigDecimal("50")),
+                    argThat(p -> p.signum() == 0), any(), any());
+        }
+    }
+
 }

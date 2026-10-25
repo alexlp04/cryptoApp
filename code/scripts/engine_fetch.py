@@ -3,11 +3,11 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pandas as pd
 import requests
-from ipc_protocol import write_response
+from ipc_protocol import write_error, write_response
 from requests.adapters import HTTPAdapter
 from shared_utils import setup_engine_logging
 
@@ -62,18 +62,6 @@ INTERVAL_MS = {
     "1M": 2_592_000_000,
 }
 
-UPDATE_THRESHOLD = {
-    "1m": timedelta(minutes=1),
-    "5m": timedelta(minutes=5),
-    "15m": timedelta(minutes=15),
-    "30m": timedelta(minutes=30),
-    "1h": timedelta(hours=1),
-    "4h": timedelta(hours=4),
-    "1d": timedelta(days=1),
-    "1w": timedelta(weeks=1),
-    "1M": timedelta(days=30),
-}
-
 def _parse_candle(candle: list, symbol: str, timeframe: str) -> dict:
     return {
         "openTime": int(candle[0]),
@@ -97,27 +85,52 @@ def _apply_backoff(backoff: float) -> float:
     return min(backoff * 2, MAX_BACKOFF_SEC)
 
 
+def _retry_after(response: requests.Response, default: int) -> int:
+    """Retry-After en segundos. Según RFC 9110 puede ser una fecha HTTP: no se interpreta, se usa el default."""
+    try:
+        wait = int(response.headers.get("Retry-After", default))
+    except (TypeError, ValueError):
+        wait = default
+    return max(0, min(wait, MAX_BACKOFF_SEC))
+
+
 def _handle_response_status(response: requests.Response, attempt: int, max_retries: int,
                             backoff: float) -> tuple[str, float]:
+    last_attempt = attempt >= max_retries  # no dormir si ya no habrá otro intento
+
     if response.status_code == 429:
-        wait = int(response.headers.get("Retry-After", DEFAULT_RATE_LIMIT_WAIT))
-        logger.warning("Rate limit (429). Esperando %ss...", wait)
-        time.sleep(wait)
+        wait = _retry_after(response, DEFAULT_RATE_LIMIT_WAIT)
+        logger.warning("Rate limit (429). Intento %s/%s.", attempt, max_retries)
+        if not last_attempt:
+            logger.warning("Esperando %ss...", wait)
+            time.sleep(wait)
         return "retry", backoff
 
     if response.status_code == 418:
-        wait = int(response.headers.get("Retry-After", MAX_BACKOFF_SEC))
-        logger.error("IP baneada temporalmente (418). Esperando %ss...", wait)
-        time.sleep(wait)
+        wait = _retry_after(response, MAX_BACKOFF_SEC)
+        logger.error("IP baneada temporalmente (418). Intento %s/%s.", attempt, max_retries)
+        if not last_attempt:
+            logger.error("Esperando %ss...", wait)
+            time.sleep(wait)
         return "retry", backoff
 
     if response.status_code >= 500:
         logger.warning(
             "Error servidor Binance (%s). Intento %s/%s. Backoff %.1fs...",
             response.status_code, attempt, max_retries, backoff)
+        if last_attempt:
+            return "retry", backoff
         return "retry", _apply_backoff(backoff)
 
     return "continue", backoff
+
+
+def _json_body(response: requests.Response) -> dict | list | None:
+    """Cuerpo JSON o None si no lo es (p. ej. HTML de un WAF/proxy en un 403)."""
+    try:
+        return response.json()
+    except ValueError:
+        return None
 
 
 def _request_with_backoff(
@@ -137,14 +150,21 @@ def _request_with_backoff(
                 continue
 
             if response.status_code >= 400:
-                data = response.json()
-                logger.error(
-                    "Error Binance HTTP %s: code=%s msg=%s",
-                    response.status_code,
-                    data.get("code"), data.get("msg"))
+                data = _json_body(response)
+                if isinstance(data, dict):
+                    logger.error(
+                        "Error Binance HTTP %s: code=%s msg=%s",
+                        response.status_code, data.get("code"), data.get("msg"))
+                else:
+                    logger.error("Error HTTP %s con cuerpo no JSON", response.status_code)
                 return None
 
-            data = response.json()
+            data = _json_body(response)
+            if data is None:
+                logger.warning("Respuesta 200 con cuerpo no JSON. Intento %s/%s.", attempt, max_retries)
+                if attempt < max_retries:
+                    backoff = _apply_backoff(backoff)
+                continue
 
             if isinstance(data, dict) and "code" in data:
                 logger.error(
@@ -152,22 +172,26 @@ def _request_with_backoff(
                     data.get("code"), data.get("msg"))
                 return None
 
+            if not isinstance(data, list):
+                logger.error("Respuesta inesperada de Binance (se esperaba una lista): %s", type(data).__name__)
+                return None
+
             return data
 
-        except requests.exceptions.Timeout:
+        except requests.exceptions.RequestException as exc:
+            # Base de Timeout, ConnectionError, ChunkedEncodingError, ContentDecodingError...
             logger.warning(
-                "Timeout intento %s/%s. Backoff %.1fs...",
-                attempt, max_retries, backoff)
-            backoff = _apply_backoff(backoff)
-
-        except requests.exceptions.ConnectionError as exc:
-            logger.warning(
-                "Error conexión intento %s/%s: %s. Backoff %.1fs...",
-                attempt, max_retries, str(exc), backoff)
-            backoff = _apply_backoff(backoff)
+                "Error de red intento %s/%s (%s): %s. Backoff %.1fs...",
+                attempt, max_retries, type(exc).__name__, str(exc), backoff)
+            if attempt < max_retries:
+                backoff = _apply_backoff(backoff)
 
     logger.error("Agotados %s intentos para params=%s", max_retries, params)
     return None
+
+
+class ChunkFailedError(RuntimeError):
+    """Un chunk no se pudo descargar: seguir produciría una serie con huecos silenciosos."""
 
 
 def _calcular_chunks(
@@ -210,7 +234,13 @@ def _fetch_chunk(
 
     data = _request_with_backoff(params)
 
-    if data is None or not isinstance(data, list) or not data:
+    if data is None or not isinstance(data, list):
+        # Fallo definitivo (reintentos agotados, 4xx...): no es lo mismo que un chunk vacío.
+        raise ChunkFailedError(
+            f"Chunk {chunk_index} falló ({pd.to_datetime(start_ms, unit='ms')} -> "
+            f"{pd.to_datetime(end_ms, unit='ms')})")
+
+    if not data:
         logger.warning(
             "Chunk %s sin datos (%s -> %s).",
             chunk_index,
@@ -262,7 +292,13 @@ def _descargar_chunks_paralelo(
             for i, (start, end) in enumerate(chunks)
         }
         for future in as_completed(futures):
-            chunk_index, velas = future.result()
+            try:
+                chunk_index, velas = future.result()
+            except Exception:
+                # Sin cancelar, el with espera a TODAS las futuras pendientes y el proceso seguía
+                # descargando minutos después del fallo.
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
             resultados[chunk_index] = velas
             completados += 1
             if completados % 10 == 0 or completados == len(chunks):
@@ -334,6 +370,8 @@ def obtener_datos_binance(
     )
 
     velas_unicas = _descargar_chunks_paralelo(chunks, symbol, timeframe, workers)
+    # La API incluye la vela en curso (closeTime futuro): persistirla dejaba OHLCV parcial para siempre.
+    velas_unicas = [v for v in velas_unicas if v["closeTime"] < until_ms]
     total_emitidas = _emitir_velas_ipc(velas_unicas)
 
     logger.info("Descarga y emisión completadas: %s velas únicas.", total_emitidas)
@@ -345,12 +383,18 @@ def fetch(
     timeframe: str,
     since_binance: str | None = None,
 ) -> int:
-    if since_binance is None or since_binance == "None":
-        since_ms = obtener_fecha_listado(symbol, timeframe)
-        if since_ms is None:
-            since_ms = 1_502_928_000_000
+    # Siempre se consulta el listado (1 petición): sirve de fail-fast si el símbolo no existe y
+    # evita miles de peticiones vacías si se pide una ventana anterior al listado del par.
+    listing_ms = obtener_fecha_listado(symbol, timeframe)
+    if listing_ms is None:
+        raise ValueError(
+            f"No se pudo obtener la fecha de listado de {symbol} [{timeframe}]: "
+            "símbolo inexistente o Binance no responde.")
+
+    if since_binance is None:
+        since_ms = listing_ms
     else:
-        since_ms = int(since_binance)
+        since_ms = max(int(since_binance), listing_ms)
 
     total = obtener_datos_binance(symbol, timeframe, since_ms)
 
@@ -384,6 +428,7 @@ if __name__ == "__main__":
         logger.info(
             "=== Fetch completado. %s velas enviadas. ===", total_velas)
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Error crítico")
+        write_error("ERROR", f"Fetch fallido: {exc}")
         sys.exit(1)
