@@ -183,6 +183,85 @@ def atomic_save(path: str, save_fn: Any) -> None:
             os.remove(tmp)
 
 
+class ModelIntegrityError(ValueError):
+    """El fichero del modelo no es el que se guardó (manipulado o corrupto) o viene de otras librerías."""
+
+
+#: Librerías cuyo formato interno cambia entre versiones menores y afecta a un modelo guardado.
+_MODEL_LIBRARIES = ("scikit-learn", "xgboost", "lightgbm", "tensorflow")
+
+
+def _manifest_path(model_path: str) -> str:
+    return os.path.splitext(model_path)[0] + ".manifest.json"
+
+
+def _sha256_of(path: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _installed_versions() -> dict[str, str]:
+    from importlib import metadata
+
+    found: dict[str, str] = {}
+    for lib in _MODEL_LIBRARIES:
+        try:
+            found[lib] = metadata.version(lib)
+        except metadata.PackageNotFoundError:
+            continue
+    return found
+
+
+def save_model(path: str, save_fn: Any) -> None:
+    """atomic_save + manifiesto con el sha256 y las versiones de las librerías (issues #33 y #93).
+
+    shortcut: el sha256 detecta ficheros corruptos o cambiados por error, no a quien reescriba
+    también el manifiesto; firmarlo con una clave (HMAC) si los modelos se comparten entre máquinas.
+    """
+    atomic_save(path, save_fn)
+    manifest = {"sha256": _sha256_of(path), "libraries": _installed_versions()}
+    atomic_save(_manifest_path(path), lambda tmp: _write_json(tmp, manifest))
+
+
+def _write_json(path: str, content: dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(content, f, indent=2)
+
+
+def _major_minor(version: str) -> str:
+    return ".".join(version.split(".")[:2])
+
+
+def verify_model_manifest(model_path: str) -> None:
+    """Rechaza un modelo cuyo contenido no coincide con su manifiesto o que se guardó con otra
+    versión (mayor.menor) de sklearn/xgboost/lightgbm/tensorflow. Sin manifiesto (modelo anterior
+    a esta comprobación) solo avisa: se carga igual."""
+    manifest_file = _manifest_path(model_path)
+    if not os.path.exists(manifest_file):
+        logging.getLogger(__name__).warning(
+            "El modelo %s no tiene manifiesto: no se puede comprobar su integridad. Reentrénalo.",
+            os.path.basename(model_path))
+        return
+    with open(manifest_file, encoding="utf-8") as f:
+        manifest = json.load(f)
+    if manifest.get("sha256") != _sha256_of(model_path):
+        raise ModelIntegrityError(
+            f"El modelo {os.path.basename(model_path)} no coincide con su manifiesto: "
+            "está corrupto o lo han modificado. Reentrénalo.")
+    actuales = _installed_versions()
+    for lib, guardada in manifest.get("libraries", {}).items():
+        actual = actuales.get(lib)
+        if actual is not None and _major_minor(actual) != _major_minor(guardada):
+            raise ModelIntegrityError(
+                f"El modelo {os.path.basename(model_path)} se guardó con {lib} {guardada} y ahora "
+                f"está instalada la {actual}: el formato puede haber cambiado. Reentrénalo.")
+
+
 def build_signal_line(signal: dict) -> str:
     """Construye una línea de señal RT para stdout (``SIGNAL\\tJSON``)."""
     return SIGNAL_PREFIX + json.dumps(signal)

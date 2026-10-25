@@ -24,6 +24,7 @@ from shared_utils import (
     load_strategy_by_path,
     setup_engine_logging,
     upsert_candle,
+    verify_model_manifest,
 )
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
@@ -159,6 +160,7 @@ def load_model(
             f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
         )
 
+    verify_model_manifest(path)
     loaded = _load_from_path(path)
     _attach_training_metadata(loaded[0], path)
     trained_with = _trained_strategy(loaded[0], path)
