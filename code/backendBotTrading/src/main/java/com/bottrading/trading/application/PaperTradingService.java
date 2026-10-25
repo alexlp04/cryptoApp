@@ -14,7 +14,9 @@ import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
+import com.bottrading.trading.domain.ExecutionCosts;
 import com.bottrading.trading.domain.Posicion;
+import com.bottrading.trading.domain.RiskRules;
 import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
 
@@ -74,6 +76,13 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return; // Ignorar señales de estrategias pausadas o detenidas
         }
 
+        if (instancia.isEsReal()) {
+            // Sin adaptador de exchange una orden "real" solo sería una simulación con otro nombre.
+            log.error("[{}] Señal ignorada: la estrategia es real y este servicio solo simula (paper trading)",
+                    instancia.getId());
+            return;
+        }
+
         if (!senalCorrespondeALaInstancia(instancia, signal)) {
             return;
         }
@@ -121,8 +130,9 @@ public class PaperTradingService implements ProcessSignalUseCase {
     }
 
     /**
-     * Ejecuta la lógica de apertura de una posición Larga (BUY).
-     * Verifica fondos, registra la posición y actualiza la contabilidad.
+     * Abre una posición larga como lo haría una plataforma de trading: el tamaño sale del riesgo y del stop
+     * de la señal ({@link RiskRules}), la orden se llena con slippage ({@link ExecutionCosts}) y se rechaza
+     * si no hay stop válido, si no cabe en el capital o si superaría el riesgo abierto permitido.
      */
     private void handleBuy(InstanciaEstrategia e, SignalDTO signal) {
         // Evitar abrir múltiples posiciones sobre el mismo símbolo
@@ -130,13 +140,25 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return;
         }
 
-        BigDecimal montoAInvertir = e.getCapitalReservado().multiply(e.getRiskPerTrade())
-                .setScale(8, RoundingMode.HALF_UP); // la escala de la columna: lo sumado en memoria es lo guardado
+        BigDecimal entrada = ExecutionCosts.precioCompra(signal.getPrice());
+        if (!RiskRules.stopValido(entrada, signal.getStopLoss())) {
+            log.warn("[{}] BUY {} rechazado: la señal no trae un stop válido por debajo de la entrada ({} / {})",
+                    e.getId(), signal.getSymbol(), entrada, signal.getStopLoss());
+            return;
+        }
 
-        // Validaciones básicas de gestión de riesgo
-        if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
-                montoAInvertir.compareTo(e.getCapitalReservado()) > 0) {
-            log.error("Orden BUY rechazada: Capital insuficiente o riesgo inválido.");
+        BigDecimal equity = e.getCapitalReservado().add(e.getCapitalComprometido());
+        RiskRules.Sizing tamano = RiskRules.dimensionar(
+                equity, e.getRiskPerTrade(), entrada, signal.getStopLoss(), e.getCapitalReservado());
+        if (tamano == null) {
+            log.warn("[{}] BUY {} rechazado: sin capital para una posición con ese stop (equity {}, reservado {})",
+                    e.getId(), signal.getSymbol(), equity, e.getCapitalReservado());
+            return;
+        }
+        if (RiskRules.superaRiesgoAbierto(equity, e.getRiesgoAbierto(), tamano.riesgo())) {
+            log.warn("[{}] BUY {} rechazado: el riesgo abierto ({} + {}) superaría el {} % del equity",
+                    e.getId(), signal.getSymbol(), e.getRiesgoAbierto(), tamano.riesgo(),
+                    RiskRules.MAX_OPEN_RISK_FRACTION.movePointRight(2).stripTrailingZeros().toPlainString());
             return;
         }
 
@@ -144,45 +166,63 @@ public class PaperTradingService implements ProcessSignalUseCase {
         Posicion pos = new Posicion();
         pos.setInstancia(e);
         pos.setSimbolo(signal.getSymbol());
-        pos.setPrecioEntrada(signal.getPrice());
-        pos.setMargenInvertido(montoAInvertir);
+        pos.setPrecioEntrada(entrada);
+        pos.setUnidades(tamano.unidades());
+        pos.setMargenInvertido(tamano.nocional());
+        pos.setStopLoss(signal.getStopLoss());
+        pos.setTakeProfit(signal.getTakeProfit());
+        pos.setRiesgo(tamano.riesgo());
         pos.setAbierta(true);
         posicionRepo.save(pos);
 
-        accountingService.commitCapital(e.getId(), montoAInvertir, e.getRiskPerTrade(), "posicion:" + pos.getId() + ":open");
-        log.info("[{}] BUY {} @ {} (margen {})", e.getId(), signal.getSymbol(), signal.getPrice(), montoAInvertir);
+        accountingService.commitCapital(e.getId(), tamano.nocional(), tamano.riesgo(),
+                "posicion:" + pos.getId() + ":open");
+        log.info("[{}] BUY {} {} u. @ {} (margen {}, riesgo {}, stop {})", e.getId(), signal.getSymbol(),
+                tamano.unidades(), entrada, tamano.nocional(), tamano.riesgo(), signal.getStopLoss());
     }
 
     /**
-     * Ejecuta la lógica de cierre de una posición (SELL).
-     * Calcula PnL, actualiza balances y genera estadísticas.
+     * Cierra una posición (SELL, STOP u objetivo). El PnL es neto de slippage y comisiones, como en el
+     * backtest, y libera el riesgo que se comprometió al abrir.
      */
     private void handleSell(InstanciaEstrategia e, SignalDTO signal) {
         Posicion pos = posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(e, signal.getSymbol())
                 .orElse(null);
 
-        if (pos == null)
-            return; // No hay nada que vender
+        if (pos == null) {
+            log.debug("[{}] SELL {} ignorado: no hay posición abierta", e.getId(), signal.getSymbol());
+            return;
+        }
 
-        BigDecimal precioSalida = signal.getPrice();
-        BigDecimal pnlNeto = calcularPnl(pos, precioSalida);
+        boolean ordenLimite = "TARGET".equals(signal.getReason());
+        BigDecimal precioSalida = ExecutionCosts.precioVenta(signal.getPrice(), ordenLimite);
+        BigDecimal comisiones = calcularComisiones(pos, precioSalida);
+        BigDecimal pnlNeto = calcularPnl(pos, precioSalida).subtract(comisiones);
 
-        // Liquidar contablemente: liberar el mismo riesgo que se comprometió al abrir
         accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto,
-                e.getRiskPerTrade(), "posicion:" + pos.getId() + ":close");
+                pos.getRiesgo() != null ? pos.getRiesgo() : BigDecimal.ZERO,
+                "posicion:" + pos.getId() + ":close");
 
-        // Cerrar posición lógica
         pos.setAbierta(false);
         pos.setPrecioSalida(precioSalida);
+        pos.setComisiones(comisiones);
         pos.setPnl(pnlNeto);
         pos.setFechaCierre(Instant.now());
         posicionRepo.save(pos);
-        log.info("[{}] SELL {} @ {} (PnL {})", e.getId(), signal.getSymbol(), precioSalida, pnlNeto);
+        log.info("[{}] SELL {} @ {} ({}; PnL neto {}, comisiones {})", e.getId(), signal.getSymbol(),
+                precioSalida, signal.getReason() != null ? signal.getReason() : "SIGNAL", pnlNeto, comisiones);
+    }
+
+    private BigDecimal calcularComisiones(Posicion pos, BigDecimal precioSalida) {
+        if (pos.getUnidades() == null || pos.getPrecioEntrada() == null) {
+            return BigDecimal.ZERO; // posición anterior a la gestión de riesgo: sin datos para calcularlas
+        }
+        return ExecutionCosts.comision(pos.getUnidades(), pos.getPrecioEntrada(), precioSalida);
     }
 
     /**
-     * PnL = margen * (salida - entrada) / entrada con una sola división al final (una división
-     * intermedia a 8 decimales arrastraba el error al multiplicar por el margen).
+     * PnL bruto = unidades * (salida - entrada). Las posiciones anteriores a la gestión de riesgo no
+     * guardan unidades: se usa margen * (salida - entrada) / entrada, con una sola división al final.
      */
     private BigDecimal calcularPnl(Posicion pos, BigDecimal precioSalida) {
         BigDecimal entrada = pos.getPrecioEntrada();
@@ -190,6 +230,9 @@ public class PaperTradingService implements ProcessSignalUseCase {
             // Posición corrupta heredada: se cierra sin PnL en vez de quedar imposible de cerrar.
             log.error("Posición {} con precio de entrada inválido ({}): se cierra con PnL 0", pos.getId(), entrada);
             return BigDecimal.ZERO;
+        }
+        if (pos.getUnidades() != null) {
+            return pos.getUnidades().multiply(precioSalida.subtract(entrada)).setScale(8, RoundingMode.HALF_UP);
         }
         return pos.getMargenInvertido().multiply(precioSalida.subtract(entrada))
                 .divide(entrada, 8, RoundingMode.HALF_UP);

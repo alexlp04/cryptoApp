@@ -36,6 +36,13 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
+        if (args.isReal()) {
+            // Una orden real necesita un adaptador de exchange; sin él sería una simulación con otro nombre.
+            context.println().accept("El modo real (-r) no está disponible: no hay ningún exchange conectado. "
+                    + "Usa -v para operar en paper trading.");
+            return;
+        }
+
         if (!validarEstrategiaYModelo(args, context)) {
             return;
         }
@@ -46,14 +53,8 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
-        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade (0.01 - 1.0): ");
+        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade, fracción del capital que se pierde si salta el stop (0.01 = 1 %, máx. 0.10): ");
         if (risk == null) {
-            return;
-        }
-
-        if (args.isReal() && !CliInputValidator.readConfirmation(context,
-                "Vas a operar con DINERO REAL. Escribe REAL para confirmar: ", "REAL")) {
-            context.println().accept("Operacion cancelada.");
             return;
         }
 
@@ -72,10 +73,6 @@ public final class TradeCommand implements CliCommand {
             context.println().accept(
                     "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...] [-signal close|open|both]");
             return false;
-        }
-
-        if (args.isReal()) {
-            context.println().accept("ADVERTENCIA: Has seleccionado MODO REAL. Asegurate de tener fondos y entender los riesgos.");
         }
 
         return true;

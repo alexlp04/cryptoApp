@@ -79,26 +79,14 @@ class RiskyCommandsConfirmationTest {
     }
 
     @Test
-    @DisplayName("trade -r exige escribir REAL: otra respuesta cancela el lanzamiento (#112)")
-    void real_trade_needs_the_word_real() throws Exception {
-        // wallet, capital, riesgo y la confirmación equivocada
+    @DisplayName("trade -r se rechaza: no hay exchange conectado, así que no se pregunta nada ni se lanza (#99)")
+    void real_trade_is_refused_before_asking_anything() throws Exception {
         new TradeCommand().execute(
                 "trade -r -strategy StressTestStrategy -tf 1h -coins BTCUSDT".split(" "),
-                context("principal\n100\n0.02\nsi\n"));
+                context(""));
 
         verify(lifecycle, never()).iniciarTradeRT(anyString(), any(), anyString(), any(), Mockito.anyBoolean(),
                 any(), any(), any(), anyString(), any());
-        assertTrue(out.stream().anyMatch(l -> l.contains("cancelada")), out.toString());
-    }
-
-    @Test
-    @DisplayName("trade -r lanza la estrategia cuando se escribe REAL")
-    void real_trade_runs_when_real_is_typed() throws Exception {
-        new TradeCommand().execute(
-                "trade -r -strategy StressTestStrategy -tf 1h -coins BTCUSDT".split(" "),
-                context("principal\n100\n0.02\nREAL\n"));
-
-        verify(lifecycle).iniciarTradeRT(anyString(), any(), anyString(), any(), Mockito.eq(true),
-                any(), any(), any(), Mockito.eq("close"), any());
+        assertTrue(out.stream().anyMatch(l -> l.contains("no está disponible")), out.toString());
     }
 }

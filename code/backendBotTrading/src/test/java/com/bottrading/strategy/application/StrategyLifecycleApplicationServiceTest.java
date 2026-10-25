@@ -684,4 +684,15 @@ class StrategyLifecycleApplicationServiceTest {
             verify(runtimeCoordinator, never()).detenerEstrategia(8L);
         }
     }
+
+    @Test
+    @DisplayName("✓ Una estrategia real se rechaza: sin exchange conectado solo sería una simulación")
+    void real_strategies_are_refused() {
+        org.junit.jupiter.api.Assertions.assertThrows(com.bottrading.shared.exceptions.ValidationException.class,
+                () -> lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), true, 1L,
+                        new BigDecimal("0.01"), new BigDecimal("100"), 5L));
+
+        verify(instanciaRepo, never()).save(any());
+        verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
+    }
 }

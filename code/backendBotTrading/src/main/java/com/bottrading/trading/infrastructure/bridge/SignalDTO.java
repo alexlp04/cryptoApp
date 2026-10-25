@@ -16,6 +16,9 @@ public class SignalDTO {
     private String timeframe;
     private long timestamp;
     private boolean isReal;
+    private BigDecimal stopLoss; // solo en BUY: con él se dimensiona la posición
+    private BigDecimal takeProfit;
+    private String reason; // SIGNAL, STOP o TARGET
 
     public SignalDTO() {
         // Constructor vacío para serialización JSON
@@ -68,6 +71,32 @@ public class SignalDTO {
     @JsonAlias("is_real")
     public void setReal(boolean isReal) {
         this.isReal = isReal;
+    }
+
+    public BigDecimal getStopLoss() {
+        return stopLoss;
+    }
+
+    @JsonAlias("stop_loss")
+    public void setStopLoss(BigDecimal stopLoss) {
+        this.stopLoss = stopLoss;
+    }
+
+    public BigDecimal getTakeProfit() {
+        return takeProfit;
+    }
+
+    @JsonAlias("take_profit")
+    public void setTakeProfit(BigDecimal takeProfit) {
+        this.takeProfit = takeProfit;
+    }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public void setReason(String reason) {
+        this.reason = reason;
     }
 
     public String getTimeframe() {

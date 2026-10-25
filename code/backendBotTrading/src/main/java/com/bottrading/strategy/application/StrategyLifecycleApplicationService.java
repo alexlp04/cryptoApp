@@ -94,6 +94,11 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode,
             Long usuarioId) {
 
+        if (isReal) {
+            // Dominio: sin adaptador de exchange una estrategia "real" se ejecutaría como simulación.
+            throw new ValidationException("El modo real no está disponible: no hay ningún exchange conectado.");
+        }
+
         InstanciaEstrategia instancia = tx.execute(status -> crearYActivarEstrategia(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital, signalMode, usuarioId));
 

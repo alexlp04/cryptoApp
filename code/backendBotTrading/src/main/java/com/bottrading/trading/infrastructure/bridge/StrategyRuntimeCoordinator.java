@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 import com.bottrading.shared.exceptions.PythonProcessException;
 import com.bottrading.shared.exceptions.SignalProcessingException;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
+import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
+import com.bottrading.trading.domain.Posicion;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
 
@@ -41,6 +43,7 @@ public class StrategyRuntimeCoordinator {
     private final ProcessSignalUseCase paperTradingService;
     private final AccountingUseCase accountingService;
     private final PythonBridgeFacade pythonBridgeFacade;
+    private final PosicionRepositoryPort posicionRepo;
 
     /** Sin salida inicial en este plazo => el proceso no llegó a arrancar. */
     private static final long STARTUP_TIMEOUT_MS = 90_000L;
@@ -71,13 +74,27 @@ public class StrategyRuntimeCoordinator {
             SignalRetryQueueService retryQueueService,
             ProcessSignalUseCase paperTradingService,
             AccountingUseCase accountingService,
-            PythonBridgeFacade pythonBridgeFacade) {
+            PythonBridgeFacade pythonBridgeFacade,
+            PosicionRepositoryPort posicionRepo) {
         this.processSupervisor = processSupervisor;
         this.signalParser = signalParser;
         this.retryQueueService = retryQueueService;
         this.paperTradingService = paperTradingService;
         this.accountingService = accountingService;
         this.pythonBridgeFacade = pythonBridgeFacade;
+        this.posicionRepo = posicionRepo;
+    }
+
+    /** Stop y objetivo (como double: msgpack no admite cualquier BigDecimal) de lo abierto en cada símbolo. */
+    private Map<String, Map<String, Object>> posicionesAbiertas(InstanciaEstrategia instancia) {
+        Map<String, Map<String, Object>> abiertas = new java.util.HashMap<>();
+        for (Posicion p : posicionRepo.findByInstanciaAndAbiertaTrue(instancia)) {
+            if (p.getStopLoss() != null && p.getTakeProfit() != null) {
+                abiertas.put(p.getSimbolo(), Map.of(
+                        "stop", p.getStopLoss().doubleValue(), "take_profit", p.getTakeProfit().doubleValue()));
+            }
+        }
+        return abiertas;
     }
 
     /**
@@ -155,7 +172,7 @@ public class StrategyRuntimeCoordinator {
 
             stderrFuture = iniciarLecturaErroresPython(process, instancia);
 
-            processSupervisor.enviarPayload(process, instancia, symbols);
+            processSupervisor.enviarPayload(process, instancia, symbols, posicionesAbiertas(instancia));
 
             escucharSalidaPythonConTimeout(process, instancia, startTime);
 

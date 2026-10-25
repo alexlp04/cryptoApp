@@ -33,7 +33,8 @@ class StrategyRuntimeCoordinatorTest {
         });
         StrategyRuntimeCoordinator coordinator = new StrategyRuntimeCoordinator(supervisor,
                 mock(SignalProtocolParser.class), mock(SignalRetryQueueService.class),
-                mock(ProcessSignalUseCase.class), mock(AccountingUseCase.class), mock(PythonBridgeFacade.class));
+                mock(ProcessSignalUseCase.class), mock(AccountingUseCase.class), mock(PythonBridgeFacade.class),
+                mock(com.bottrading.trading.application.port.out.PosicionRepositoryPort.class));
         InstanciaEstrategia inst = InstanciaEstrategia.inicializar("S", null, "1h", List.of("BTCUSDT"), false, 1L,
                 new BigDecimal("0.01"), new BigDecimal("100"));
         inst.setId(7L);

@@ -84,9 +84,9 @@ public class RealtimeProcessSupervisor {
     /**
      * Envía la configuración inicial al proceso Python por STDIN.
      */
-    public void enviarPayload(Process process, InstanciaEstrategia instancia, List<String> symbols) 
-            throws PythonProcessException {
-        Map<String, Object> payload = construirPayload(instancia, symbols);
+    public void enviarPayload(Process process, InstanciaEstrategia instancia, List<String> symbols,
+            Map<String, Map<String, Object>> posicionesAbiertas) throws PythonProcessException {
+        Map<String, Object> payload = construirPayload(instancia, symbols, posicionesAbiertas);
         
         try (OutputStream os = process.getOutputStream()) {
             IpcMessagePackCodec.writeEnvelope(os, IpcMessageType.RT_SIGNAL, payload);
@@ -105,7 +105,12 @@ public class RealtimeProcessSupervisor {
         }
     }
 
-    Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols) {
+    /**
+     * @param posicionesAbiertas stop y objetivo de lo que Java ya tiene abierto por símbolo, para que el
+     *                           motor siga protegiéndolo tras un reinicio
+     */
+    Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols,
+            Map<String, Map<String, Object>> posicionesAbiertas) {
         Map<String, Object> payload = new HashMap<>();
 
         if (instancia.getNombreEstrategia() != null && !instancia.getNombreEstrategia().isBlank()) {
@@ -116,6 +121,7 @@ public class RealtimeProcessSupervisor {
         payload.put("capital", instancia.getCapitalReservado());
         payload.put("is_real", instancia.isEsReal());
         payload.put("signal_mode", instancia.getSignalMode());
+        payload.put("open_positions", posicionesAbiertas);
         if (instancia.getRiskPerTrade() != null) {
             payload.put("risk_per_trade", instancia.getRiskPerTrade());
         }

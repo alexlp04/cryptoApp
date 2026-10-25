@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (347 tests)
+mvn test          # JUnit + H2 (481 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 184 tests
+pytest code/scripts/tests -q   # 285 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -139,16 +139,37 @@ get_stop_loss(entry_price, row) -> float
 get_take_profit(entry_price, row) -> float
 ```
 
-Concretos ya provistos (sobreescribibles): `get_warmup_period()`, `get_position_size()`,
-`should_close()`, `get_feature_columns()`, `get_label()`, `max_open_trades()`.
+Concretos ya provistos (sobreescribibles): `get_warmup_period()`, `should_close()`,
+`get_feature_columns()`, `get_label()`, `max_open_trades()`.
 
 Puntos que suelen malinterpretarse:
 - `WARMUP_PERIOD` y `LABEL_RETURN_THRESHOLD` son atributos de clase; ajústalos al timeframe.
 - `get_label()` es **forward-looking a propósito** (usa la vela `t+1`). No lo redefinas a
   partir de `should_buy`/`should_sell`: el modelo memorizaría la regla (F1 ≈ 99% sin valor real).
 - El capital usa `Decimal`, no `float`.
+- `get_stop_loss` es **obligatorio y válido** (positivo y por debajo de la entrada): de él sale el tamaño
+  de la posición. Una señal de compra sin stop válido se descarta, no se opera con tamaño fijo.
 - Las features de contexto (ATR, ROC, Bollinger) alimentan al modelo aunque no las use
   `should_buy` — dan señales ortogonales.
+
+## Gestión de riesgo (backtest y vivo, mismas reglas)
+
+Como en una plataforma de trading: **`risk_per_trade` es lo que se pierde si salta el stop**, no el tamaño de la
+posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_management.py` (Python) y
+`trading/domain/RiskRules.java` + `ExecutionCosts.java` (Java); los dos lados deben decir lo mismo.
+
+- Tamaño: `unidades = equity × risk_per_trade / (entrada − stop)`, con tope del 25 % del equity por posición
+  y sin superar el capital reservado (spot, sin apalancamiento). `equity` = reservado + comprometido.
+- Riesgo abierto total (`riesgo_abierto`, en **dinero**) ≤ 6 % del equity; si una compra lo supera se rechaza.
+- Costes: 0,05 % de slippage en órdenes a mercado y stops, 0,1 % de comisión por lado; el objetivo es una orden
+  límite (sin slippage). El PnL es neto de ambos.
+- Stop y objetivo se ejecutan con el rango de la vela (`low`/`high`), no solo con el cierre; si una vela toca los dos
+  gana el stop. En vivo los vigila el motor Python en cada mensaje del stream (`PositionTracker`) y emite un `SELL`
+  con `reason` `STOP` u `TARGET`. Java le pasa las posiciones abiertas (`open_positions`) al (re)arrancar.
+- La señal `BUY` lleva `stop_loss` y `take_profit`; el `SELL`, `reason` (`SIGNAL`, `STOP`, `TARGET`).
+- No existe modo real: `trade -r` y `iniciarTradeRT(isReal=true)` se rechazan porque no hay adaptador de exchange.
+  Una orden «real» sin él sería una simulación con otro nombre. Cuando haya adaptador, va detrás de un puerto de
+  ejecución y `PaperTradingService` pasa a ser una de sus implementaciones.
 
 ## Reglas de código
 

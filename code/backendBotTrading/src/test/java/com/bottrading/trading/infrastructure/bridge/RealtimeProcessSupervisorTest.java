@@ -28,7 +28,7 @@ class RealtimeProcessSupervisorTest {
     @DisplayName("El payload RT lleva is_real y risk_per_trade de la instancia (#85 #92)")
     void should_send_is_real_and_risk_per_trade() {
         Map<String, Object> payload =
-                supervisor.construirPayload(instancia(true, new BigDecimal("0.05")), List.of("BTCUSDT"));
+                supervisor.construirPayload(instancia(true, new BigDecimal("0.05")), List.of("BTCUSDT"), java.util.Map.of());
 
         assertEquals(true, payload.get("is_real"));
         assertEquals(new BigDecimal("0.05"), payload.get("risk_per_trade"));
@@ -38,7 +38,7 @@ class RealtimeProcessSupervisorTest {
     @DisplayName("Sin riesgo definido se omite risk_per_trade y Python usa su valor por defecto")
     void should_omit_risk_when_null() {
         Map<String, Object> payload =
-                supervisor.construirPayload(instancia(false, null), List.of("BTCUSDT"));
+                supervisor.construirPayload(instancia(false, null), List.of("BTCUSDT"), java.util.Map.of());
 
         assertEquals(false, payload.get("is_real"));
         assertFalse(payload.containsKey("risk_per_trade"));
@@ -51,9 +51,21 @@ class RealtimeProcessSupervisorTest {
         InstanciaEstrategia i = instancia(false, new BigDecimal("0.02"));
         i.setSignalMode("both");
 
-        Map<String, Object> payload = supervisor.construirPayload(i, List.of("BTCUSDT"));
+        Map<String, Object> payload = supervisor.construirPayload(i, List.of("BTCUSDT"), java.util.Map.of());
 
         assertEquals("both", payload.get("signal_mode"));
-        assertEquals("close", supervisor.construirPayload(instancia(false, null), List.of("BTCUSDT")).get("signal_mode"));
+        assertEquals("close", supervisor.construirPayload(instancia(false, null), List.of("BTCUSDT"), java.util.Map.of()).get("signal_mode"));
+    }
+
+    @Test
+    @DisplayName("Las posiciones abiertas viajan al motor para que siga vigilando su stop y su objetivo")
+    void open_positions_are_sent_to_the_engine() {
+        java.util.Map<String, java.util.Map<String, Object>> abiertas =
+                java.util.Map.of("BTCUSDT", java.util.Map.of("stop", 95.0, "take_profit", 110.0));
+
+        Map<String, Object> payload = supervisor.construirPayload(
+                instancia(false, new BigDecimal("0.05")), List.of("BTCUSDT"), abiertas);
+
+        assertEquals(abiertas, payload.get("open_positions"));
     }
 }
