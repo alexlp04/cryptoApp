@@ -51,6 +51,12 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
+        if (args.isReal() && !CliInputValidator.readConfirmation(context,
+                "Vas a operar con DINERO REAL. Escribe REAL para confirmar: ", "REAL")) {
+            context.println().accept("Operacion cancelada.");
+            return;
+        }
+
         context.strategyLifecycleUseCase().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
                 args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado,
                 args.getSignalMode() == null ? "close" : args.getSignalMode());

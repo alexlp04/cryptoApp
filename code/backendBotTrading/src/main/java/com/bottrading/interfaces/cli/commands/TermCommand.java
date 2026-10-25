@@ -39,6 +39,12 @@ public final class TermCommand implements CliCommand {
             return;
         }
 
+        if (!CliInputValidator.readYesNo(context,
+                "Liquidar la estrategia " + id + " cierra sus posiciones y devuelve los fondos. Seguro? (s/n): ")) {
+            context.println().accept("Operacion cancelada.");
+            return;
+        }
+
         try {
             context.strategyLifecycleUseCase().terminarEstrategia(id);
             context.println().accept("Estrategia " + id + " liquidada.");
