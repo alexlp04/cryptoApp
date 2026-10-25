@@ -1,5 +1,7 @@
 package com.bottrading.user.application;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
@@ -47,6 +49,9 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
 
     private static final java.util.regex.Pattern NOMBRE_VALIDO = java.util.regex.Pattern.compile("^[A-Za-z0-9_.-]{3,32}$");
 
+    /** Hash de una contraseña cualquiera, solo para igualar el tiempo de respuesta con usuarios inexistentes. */
+    private static final String HASH_SENUELO = HashUtils.hashPassword("senuelo-sin-usuario");
+
     private final UsuarioRepositoryPort usuarioRepositoryPort;
 
     @Override
@@ -89,11 +94,35 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
         return usuarioRepositoryPort.findByIdAndEliminadoFalse(id);
     }
 
+    /**
+     * Comprueba las credenciales. Tras {@link Usuario#MAX_INTENTOS} fallos seguidos la cuenta queda
+     * bloqueada {@link Usuario#DURACION_BLOQUEO} y ni la contraseña correcta entra hasta que pase.
+     * Un nombre inexistente también gasta un BCrypt, para que el tiempo no delate qué usuarios existen.
+     */
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public boolean validarCredenciales(String nombre, String password) {
-        return usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre)
-                .map(usuario -> HashUtils.verificarPassword(password, usuario.getPasswordHash()))
-                .orElse(false);
+        Optional<Usuario> encontrado = usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre);
+        if (encontrado.isEmpty()) {
+            HashUtils.verificarPassword(password, HASH_SENUELO);
+            return false;
+        }
+        Usuario usuario = encontrado.get();
+        Instant ahora = Instant.now();
+        if (usuario.estaBloqueado(ahora)) {
+            long minutos = Math.max(1, Duration.between(ahora, usuario.getBloqueadoHasta()).toMinutes() + 1);
+            throw new ValidationException(
+                    "Demasiados intentos fallidos. Cuenta bloqueada, prueba de nuevo en " + minutos + " min.");
+        }
+        if (HashUtils.verificarPassword(password, usuario.getPasswordHash())) {
+            if (usuario.getIntentosFallidos() > 0 || usuario.getBloqueadoHasta() != null) {
+                usuario.registrarAcierto();
+                usuarioRepositoryPort.save(usuario);
+            }
+            return true;
+        }
+        usuario.registrarFallo(ahora);
+        usuarioRepositoryPort.save(usuario);
+        return false;
     }
 }
