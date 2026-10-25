@@ -66,3 +66,219 @@ def test_prediccion_binaria_aplica_umbrales(prob, esperado):
     model = _FakeKerasModel(np.array([[prob]], dtype="float32"))
 
     assert _predict_deep_learning(model, None, "neural_network", "BTCUSDT", None) == esperado
+
+
+# ── ml_standard decodifica las clases codificadas (#59) ─────────────────────
+
+class _FakeSklearnModel:
+    """Modelo entrenado sobre etiquetas codificadas 0,1,2 (originales -1,0,1)."""
+    classes_ = (0, 1, 2)
+
+    def __init__(self, encoded_pred: int, probs):
+        self._pred = encoded_pred
+        self._probs = probs
+
+    def predict(self, x):
+        return [self._pred]
+
+    def predict_proba(self, x):
+        return [self._probs]
+
+
+@pytest.mark.parametrize("encoded, esperado", [(0, "SELL"), (1, None), (2, "BUY")])
+def test_ml_standard_decodifica_clases_codificadas(encoded, esperado):
+    from engine_ai_rt import _predict_ml_standard
+
+    model = _FakeSklearnModel(encoded, [0.2, 0.3, 0.5])
+    assert _predict_ml_standard(model, None, "xgb", "BTCUSDT", [-1, 0, 1]) == esperado
+
+
+# ── Features sin NaN→0, backfill REST y fallos del modelo (#72 #96) ──────────
+
+import asyncio
+import json
+import pathlib
+from collections import deque
+
+import shared_utils
+
+
+class _FeatStrategy:
+    def __init__(self, value: float, warmup: int = 1):
+        self._value = value
+        self._warmup = warmup
+
+    def populate_indicators(self, df):
+        df["rsi"] = self._value
+        return df
+
+    def get_feature_columns(self, df):
+        return ["rsi"]
+
+    def get_warmup_period(self):
+        return self._warmup
+
+    def get_name(self):
+        return "FeatStrategy"
+
+
+def _buf(n: int = 3) -> deque:
+    return deque({"timestamp": i, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1} for i in range(n))
+
+
+def test_features_con_nan_no_se_rellenan_con_cero():
+    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(float("nan")), "BTCUSDT", "xgb")
+    assert x is None
+
+
+def test_features_validas_se_devuelven_como_float32():
+    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(55.0), "BTCUSDT", "xgb")
+    assert x.shape == (1, 1) and x.dtype == np.float32
+
+
+def test_fetch_recent_klines_descarta_la_vela_abierta(monkeypatch):
+    now_ms = 10_000_000.0
+    monkeypatch.setattr(shared_utils.time, "time", lambda: now_ms / 1000)
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            cerrada = [1000, "1", "2", "0.5", "1.5", "10", 1999]
+            abierta = [2000, "1", "2", "0.5", "1.5", "10", int(now_ms) + 5000]
+            return [cerrada, abierta]
+
+    monkeypatch.setattr(shared_utils.requests, "get", lambda *a, **k: _Resp())
+
+    klines = shared_utils.fetch_recent_klines("BTC/USDT", "1m", 2)
+
+    assert [c["timestamp"] for c in klines] == [1000]
+    assert klines[0]["close"] == 1.5
+
+
+class _FakeWS:
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def __aiter__(self):
+        async def gen():
+            for m in self._messages:
+                yield m
+        return gen()
+
+
+def _closed_kline(ts: int) -> str:
+    return json.dumps({"E": ts, "k": {"t": ts, "T": ts + 59, "o": "1", "h": "1", "l": "1",
+                                      "c": "1", "v": "1", "x": True}})
+
+
+def _run_symbol(monkeypatch, strategy, messages, decide, seeded):
+    monkeypatch.setattr(engine_ai_rt, "load_strategy_by_path", lambda *a, **k: strategy)
+    monkeypatch.setattr(engine_ai_rt, "load_model", lambda *a: (object(), "ml_standard", None))
+    monkeypatch.setattr(engine_ai_rt, "_decide_action", decide)
+    monkeypatch.setattr(engine_ai_rt, "fetch_recent_klines",
+                        lambda s, tf, limit: seeded.append(limit) or [])
+    monkeypatch.setattr(engine_ai_rt.websockets, "connect", lambda url: _FakeWS(messages))
+    return asyncio.run(engine_ai_rt.run_symbol("BTCUSDT", "1m", "x.py", "xgb", 1000.0, 0.02, False))
+
+
+def test_fallo_persistente_del_modelo_termina_sin_reconectar(monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("modelo roto")
+
+    seeded: list = []
+    messages = [_closed_kline(i * 100) for i in range(engine_ai_rt.MAX_CONSECUTIVE_FAILURES)]
+    # warmup 1 → el suelo MIN_WARMUP_CANDLES (50) exige muchas velas: se siembra el buffer a mano
+    monkeypatch.setattr(engine_ai_rt, "MIN_WARMUP_CANDLES", 1)
+
+    with pytest.raises(engine_ai_rt.ModelFailure):
+        _run_symbol(monkeypatch, _FeatStrategy(1.0), messages, boom, seeded)
+
+    assert len(seeded) == 1  # una sola conexión: no hubo reconexiones
+
+
+def test_el_buffer_se_siembra_con_warmup_mas_margen(monkeypatch):
+    seeded: list = []
+    monkeypatch.setattr(engine_ai_rt, "MIN_WARMUP_CANDLES", 1)
+
+    async def fake_sleep(delay):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(engine_ai_rt.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_symbol(monkeypatch, _FeatStrategy(1.0, warmup=300), [], lambda *a, **k: None, seeded)
+
+    assert seeded == [300 + engine_ai_rt.BACKFILL_MARGIN]
+
+
+# ── Carga de modelos sin azar y guardado atómico (#93) ───────────────────────
+
+import types
+
+import joblib
+
+
+def _dump(models_dir, name, strategy):
+    joblib.dump(types.SimpleNamespace(strategy_name=strategy), models_dir / name)
+
+
+@pytest.fixture
+def models_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_ai_rt, "PROJECT_ROOT", str(tmp_path))
+    d = tmp_path / "models"
+    d.mkdir()
+    return d
+
+
+def test_load_model_prefiere_el_modelo_de_la_estrategia_exacta(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+    _dump(models_dir, "xgb_1h_BTCUSDT_B.pkl", "B")
+
+    model, _, _ = engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "B")
+
+    assert model.strategy_name == "B"
+
+
+def test_load_model_ambiguo_sin_estrategia_falla(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+    _dump(models_dir, "xgb_1h_BTCUSDT_B.pkl", "B")
+
+    with pytest.raises(ValueError, match="ambiguo"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT")
+
+
+def test_load_model_aborta_si_el_modelo_es_de_otra_estrategia(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+
+    with pytest.raises(ValueError, match="entrenó con 'A'"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "B")
+
+
+def test_atomic_save_conserva_el_modelo_anterior_si_falla(tmp_path):
+    target = tmp_path / "m.pkl"
+    target.write_text("viejo")
+
+    def boom(tmp):
+        pathlib.Path(tmp).write_text("a medias")
+        raise OSError("disco lleno")
+
+    with pytest.raises(OSError):
+        shared_utils.atomic_save(str(target), boom)
+
+    assert target.read_text() == "viejo"
+    assert [f.name for f in tmp_path.iterdir()] == ["m.pkl"]  # sin temporales
+
+
+def test_atomic_save_reemplaza_el_fichero(tmp_path):
+    target = tmp_path / "m.keras"
+    shared_utils.atomic_save(str(target), lambda tmp: pathlib.Path(tmp).write_text("nuevo"))
+
+    assert target.read_text() == "nuevo"

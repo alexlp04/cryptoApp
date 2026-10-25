@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from collections import deque
 
-from engine_rt import _buffer_size, _upsert_candle
+from engine_rt import _buffer_size
+from shared_utils import upsert_candle as _upsert_candle
 
 
 def _candle(ts: int, close: float) -> dict:
@@ -36,12 +37,11 @@ def test_buffer_holds_at_least_the_strategy_warmup():
 
 # ── Reconexión y errores de estrategia (#63) ────────────────────────────────
 
-import asyncio  # noqa: E402
-import json  # noqa: E402
+import asyncio
+import json
 
-import pytest  # noqa: E402
-
-import engine_rt  # noqa: E402
+import engine_rt
+import pytest
 
 
 def _kline(ts: int, close: float = 100.0) -> str:

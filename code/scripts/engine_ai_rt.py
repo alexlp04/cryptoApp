@@ -20,8 +20,10 @@ from shared_utils import (
     PROJECT_ROOT,
     build_signal_line,
     emit_heartbeats,
+    fetch_recent_klines,
     load_strategy_by_path,
     setup_engine_logging,
+    upsert_candle,
 )
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
@@ -77,45 +79,82 @@ def _load_from_path(path: str) -> tuple[Any, str, list[int] | None]:
     return load_keras_model(path), "deep_learning", _load_label_classes(path)
 
 
-def _candidate_model_paths(models_dir: str, model_name: str, base_filename: str) -> list[str]:
+def _candidate_model_paths(
+    models_dir: str, model_name: str, base_filename: str, strategy_name: str | None = None,
+) -> list[str]:
     """
     Rutas candidatas en orden de precedencia:
-    0) nombre libre (el usuario ha renombrado el modelo),
-    1-2) formato estándar {modelo}_{timeframe}_{symbol},
-    3) variantes con sufijo de estrategia.
+    0) {modelo}_{tf}_{symbol}_{estrategia} exacto (es lo que escribe el entrenamiento),
+    1) nombre libre (el usuario ha renombrado el modelo),
+    2) formato {modelo}_{timeframe}_{symbol} sin sufijo.
+    Las variantes con otro sufijo de estrategia las resuelve load_model (ambigüedad).
     """
-    candidates = [
-        os.path.join(models_dir, f"{name}{ext}")
-        for name in (model_name, base_filename)
-        for ext in MODEL_EXTENSIONS
-    ]
-    candidates.extend(
+    names = [f"{base_filename}_{strategy_name}"] if strategy_name else []
+    names += [model_name, base_filename]
+    return [os.path.join(models_dir, f"{name}{ext}") for name in names for ext in MODEL_EXTENSIONS]
+
+
+def _suffix_variants(models_dir: str, base_filename: str) -> list[str]:
+    """Modelos del mismo modelo/tf/symbol entrenados con alguna estrategia (orden estable)."""
+    return [
         os.path.join(models_dir, fname)
         for fname in sorted(os.listdir(models_dir))
         if fname.startswith(f"{base_filename}_") and fname.endswith(MODEL_EXTENSIONS)
-    )
-    return candidates
+    ]
 
 
-def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, list[int] | None]:
+def _trained_strategy(model: Any, path: str) -> str | None:
+    """Estrategia con la que se entrenó el modelo (atributo del .pkl o .metadata.json del .keras)."""
+    declared = getattr(model, "strategy_name", None)
+    if declared:
+        return declared
+    metadata_path = os.path.splitext(path)[0] + ".metadata.json"
+    if os.path.exists(metadata_path):
+        with open(metadata_path, encoding="utf-8") as f:
+            return json.load(f).get("strategy_name")
+    return None
+
+
+def load_model(
+    model_name: str, timeframe: str, symbol: str, strategy_name: str | None = None,
+) -> tuple[Any, str, list[int] | None]:
     """
     Carga dinámicamente diferentes tipos de modelos basados en su extensión y librería.
     Soporta Scikit-Learn, XGBoost, LightGBM (.pkl) y TensorFlow/Keras (.h5 / .keras).
     Devuelve (modelo, tipo, label_classes) donde label_classes es la lista original
     de clases [-1, 0, 1] leída del .metadata.json (o None si no existe).
+
+    Con strategy_name se prefiere el modelo entrenado con esa estrategia y se aborta si el
+    modelo cargado declara otra distinta (sus features no coincidirían).
     """
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     base_filename = f"{model_name}_{timeframe}_{symbol}"
 
-    for path in _candidate_model_paths(models_dir, model_name, base_filename):
-        if os.path.exists(path):
-            return _load_from_path(path)
+    path = next((p for p in _candidate_model_paths(models_dir, model_name, base_filename, strategy_name)
+                 if os.path.exists(p)), None)
+    if path is None:
+        variants = _suffix_variants(models_dir, base_filename)
+        if len(variants) > 1:
+            raise ValueError(
+                f"Modelo ambiguo para '{base_filename}': {[os.path.basename(v) for v in variants]}. "
+                "Indica la estrategia o elimina los que sobren."
+            )
+        path = variants[0] if variants else None
+    if path is None:
+        raise FileNotFoundError(
+            f"No se encontró ningún modelo para '{model_name}' "
+            f"(buscado como {base_filename}[_estrategia], nombre libre y variantes con sufijo). "
+            f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
+        )
 
-    raise FileNotFoundError(
-        f"No se encontró ningún modelo para '{model_name}' "
-        f"(buscado como nombre libre, {base_filename}, y variantes con sufijo de estrategia). "
-        f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
-    )
+    loaded = _load_from_path(path)
+    trained_with = _trained_strategy(loaded[0], path)
+    if strategy_name and trained_with and trained_with != strategy_name:
+        raise ValueError(
+            f"El modelo {os.path.basename(path)} se entrenó con '{trained_with}' "
+            f"pero el motor usa '{strategy_name}': las features no coinciden."
+        )
+    return loaded
 
 # =========================
 # SUBFUNCIONES DE PREDICCIÓN
@@ -160,16 +199,29 @@ def _prepare_feature_row(
         ultima_fila
         .apply(pd.to_numeric, errors="coerce")
         .replace([float("inf"), float("-inf")], float("nan"))
-        .fillna(0.0)
-        .astype("float32")
     )
+    if ultima_fila.isna().any(axis=None):
+        # Rellenar con 0.0 daría al modelo features que nunca vio al entrenar (train descarta estas filas).
+        logger.warning("[%s] Features con NaN/inf (indicadores sin calentar); se omite predicción.", symbol)
+        return None
     return ultima_fila.to_numpy(dtype="float32", copy=False)
 
 
-def _predict_ml_standard(model, x_pred, model_name: str, symbol: str) -> str | None:
-    """Ejecuta predicción con modelos sklearn/XGBoost/LightGBM y devuelve la acción."""
-    prediccion = model.predict(x_pred)[0]
-    clases_modelo = list(getattr(model, "classes_", []))
+def _decode(value, label_classes: list[int] | None):
+    """Pasa una clase codificada (0..n-1) del modelo al espacio original (-1/0/1)."""
+    return int(label_classes[int(value)]) if label_classes is not None else value
+
+
+def _predict_ml_standard(
+    model, x_pred, model_name: str, symbol: str, label_classes: list[int] | None = None,
+) -> str | None:
+    """Ejecuta predicción con modelos sklearn/XGBoost/LightGBM y devuelve la acción.
+
+    El modelo se entrena con etiquetas codificadas (LabelEncoder); label_classes las devuelve
+    al espacio original antes de decidir. Sin label_classes se asume que ya lo están.
+    """
+    prediccion = _decode(model.predict(x_pred)[0], label_classes)
+    clases_modelo = [_decode(c, label_classes) for c in getattr(model, "classes_", [])]
     try:
         probabilidades = model.predict_proba(x_pred)[0]
         prob_por_clase = (
@@ -284,6 +336,44 @@ def _emit_signal(
 # =========================
 # LOOP POR SÍMBOLO
 # =========================
+MAX_CONSECUTIVE_FAILURES = 5
+MIN_WARMUP_CANDLES = 50
+BACKFILL_MARGIN = 50
+
+
+class ModelFailure(RuntimeError):
+    """La predicción falla de forma persistente: reconectar el WebSocket no lo arregla."""
+
+
+def _warmup_candles(strategy) -> int:
+    """Velas mínimas antes de predecir: lo que pide la estrategia, con un suelo."""
+    return max(strategy.get_warmup_period(), MIN_WARMUP_CANDLES)
+
+
+def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_name, label_classes):
+    """Features + predicción (trabajo de CPU, se ejecuta fuera del event loop)."""
+    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
+    if x_pred is None:
+        return None
+    if model_type == "ml_standard":
+        return _predict_ml_standard(model, x_pred, model_name, symbol, label_classes)
+    if model_type == "deep_learning":
+        return _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
+    return None
+
+
+async def _seed_buffer(df_buffer: deque, symbol: str, timeframe: str, limit: int) -> None:
+    """Rellena el buffer con velas cerradas por REST: sin esperar horas y sin huecos tras reconectar."""
+    try:
+        klines = await asyncio.to_thread(fetch_recent_klines, symbol, timeframe, limit)
+    except Exception:
+        logger.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
+        return
+    df_buffer.clear()
+    df_buffer.extend(klines)
+    logger.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(df_buffer))
+
+
 async def run_symbol(
     symbol: str,
     timeframe: str,
@@ -300,17 +390,27 @@ async def run_symbol(
 
     logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
-    model, model_type, label_classes = load_model(model_name, timeframe, symbol)
-    df_buffer: deque = deque(maxlen=max_candles)
+    model, model_type, label_classes = load_model(
+        model_name, timeframe, symbol, strategy.get_name())
+    min_candles = _warmup_candles(strategy)
+    buffer_size = max(max_candles, min_candles + BACKFILL_MARGIN)
+    df_buffer: deque = deque(maxlen=buffer_size)
     last_processed_event_id = 0
+    consecutive_failures = 0
+    retry_delay = 5
+    max_retry_delay = 300
 
     while True:
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
+                await _seed_buffer(df_buffer, symbol, timeframe, buffer_size)
                 async for msg in ws:
                     data = json.loads(msg)
-                    k = data["k"]
+                    k = data.get("k")
+                    if not k:
+                        continue  # mensajes que no son kline
+                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
                     is_candle_closed = k["x"]
 
                     if not is_candle_closed and not high_activity_test_mode:
@@ -333,31 +433,36 @@ async def run_symbol(
                         "close": float(k["c"]),
                         "volume": float(k["v"]),
                     }
-                    df_buffer.append(new_row)
+                    upsert_candle(df_buffer, new_row)
 
-                    if len(df_buffer) < 50:
+                    if len(df_buffer) < min_candles:
                         continue
 
-                    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
-                    if x_pred is None:
+                    try:
+                        action = await asyncio.to_thread(
+                            _decide_action, df_buffer, strategy, symbol,
+                            model, model_type, model_name, label_classes)
+                        consecutive_failures = 0
+                    except Exception:
+                        # Un fallo del modelo/estrategia no es una caída de red: no reconectar.
+                        consecutive_failures += 1
+                        logger.exception("Error de predicción en %s (%d/%d)",
+                                         symbol, consecutive_failures, MAX_CONSECUTIVE_FAILURES)
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
                         continue
-
-                    if model_type == "ml_standard":
-                        action = _predict_ml_standard(model, x_pred, model_name, symbol)
-                    elif model_type == "deep_learning":
-                        action = _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
-                    else:
-                        action = None
 
                     if action:
                         _emit_signal(symbol, action, timeframe, new_row, model_name, is_real)
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Conexion WS cerrada para %s. Reconectando...", symbol)
-            await asyncio.sleep(2)
+            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+        except ModelFailure:
+            raise  # termina el proceso con código != 0 para que Java lo supervise
         except Exception:
             logger.exception("Error en loop WS de %s", symbol)
-            await asyncio.sleep(5)
+
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, max_retry_delay)
 
 # =========================
 # MAIN

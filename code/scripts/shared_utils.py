@@ -20,6 +20,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+import requests
 
 if TYPE_CHECKING:
     # Solo para anotaciones: numpy se importa de forma diferida dentro de las
@@ -95,6 +96,40 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
 # ``PREFIJO\tJSON`` sobre stdout. Java lo parsea línea a línea. Este es el punto
 # único donde se define el formato de las líneas de señal (ver IPC_PROTOCOL.md).
 SIGNAL_PREFIX: str = "SIGNAL\t"
+
+
+def upsert_candle(buffer: Any, candle: dict) -> None:
+    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden."""
+    if buffer and buffer[-1]["timestamp"] == candle["timestamp"]:
+        buffer[-1] = candle
+    else:
+        buffer.append(candle)
+
+
+def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[dict]:
+    """Últimas velas CERRADAS por REST (para sembrar el buffer RT y cerrar huecos al reconectar)."""
+    params: dict[str, str | int] = {
+        "symbol": symbol.replace("/", "").upper(), "interval": timeframe, "limit": limit}
+    response = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
+    response.raise_for_status()
+    now_ms = time.time() * 1000
+    return [
+        {"timestamp": int(c[0]), "open": float(c[1]), "high": float(c[2]),
+         "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
+        for c in response.json() if c[6] < now_ms  # closeTime pasada = vela cerrada
+    ]
+
+
+def atomic_save(path: str, save_fn: Any) -> None:
+    """Guarda en un temporal y renombra: un RT que lee el modelo nunca ve un fichero a medias."""
+    base, ext = os.path.splitext(path)
+    tmp = f"{base}.tmp{ext}"  # conserva la extensión: Keras decide el formato por ella
+    try:
+        save_fn(tmp)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def build_signal_line(signal: dict) -> str:
