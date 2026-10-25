@@ -14,7 +14,8 @@ public interface AccountingUseCase {
 
     void closeStrategy(Long walletId, Long estrategiaId);
 
-    void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk);
+    void commitCapital(Long estrategiaId, BigDecimal margin, BigDecimal risk, String reference);
 
-    void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk);
+    void closeTrade(Long walletId, Long estrategiaId, BigDecimal margin, BigDecimal pnl, BigDecimal risk,
+            String reference);
 }

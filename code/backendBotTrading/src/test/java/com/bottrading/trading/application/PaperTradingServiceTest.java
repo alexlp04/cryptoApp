@@ -157,7 +157,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalBUY());
 
             verify(posicionRepo, never()).save(any());
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -181,7 +181,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -195,7 +195,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL());
 
-            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
         }
     }
 
@@ -225,7 +225,7 @@ class PaperTradingServiceTest {
             svc.onSignal(10L, sig);
             svc.onSignal(10L, sig);   // reentrega idéntica
 
-            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(1)).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, times(1)).save(any());
         }
 
@@ -238,13 +238,13 @@ class PaperTradingServiceTest {
             when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
             doThrow(new RuntimeException("fallo transitorio"))
                     .doNothing()
-                    .when(accountingService).commitCapital(anyLong(), any(), any());
+                    .when(accountingService).commitCapital(anyLong(), any(), any(), any());
 
             SignalDTO sig = crearSignalBUY();
             assertThrows(RuntimeException.class, () -> svc.onSignal(10L, sig));
             svc.onSignal(10L, sig);   // reintento tras fallo: debe volver a intentarlo
 
-            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -262,7 +262,7 @@ class PaperTradingServiceTest {
             svc.onSignal(10L, s1);
             svc.onSignal(10L, s2);
 
-            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any());
+            verify(accountingService, times(2)).commitCapital(anyLong(), any(), any(), any());
         }
     }
 
@@ -283,7 +283,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalBUY());
 
             verify(accountingService, times(1)).commitCapital(
-                    eq(10L), any(BigDecimal.class), any(BigDecimal.class));
+                    eq(10L), any(BigDecimal.class), any(BigDecimal.class), any());
             verify(posicionRepo, times(1)).save(any(Posicion.class));
         }
 
@@ -296,7 +296,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
 
@@ -309,7 +309,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
 
@@ -324,7 +324,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalBUY());
 
             verify(accountingService, times(1)).commitCapital(
-                    eq(10L), argThat(m -> m.compareTo(new BigDecimal("50")) == 0), eq(new BigDecimal("0.05")));
+                    eq(10L), argThat(m -> m.compareTo(new BigDecimal("50")) == 0), eq(new BigDecimal("0.05")), any());
         }
     }
 
@@ -346,7 +346,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL()); // precio salida 31000 > entrada 30000
 
-            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
             assertThat(pos.isAbierta(), is(false));
             verify(posicionRepo, times(1)).save(pos);
         }
@@ -377,7 +377,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, crearSignalSELL());
 
-            verify(accountingService, never()).closeTrade(anyLong(), anyLong(), any(), any(), any());
+            verify(accountingService, never()).closeTrade(anyLong(), anyLong(), any(), any(), any(), any());
             verify(posicionRepo, never()).save(any());
         }
     }
@@ -415,7 +415,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, s);
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -428,7 +428,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, s);
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -441,7 +441,7 @@ class PaperTradingServiceTest {
 
             paperTradingService.onSignal(10L, s);
 
-            verify(accountingService, never()).commitCapital(anyLong(), any(), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
 
         @Test
@@ -460,7 +460,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, s);
 
             verify(accountingService).closeTrade(any(), eq(10L), eq(new BigDecimal("50")),
-                    eq(new BigDecimal("6.14372794")), any());
+                    eq(new BigDecimal("6.14372794")), any(), any());
         }
 
         @Test
@@ -477,7 +477,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalSELL());
 
             verify(accountingService).closeTrade(any(), eq(10L), eq(new BigDecimal("50")),
-                    argThat(p -> p.signum() == 0), any());
+                    argThat(p -> p.signum() == 0), any(), any());
         }
     }
 
