@@ -27,6 +27,9 @@ from shared_utils import (
     fit_sklearn_model,
     load_strategy_by_name,
     metric_average,
+    require_name,
+    require_symbol,
+    require_timeframe,
     save_model,
     setup_engine_logging,
 )
@@ -48,10 +51,15 @@ def main() -> None:
         payload = read_request_payload()
 
         model_type: str = str(payload.get("model_type", "random_forest")).lower().strip()
-        symbol: str = str(payload.get("symbol", "UNKNOWN"))
+        symbol: str = require_symbol(str(payload.get("symbol", "UNKNOWN")))
         timeframe: str = str(payload.get("timeframe", "UNKNOWN"))
+        if timeframe != "UNKNOWN":
+            require_timeframe(timeframe)
+        require_name(model_type, "model_type")
         dataset: list = payload.get("dataset", [])
         strategy_name: str | None = payload.get("strategy_name") or None
+        if strategy_name:
+            require_name(strategy_name, "strategy_name")
         # Clave obligatoria del contrato: sin ella se entrenaria sobre las velas de
         # calentamiento, con los indicadores a medio formar y sin ningun error visible.
         if payload.get("warmup_candles") is None:

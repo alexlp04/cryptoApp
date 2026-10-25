@@ -127,6 +127,16 @@ public class CommandParser {
         return errorSintaxis;
     }
 
+    private static final java.util.regex.Pattern SIMBOLO = java.util.regex.Pattern.compile("[A-Z0-9]{2,20}");
+
+    /**
+     * Un símbolo acaba en nombres de fichero (modelos, resultados) y en URLs: solo letras y números,
+     * nunca separadores ni '..'.
+     */
+    public static boolean esSimboloValido(String simbolo) {
+        return simbolo != null && SIMBOLO.matcher(simbolo).matches();
+    }
+
     private void fallo(String mensaje) {
         this.errorSintaxis = true;
         this.mensajeError = mensaje;
@@ -156,7 +166,12 @@ public class CommandParser {
     private int parseCoins(String[] parts, int startIndex) {
         int index = startIndex;
         while (index < parts.length && !parts[index].startsWith("-")) {
-            coins.add(parts[index].toUpperCase());
+            String coin = parts[index].toUpperCase();
+            if (esSimboloValido(coin)) {
+                coins.add(coin);
+            } else {
+                fallo("Error de sintaxis: moneda inválida '" + parts[index] + "' (solo letras y números, 2-20 caracteres).");
+            }
             index++;
         }
         return index;

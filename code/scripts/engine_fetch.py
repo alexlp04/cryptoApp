@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 from ipc_protocol import write_error, write_response
 from requests.adapters import HTTPAdapter
-from shared_utils import setup_engine_logging
+from shared_utils import require_symbol, require_timeframe, setup_engine_logging
 
 logger = setup_engine_logging("engine_fetch")
 
@@ -414,8 +414,8 @@ if __name__ == "__main__":
                 "Uso: engine_fetch.py <symbol> <timeframe> [since_ms]")
             sys.exit(1)
 
-        symbol = sys.argv[1]
-        timeframe = sys.argv[2]
+        symbol = require_symbol(sys.argv[1])
+        timeframe = require_timeframe(sys.argv[2])
         since = sys.argv[3] if len(sys.argv) >= 4 else None
 
         logger.info(

@@ -4,7 +4,14 @@ import traceback
 import numpy as np
 import pandas as pd
 from ipc_protocol import read_request_payload, write_error, write_response
-from shared_utils import CODE_DIR, load_strategy_by_path, setup_engine_logging
+from shared_utils import (
+    CODE_DIR,
+    load_strategy_by_path,
+    require_name,
+    require_symbol,
+    require_timeframe,
+    setup_engine_logging,
+)
 
 # --- IMPORTAR MOTOR COMPARTIDO ---
 if CODE_DIR not in sys.path:
@@ -137,6 +144,11 @@ def main() -> None:
         if not timeframe:
             raise ValueError("'timeframe' es obligatorio en el payload de backtest.")
 
+        require_name(strategy_name, "strategy_name")  # nombre de la carpeta de resultados
+        require_timeframe(timeframe)
+        if model_name:
+            require_name(model_name, "model_name")
+
         logger.info("Loading strategy from: %s", strategy_path)
         strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
         strategy.timeframe = timeframe
@@ -156,7 +168,8 @@ def main() -> None:
 
         logger.info("Processing %d symbols", len(velas))
         for symbol, candles in velas.items():
-            if not candles:
+            require_symbol(symbol)  # acaba en el nombre del CSV de trades y en el del modelo
+            if candles is None or len(candles) == 0:
                 continue
             df = pd.DataFrame(candles)
             for col in ("open", "high", "low", "close", "volume"):

@@ -66,6 +66,9 @@ from shared_utils import (
     fit_sklearn_model,
     load_strategy_by_name,
     metric_average,
+    require_name,
+    require_symbol,
+    require_timeframe,
     save_model,
     setup_engine_logging,
 )
@@ -1097,14 +1100,19 @@ def main() -> None:
         payload = read_request_payload()
 
         model_type = str(payload.get("model_type", "random_forest")).lower().strip()
-        symbol = str(payload.get("symbol", "UNKNOWN"))
+        symbol = require_symbol(str(payload.get("symbol", "UNKNOWN")))
         timeframe = str(payload.get("timeframe", "UNKNOWN"))
+        if timeframe != "UNKNOWN":
+            require_timeframe(timeframe)
+        require_name(model_type, "model_type")
         min_composite: float = float(
             payload.get("min_composite", payload.get("min_accuracy", DEFAULT_MIN_COMPOSITE))
         )
         n_trials: int = int(payload.get("n_trials", DEFAULT_N_TRIALS))
         cv_folds: int = int(payload.get("cv_folds", DEFAULT_CV_FOLDS))
         strategy_name: str | None = payload.get("strategy_name") or None
+        if strategy_name:
+            require_name(strategy_name, "strategy_name")
         warmup_candles: int | None = payload.get("warmup_candles")
 
         logger.info(
