@@ -124,7 +124,7 @@ def _attach_training_metadata(model: Any, path: str) -> None:
         return
     with open(metadata_path, encoding="utf-8") as f:
         meta = json.load(f)
-    for key in ("warmup_candles", "train_end_ts"):
+    for key in ("warmup_candles", "train_end_ts", "feature_cols"):
         if getattr(model, key, None) is None and meta.get(key) is not None:
             setattr(model, key, meta[key])
 
@@ -181,16 +181,18 @@ def _prepare_feature_row(
     strategy,
     symbol: str,
     model_name: str,
+    model=None,
 ):
     """
     Construye y valida la fila de features para predicción.
     Devuelve el array de features listo para el modelo, o None si hay problema.
-    Las columnas las dicta siempre la estrategia vía get_feature_columns().
+    Las columnas son las guardadas con el modelo; si no las trae (modelo antiguo), las de la estrategia.
     """
     df = pd.DataFrame(list(df_buffer))
     df_con_indicadores = strategy.populate_indicators(df.copy())
 
-    actual_feature_cols = strategy.get_feature_columns(df_con_indicadores)
+    saved_cols = getattr(model, "feature_cols", None)
+    actual_feature_cols = list(saved_cols) if saved_cols else strategy.get_feature_columns(df_con_indicadores)
     if not actual_feature_cols:
         logger.warning("[%s] La estrategia no devolvio feature columns; se omite predicción.", symbol)
         return None
@@ -368,7 +370,7 @@ def _warmup_candles(strategy) -> int:
 
 def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_name, label_classes):
     """Features + predicción (trabajo de CPU, se ejecuta fuera del event loop)."""
-    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name)
+    x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name, model)
     if x_pred is None:
         return None
     if model_type == "ml_standard":

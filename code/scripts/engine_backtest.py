@@ -38,7 +38,12 @@ def _generar_predicciones(
     Para ml_standard: el modelo fue entrenado con LabelEncoder; si tiene el atributo
       label_encoder se hace inverse_transform al espacio original.
     """
-    feature_cols = strategy.get_feature_columns(df)
+    # Las columnas con las que se entrenó el modelo mandan sobre las que hoy diga la estrategia.
+    saved_cols = getattr(model, "feature_cols", None)
+    feature_cols = list(saved_cols) if saved_cols else strategy.get_feature_columns(df)
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Faltan las columnas {missing} que el modelo necesita: ¿cambió la estrategia?")
     x = (
         df[feature_cols]
         .replace([float("inf"), float("-inf")], float("nan"))

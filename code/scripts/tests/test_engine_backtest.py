@@ -145,3 +145,29 @@ def test_velas_con_close_cero_se_descartan_en_vez_de_dividir_por_cero(monkeypatc
     engine_backtest.main()  # antes: ZeroDivisionError y SystemExit(1)
 
     assert responses[0]["status"] == "success"
+
+
+# ── Columnas guardadas con el modelo (#62) ──────────────────────────────────
+
+def test_las_columnas_del_modelo_mandan_sobre_las_de_la_estrategia():
+    visto = {}
+
+    class _Net(_FakeNet):
+        def predict(self, x, verbose=0):
+            visto["forma"] = x.shape
+            return self._raw
+
+    net = _Net([[0.2, 0.8]])
+    net.feature_cols = ["close"]  # la estrategia pide otras; el modelo se entrenó solo con esta
+
+    engine_backtest._generar_predicciones(net, "deep_learning", _Strategy(), _df(1), None)
+
+    assert visto["forma"] == (1, 1)
+
+
+def test_si_falta_una_columna_del_modelo_el_backtest_falla_en_alto():
+    net = _FakeNet([[0.2, 0.8]])
+    net.feature_cols = ["no_existe"]
+
+    with pytest.raises(ValueError, match="no_existe"):
+        engine_backtest._generar_predicciones(net, "deep_learning", _Strategy(), _df(1), None)
