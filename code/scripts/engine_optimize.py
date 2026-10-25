@@ -314,23 +314,12 @@ def _build_and_eval_neural_network(
     El entrenamiento final llama a esta función con el dataset completo.
     """
     import tensorflow as tf  # importación diferida para evitar overhead cuando no se usa
-    from tensorflow.keras.callbacks import EarlyStopping
-    from tensorflow.keras.layers import Dense, Dropout, Normalization
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.optimizers import Adam
 
     gpu_enabled, gpu_names = configure_tensorflow_runtime()
     if gpu_enabled:
         logger.info("TensorFlow/Optuna usará GPU: %s", gpu_names)
     else:
         logger.info("TensorFlow/Optuna usará CPU")
-
-    epochs = int(params.get("epochs", 50))
-    batch_size = int(params.get("batch_size", 64))
-    lr = float(params.get("learning_rate", 0.001))
-    dropout = float(params.get("dropout_rate", 0.3))
-    hidden_layers = int(params.get("hidden_layers", 2))
-    neurons = int(params.get("neurons", 64))
 
     # Submuestreo estratégico para acelerar la fase de búsqueda Optuna.
     # Las últimas filas son más representativas del periodo reciente.
@@ -345,10 +334,6 @@ def _build_and_eval_neural_network(
             timestamps = timestamps[-optuna_max_samples:]
 
     n_classes_nn = len(np.unique(y))
-    is_multiclass = n_classes_nn > 2
-    output_units = n_classes_nn if is_multiclass else 1
-    output_activation = "softmax" if is_multiclass else "sigmoid"
-    loss_fn = "sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy"
 
     # class_weight para compensar el desbalanceo de etiquetas (problema 1)
     raw_classes = np.unique(y)
@@ -379,33 +364,7 @@ def _build_and_eval_neural_network(
         x_tr, x_val = X[train_idx], X[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
 
-        norm = Normalization()
-        norm.adapt(x_tr)
-
-        layers: list[Any] = [norm]
-        for _ in range(hidden_layers):
-            layers.append(Dense(neurons, activation="relu"))
-            layers.append(Dropout(dropout))
-        layers.append(Dense(output_units, activation=output_activation))
-
-        model = Sequential(layers)
-        model.compile(
-            optimizer=Adam(learning_rate=lr),
-            loss=loss_fn,
-            metrics=["accuracy"],
-        )
-        # EarlyStopping para evitar sobreentrenamiento y reducir tiempo por trial
-        es_fold = EarlyStopping(
-            monitor="val_loss", patience=5, restore_best_weights=True, verbose=0
-        )
-        model.fit(
-            x_tr, y_tr,
-            epochs=epochs, batch_size=batch_size,
-            validation_split=0.1,
-            callbacks=[es_fold],
-            class_weight=class_weight_dict,
-            verbose=0,
-        )
+        model = _fit_keras_mlp(x_tr, y_tr, params, n_classes_nn, class_weight_dict)
         y_pred_fold = _predict_labels(model, x_val)
 
         fold_acc = float(accuracy_score(y_val, y_pred_fold))
@@ -439,30 +398,7 @@ def _build_and_eval_neural_network(
     cv_mean = float(np.mean(cv_scores))
 
     # Entrenamiento completo para medir train accuracy
-    norm_full = Normalization()
-    norm_full.adapt(X)
-    layers_full: list[Any] = [norm_full]
-    for _ in range(hidden_layers):
-        layers_full.append(Dense(neurons, activation="relu"))
-        layers_full.append(Dropout(dropout))
-    layers_full.append(Dense(output_units, activation=output_activation))
-    model_full = Sequential(layers_full)
-    model_full.compile(
-        optimizer=Adam(learning_rate=lr),
-        loss=loss_fn,
-        metrics=["accuracy"],
-    )
-    es_full = EarlyStopping(
-        monitor="val_loss", patience=5, restore_best_weights=True, verbose=0
-    )
-    model_full.fit(
-        X, y,
-        epochs=epochs, batch_size=batch_size,
-        validation_split=0.1,
-        callbacks=[es_full],
-        class_weight=class_weight_dict,
-        verbose=0,
-    )
+    model_full = _fit_keras_mlp(X, y, params, n_classes_nn, class_weight_dict)
     y_train_pred = _predict_labels(model_full, X)
     train_acc = float(accuracy_score(y, y_train_pred))
     tf.keras.backend.clear_session()
@@ -478,6 +414,47 @@ def _build_and_eval_neural_network(
 # =============================================================================
 # FUNCIÓN OBJETIVO DE OPTUNA
 # =============================================================================
+
+def _fit_keras_mlp(
+    x: np.ndarray, y: np.ndarray, params: dict[str, Any], n_classes: int,
+    class_weight: dict[int, float] | None,
+) -> Any:
+    """Construye y entrena el MLP de Optuna (arquitectura configurable) con EarlyStopping.
+
+    Es el único constructor Keras de este módulo: trials por fold, modelo completo de cada trial y
+    entrenamiento final lo comparten, de modo que lo que Optuna evalúa es lo que se guarda.
+    n_classes se pasa aparte porque un fold temprano puede carecer de alguna clase.
+    """
+    from tensorflow.keras.callbacks import EarlyStopping
+    from tensorflow.keras.layers import Dense, Dropout, Normalization
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.optimizers import Adam
+
+    is_multiclass = n_classes > 2
+    norm = Normalization()
+    norm.adapt(x)
+    layers: list[Any] = [norm]
+    for _ in range(int(params.get("hidden_layers", 2))):
+        layers.append(Dense(int(params.get("neurons", 64)), activation="relu"))
+        layers.append(Dropout(float(params.get("dropout_rate", 0.3))))
+    layers.append(Dense(n_classes if is_multiclass else 1, activation="softmax" if is_multiclass else "sigmoid"))
+
+    model = Sequential(layers)
+    model.compile(
+        optimizer=Adam(learning_rate=float(params.get("learning_rate", 0.001))),
+        loss="sparse_categorical_crossentropy" if is_multiclass else "binary_crossentropy",
+        metrics=["accuracy"],
+    )
+    model.fit(
+        x, y,
+        epochs=int(params.get("epochs", 50)), batch_size=int(params.get("batch_size", 64)),
+        validation_split=0.1,
+        callbacks=[EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=0)],
+        class_weight=class_weight,
+        verbose=0,
+    )
+    return model
+
 
 def _predict_labels(model: Any, x: np.ndarray) -> np.ndarray:
     """Etiquetas codificadas de un modelo Keras: argmax si es softmax, umbral 0,5 si es sigmoid.
@@ -739,10 +716,6 @@ def _train_neural_final(
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo neural final. Devuelve (model, filename, y_pred_test)."""
     import tensorflow as tf
-    from tensorflow.keras.callbacks import EarlyStopping
-    from tensorflow.keras.layers import Dense, Dropout, Normalization
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.optimizers import Adam
 
     gpu_enabled, gpu_names = configure_tensorflow_runtime()
     if gpu_enabled:
@@ -750,36 +723,9 @@ def _train_neural_final(
     else:
         logger.info("TensorFlow entrenamiento final usará CPU")
 
-    epochs = int(best_params.get("epochs", 50))
-    batch_size = int(best_params.get("batch_size", 64))
-    lr = float(best_params.get("learning_rate", 0.001))
-    dropout = float(best_params.get("dropout_rate", 0.3))
-    hidden_layers = int(best_params.get("hidden_layers", 2))
-    neurons = int(best_params.get("neurons", 64))
-
-    n_cls = len(np.unique(y))
-    is_mc = n_cls > 2
-    out_units = n_cls if is_mc else 1
-    out_act = "softmax" if is_mc else "sigmoid"
-    final_loss = "sparse_categorical_crossentropy" if is_mc else "binary_crossentropy"
-
-    norm = Normalization()
-    norm.adapt(X)
-    layers: list[Any] = [norm]
-    for _ in range(hidden_layers):
-        layers.append(Dense(neurons, activation="relu"))
-        layers.append(Dropout(dropout))
-    layers.append(Dense(out_units, activation=out_act))
-
-    model = Sequential(layers)
-    model.compile(optimizer=Adam(learning_rate=lr), loss=final_loss, metrics=["accuracy"])
     # Mismas condiciones que en los trials: sin class_weight ni EarlyStopping el modelo
     # guardado no sería el que Optuna evaluó.
-    model.fit(
-        X, y, epochs=epochs, batch_size=batch_size, verbose=0, validation_split=0.1,
-        callbacks=[EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=0)],
-        class_weight=_balanced_class_weight(y),
-    )
+    model = _fit_keras_mlp(X, y, best_params, len(np.unique(y)), _balanced_class_weight(y))
 
     y_pred = _predict_labels(model, X_test)
 
