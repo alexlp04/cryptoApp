@@ -73,6 +73,7 @@ public class IndicatorsService implements CalculateIndicatorsUseCase {
 
         log.info("Iniciando cálculo de indicadores por lotes. Total de velas: {}", todasLasVelas.size());
         int totalProcesadas = 0;
+        List<Integer> lotesFallidos = new java.util.ArrayList<>();
 
         for (int i = 0; i < todasLasVelas.size(); i += BATCH_SIZE) {
             int start = Math.max(0, i - OVERLAP);
@@ -93,10 +94,15 @@ public class IndicatorsService implements CalculateIndicatorsUseCase {
 
             } catch (Exception e) {
                 log.error("Error procesando lote {}: {}", numLote, e.getMessage(), e);
+                lotesFallidos.add(numLote);
             }
         }
 
         log.info("Cálculo de indicadores finalizado para {}. Total guardados en BD: {}", symbol, totalProcesadas);
+        if (!lotesFallidos.isEmpty()) {
+            // Antes se tragaba el error y el llamador creía que el dataset estaba completo.
+            throw new PythonProcessException("Indicadores incompletos para " + symbol + ": fallaron los lotes " + lotesFallidos);
+        }
     }
 
     /**

@@ -201,7 +201,6 @@ def _suggest_xgboost(trial: optuna.Trial) -> dict[str, Any]:
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
         "random_state": 42,
         "eval_metric": "logloss",
-        "use_label_encoder": False,
     }
 
 
@@ -359,7 +358,7 @@ def _build_and_eval_neural_network(
 
     # TimeSeriesSplit garantiza que cada fold de validación es siempre posterior
     # al conjunto de entrenamiento, respetando la causalidad de las series temporales.
-    tss = TimeSeriesSplit(n_splits=cv_folds)
+    tss = TimeSeriesSplit(n_splits=cv_folds, gap=1)  # gap=1: la label de t usa la vela t+1
     cv_scores: list[float] = []
     cv_f1_scores: list[float] = []
     cv_win_rates: list[float] = []
@@ -541,7 +540,7 @@ def _make_objective(
             len(X), len(search_x),
         )
     # TimeSeriesSplit garantiza que la validación siempre es posterior al entrenamiento
-    tss = TimeSeriesSplit(n_splits=cv_folds)
+    tss = TimeSeriesSplit(n_splits=cv_folds, gap=1)  # gap=1: la label de t usa la vela t+1
 
     # Invariantes de todo el estudio: no dependen del trial ni del fold, así que se
     # calculan una sola vez en lugar de una por fold y por trial.
@@ -690,7 +689,7 @@ def _make_objective(
                 "status": "COMPLETE",
                 "params": {k: v for k, v in params.items()
                            if k not in ("random_state", "eval_metric",
-                                        "use_label_encoder", "verbose")},
+                                        "verbose")},
             })
 
             return composite

@@ -39,11 +39,15 @@ public class StrategyCatalogService implements StrategyCatalogUseCase {
 
         if (files == null || files.length == 0) {
             log.info("No se encontraron ficheros en: {}", PathConfig.STRATEGIES_DIR);
-            return List.of("No hay estrategias disponibles en: " + PathConfig.STRATEGIES_DIR);
+            return List.of(); // vacío, no un mensaje: un consumidor lo trataría como nombre de estrategia
         }
 
+        // __init__ y BaseStrategy no son estrategias; solo se quita la extensión final; orden estable
         return Arrays.stream(files)
-                .map(f -> "- " + f.getName().replace(".py", ""))
+                .map(File::getName)
+                .filter(n -> !n.equals("__init__.py") && !n.equals("BaseStrategy.py"))
+                .map(n -> "- " + n.substring(0, n.length() - ".py".length()))
+                .sorted()
                 .toList();
     }
 
@@ -71,9 +75,12 @@ public class StrategyCatalogService implements StrategyCatalogUseCase {
      */
     @Override
     public boolean existeEstrategia(String nombreArchivo) {
-        String nombreConExtension = nombreArchivo.endsWith(".py") ? nombreArchivo : nombreArchivo + ".py";
-        File archivo = new File(PathConfig.STRATEGIES_DIR, nombreConExtension);
-        return archivo.exists();
+        try {
+            PathConfig.getValidStrategyPath(nombreArchivo); // rechaza '..', separadores y nombres inexistentes
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /**

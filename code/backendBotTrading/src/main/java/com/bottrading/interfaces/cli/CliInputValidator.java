@@ -136,7 +136,8 @@ public final class CliInputValidator {
 
     public static boolean readYesNo(CliCommandContext context, String prompt) {
         context.print().accept(prompt);
-        return context.scanner().nextLine().trim().toLowerCase().startsWith("s");
+        String answer = context.scanner().nextLine().trim().toLowerCase(java.util.Locale.ROOT);
+        return answer.equals("s") || answer.equals("si") || answer.equals("sí"); // "sudo" o "salir" ya no cuentan
     }
 
     /**

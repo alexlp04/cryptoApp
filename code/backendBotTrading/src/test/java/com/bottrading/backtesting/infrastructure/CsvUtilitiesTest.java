@@ -318,4 +318,27 @@ class CsvUtilitiesTest {
             assertThat(parts[1], is(originalWinRate));
         }
     }
+
+    @Test
+    @DisplayName("✓ Una coma dentro de un campo entrecomillado no lo parte y la comilla de cierre cierra el modo (#101)")
+    void should_keep_commas_inside_quoted_fields() {
+        String[] parts = csvUtils.parseCsvLine("\"a,b\",5,\"c\"");
+
+        assertThat(parts, arrayWithSize(3));
+        assertThat(parts[0], is("a,b"));
+        assertThat(parts[1], is("5"));
+        assertThat(parts[2], is("c"));
+    }
+
+    @Test
+    @DisplayName("✓ escapeCsv y parseCsvLine son inversos incluso con comas y comillas")
+    void should_round_trip_escaped_values() {
+        String original = "dijo \"hola, mundo\"";
+
+        String[] parts = csvUtils.parseCsvLine("x," + csvUtils.escapeCsv(original) + ",z");
+
+        assertThat(parts, arrayWithSize(3));
+        assertThat(parts[1], is(original));
+        assertThat(parts[2], is("z"));
+    }
 }

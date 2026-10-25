@@ -348,12 +348,15 @@ def load_strategy_by_name(
     """
     Carga una estrategia por nombre de módulo y valida que herede de BaseStrategy.
 
-    Busca primero en strategies.<strategy_name> y luego en <strategy_name>.
+    Solo busca en strategies.<strategy_name>: el segundo intento anterior (importar el nombre "a pelo")
+    cargaba cualquier módulo del sys.path (p. ej. "os") con un nombre que llega desde Java.
     """
     if not strategy_name or not strategy_name.strip():
         raise ValueError("strategy_name está vacío o no es válido.")
 
     strategy_name = strategy_name.strip()
+    if not strategy_name.isidentifier():
+        raise ValueError(f"Nombre de estrategia no válido: {strategy_name!r}")
 
     try:
         from strategies.BaseStrategy import BaseStrategy
@@ -362,7 +365,7 @@ def load_strategy_by_name(
 
     module = None
     errors: list[str] = []
-    for module_name in (f"strategies.{strategy_name}", strategy_name):
+    for module_name in (f"strategies.{strategy_name}",):
         try:
             module = importlib.import_module(module_name)
             break
@@ -632,7 +635,8 @@ def fit_sklearn_model(
         model.fit(x_train, y_train, **fit_kwargs)
         return model
     except Exception as exc:
-        if model_type not in (GPU_PREFERRED_MODEL_TYPES | {"random_forest", "svm"}) or not _is_gpu_runtime_error(exc):
+        # random_forest/svm nunca usan GPU: reintentarlos "por GPU" entrenaba dos veces y desactivaba la GPU para todo el proceso
+        if model_type not in GPU_PREFERRED_MODEL_TYPES or not _is_gpu_runtime_error(exc):
             raise
 
         _disable_gpu_backend_for_process(model_type, exc)

@@ -29,6 +29,8 @@ public class UsuarioMapper {
             jpaEntity.getPasswordHash()
         );
         usuario.setId(jpaEntity.getId());
+        usuario.setFechaCreacion(jpaEntity.getFechaCreacion());
+        usuario.setEliminado(jpaEntity.isEliminado());
         return usuario;
     }
 
@@ -46,6 +48,9 @@ public class UsuarioMapper {
             domain.getPasswordHash()
         );
         entity.setId(domain.getId());
+        // Sin esto, re-guardar un usuario existente reseteaba fecha_creacion y reactivaba a uno dado de baja
+        entity.setFechaCreacion(domain.getFechaCreacion());
+        entity.setEliminado(domain.isEliminado());
         return entity;
     }
 }

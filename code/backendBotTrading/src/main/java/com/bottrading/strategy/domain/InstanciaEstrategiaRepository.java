@@ -16,7 +16,8 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
 
     @Query("SELECT SUM(i.capitalAsignado) FROM InstanciaEstrategia i "
             + "WHERE i.walletAsociada = :walletAsociada "
-            + "AND i.estado = com.bottrading.strategy.domain.EstadoEstrategia.ACTIVA")
+            + "AND i.estado IN (com.bottrading.strategy.domain.EstadoEstrategia.ACTIVA, "
+            + "com.bottrading.strategy.domain.EstadoEstrategia.DETENIDA)")
     BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
 
     /** Capital repartido en estrategias vivas (reservado + comprometido), para reconciliar con la wallet. */

@@ -170,7 +170,7 @@ public class AccountingService implements AccountingUseCase {
         e.setCapitalComprometido(e.getCapitalComprometido().add(margin));
         e.setRiesgoAbierto(e.getRiesgoAbierto().add(risk));
 
-        // 🔥 NUEVO: Registrar en Ledger para auditoria completa
+        // Registrar en Ledger para auditoria completa
         LedgerEntry le = new LedgerEntry();
         le.setWalletId(e.getWalletAsociada());
         le.setEstrategiaId(e.getId());

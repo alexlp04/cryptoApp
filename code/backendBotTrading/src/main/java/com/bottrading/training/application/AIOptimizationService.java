@@ -58,7 +58,7 @@ public class AIOptimizationService implements OptimizeModelUseCase {
         }
 
         loader.startSpinner("Validando estrategia y configuración inicial...");
-        log.info("[optimize] Inicio optimización model={} symbol={} timeframe={} dias={} strategy={} minComposite={}%%",
+        log.info("[optimize] Inicio optimización model={} symbol={} timeframe={} dias={} strategy={} minComposite={}",
             nombreModelo, symbol, timeframe, dias, strategyName, minComposite);
 
         long now = System.currentTimeMillis();
@@ -120,7 +120,7 @@ public class AIOptimizationService implements OptimizeModelUseCase {
         }
 
         loader.updateMessage("Procesando resultados...");
-        log.info("[optimize] Optimización completada. status={} trials={}/{} best_cv={}%%",
+        log.info("[optimize] Optimización completada. status={} trials={}/{} best_cv={}",
                 result.resultData().getOrDefault("status", "unknown"),
                 result.resultData().getOrDefault("trials_completed", "?"),
                 result.resultData().getOrDefault("trials_total", "?"),
@@ -133,10 +133,10 @@ public class AIOptimizationService implements OptimizeModelUseCase {
     private String formatearResultadoOptimizacion(Map<String, Object> r) {
         StringBuilder sb = new StringBuilder();
         String status = String.valueOf(r.getOrDefault("status", "unknown")).toUpperCase();
-        boolean reached = Boolean.TRUE.equals(r.get("min_accuracy_reached"));
+        boolean reached = Boolean.TRUE.equals(r.get("min_composite_reached"));
 
         sb.append("Estado       : ").append(status)
-          .append(" | Min. accuracy requerida: ").append(r.getOrDefault("min_accuracy_reached", "?"))
+          .append(" | Min. composite requerido: ").append(r.getOrDefault("min_composite_required", "?"))
           .append(" (").append(reached ? "ALCANZADA" : "NO ALCANZADA").append(")\n");
 
         Object trialsComp = r.get("trials_completed");
