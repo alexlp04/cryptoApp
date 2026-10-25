@@ -282,3 +282,33 @@ def test_atomic_save_reemplaza_el_fichero(tmp_path):
     shared_utils.atomic_save(str(target), lambda tmp: pathlib.Path(tmp).write_text("nuevo"))
 
     assert target.read_text() == "nuevo"
+
+
+def test_save_model_escribe_manifiesto_y_load_model_lo_verifica(models_dir):
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
+
+    assert (models_dir / "xgb_1h_BTCUSDT_A.manifest.json").exists()
+    model, _, _ = engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
+    assert model.strategy_name == "A"
+
+
+def test_load_model_rechaza_un_modelo_modificado(models_dir):
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
+    joblib.dump(types.SimpleNamespace(strategy_name="A", malicioso=True), path)  # cambia el contenido
+
+    with pytest.raises(shared_utils.ModelIntegrityError, match="no coincide"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
+
+
+def test_load_model_rechaza_otra_version_de_sklearn(models_dir):
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
+    manifest = models_dir / "xgb_1h_BTCUSDT_A.manifest.json"
+    data = json.loads(manifest.read_text())
+    data["libraries"]["scikit-learn"] = "0.1.0"
+    manifest.write_text(json.dumps(data))
+
+    with pytest.raises(shared_utils.ModelIntegrityError, match="scikit-learn"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")

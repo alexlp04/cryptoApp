@@ -22,12 +22,12 @@ from ipc_protocol import read_request_payload, write_error, write_response
 from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
-    atomic_save,
     build_and_train_neural_network,
     encode_labels,
     fit_sklearn_model,
     load_strategy_by_name,
     metric_average,
+    save_model,
     setup_engine_logging,
 )
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -155,7 +155,7 @@ def main() -> None:
             suffix = f"_{strategy_name}" if strategy_name else ""
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
             model_path = os.path.join(models_dir, model_filename)
-            atomic_save(model_path, model.save)
+            save_model(model_path, model.save)
             metadata_path = model_path.replace(".keras", ".metadata.json")
             with open(metadata_path, "w", encoding="utf-8") as mf:
                 json.dump(
@@ -195,7 +195,7 @@ def main() -> None:
             suffix = f"_{strategy_name}" if strategy_name else ""
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
             model_path = os.path.join(models_dir, model_filename)
-            atomic_save(model_path, lambda tmp: joblib.dump(model, tmp))
+            save_model(model_path, lambda tmp: joblib.dump(model, tmp))
             logger.info("Modelo ML clasico guardado en: %s", model_path)
 
         training_time = time.monotonic() - start_time
