@@ -127,7 +127,7 @@ public class RealtimeProcessSupervisor {
         }
     }
 
-    private Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols) {
+    Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols) {
         Map<String, Object> payload = new HashMap<>();
 
         if (instancia.getNombreEstrategia() != null && !instancia.getNombreEstrategia().isBlank()) {
@@ -136,6 +136,10 @@ public class RealtimeProcessSupervisor {
         payload.put("symbols", new ArrayList<>(symbols));
         payload.put("timeframe", instancia.getTimeframe());
         payload.put("capital", instancia.getCapitalReservado());
+        payload.put("is_real", instancia.isEsReal());
+        if (instancia.getRiskPerTrade() != null) {
+            payload.put("risk_per_trade", instancia.getRiskPerTrade());
+        }
 
         // Agregar modelo si existe (para estrategias de IA)
         if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {
