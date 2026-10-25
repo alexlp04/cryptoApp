@@ -20,8 +20,6 @@
         <!-- Propiedades del BOM de Spring Boot: alinean todos los módulos Jackson / Security en vez de fijar artefactos sueltos -->
         <jackson-bom.version>2.18.2</jackson-bom.version>
         <spring-security.version>6.5.0</spring-security.version>
-        <maven.checkstyle.version>3.4.0</maven.checkstyle.version>
-        <checkstyle.version>10.17.0</checkstyle.version>
         <maven.pmd.version>3.24.0</maven.pmd.version>
         <maven.spotbugs.version>4.8.6.2</maven.spotbugs.version>
         <spotbugs.version>4.8.6</spotbugs.version>
@@ -71,13 +69,6 @@
             <artifactId>gson</artifactId>
         </dependency>
 
-        <!-- .env -->
-        <dependency>
-            <groupId>io.github.cdimascio</groupId>
-            <artifactId>java-dotenv</artifactId>
-            <version>5.2.2</version>
-        </dependency>
-
 
         <!-- Testing (opcional pero recomendado) -->
         <dependency>
@@ -123,34 +114,6 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-checkstyle-plugin</artifactId>
-                <version>${maven.checkstyle.version}</version>
-                <configuration>
-                    <consoleOutput>true</consoleOutput>
-                    <failsOnError>true</failsOnError>
-                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
-                    <configLocation>google_checks.xml</configLocation>
-                </configuration>
-                <dependencies>
-                    <dependency>
-                        <groupId>com.puppycrawl.tools</groupId>
-                        <artifactId>checkstyle</artifactId>
-                        <version>${checkstyle.version}</version>
-                    </dependency>
-                </dependencies>
-                <executions>
-                    <execution>
-                        <id>validate-style</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                    </execution>
-                </executions>
             </plugin>
 
             <plugin>

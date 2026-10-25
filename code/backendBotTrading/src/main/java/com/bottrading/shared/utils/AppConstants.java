@@ -100,7 +100,6 @@ public final class AppConstants {
     public static final String FILE_ENGINE_RT = "engine_rt.py";
     public static final String FILE_ENGINE_BACKTEST = "engine_backtest.py";
     public static final String FILE_FETCHER = "engine_fetch.py";
-    public static final String FILE_INDICATORS = "engine_indicators.py";
 
     public static final String FILE_ENGINE_TRAIN = "engine_train.py";
     public static final String FILE_ENGINE_OPTIMIZE = "engine_optimize.py";

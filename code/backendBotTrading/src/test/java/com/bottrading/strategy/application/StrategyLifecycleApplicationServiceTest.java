@@ -575,4 +575,34 @@ class StrategyLifecycleApplicationServiceTest {
             verify(useCase, never()).terminarTodas();
         }
     }
+
+    @Nested
+    @DisplayName("Modo de señal (#85)")
+    class SignalModeTests {
+
+        @Test
+        @DisplayName("✓ Un modo inválido se rechaza antes de persistir ni lanzar nada")
+        void invalid_signal_mode_is_rejected_before_anything_happens() {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), false, 1L,
+                            new BigDecimal("0.01"), new BigDecimal("100"), "nunca"));
+
+            verify(instanciaRepo, never()).save(any());
+            verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ El modo elegido se guarda en la instancia que se lanza")
+        void chosen_mode_is_stored_on_the_instance() {
+            doReturn(crearInstanciaTest(42L, EstadoEstrategia.CREADA))
+                    .when(accountingService).activateStrategy(anyLong(), anyLong(), any());
+
+            lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), false, 1L,
+                    new BigDecimal("0.01"), new BigDecimal("100"), "open");
+
+            org.mockito.ArgumentCaptor<InstanciaEstrategia> captor = org.mockito.ArgumentCaptor.forClass(InstanciaEstrategia.class);
+            verify(runtimeCoordinator).ejecutarTradeEnTiempoReal(captor.capture(), any());
+            org.junit.jupiter.api.Assertions.assertEquals("open", captor.getValue().getSignalMode());
+        }
+    }
 }

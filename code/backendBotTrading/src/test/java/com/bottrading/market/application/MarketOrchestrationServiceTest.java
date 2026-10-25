@@ -27,7 +27,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import com.bottrading.market.application.port.in.CalculateIndicatorsUseCase;
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.Vela;
@@ -45,8 +44,6 @@ class MarketOrchestrationServiceTest {
     @Mock
     private FetchMarketDataUseCase fetchService;
 
-    @Mock
-    private CalculateIndicatorsUseCase indicatorsService;
 
     @InjectMocks
     private MarketOrchestrationService orchestrationService;
@@ -91,7 +88,7 @@ class MarketOrchestrationServiceTest {
         @DisplayName("✓ Debe aceptar las tres dependencias por constructor")
         void should_accept_constructor_with_three_dependencies() {
             MarketOrchestrationService sut = new MarketOrchestrationService(
-                    velaRepo, fetchService, indicatorsService);
+                    velaRepo, fetchService);
             assertThat(sut, is(notNullValue()));
         }
     }
@@ -156,120 +153,9 @@ class MarketOrchestrationServiceTest {
     // ─────────────────────────────────────────────────────────────────────────
     // calcularIndicadoresParaSimbolo() — FLUJO DE CÁLCULO
     // ─────────────────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("calcularIndicadoresParaSimbolo() — Flujo de cálculo de indicadores")
-    class CalcularIndicadoresTests {
-
-        @Test
-        @DisplayName("✓ Debe llamar calculateBasicIndicators con las velas cargadas")
-        void should_call_calculateBasicIndicators_with_loaded_velas() {
-            List<Vela> velas = crearVelasTestList(5);
-            doReturn(velas).when(velaRepo).findBySymbolAndIntervalOrderByOpenTimeAsc(SYMBOL, INTERVAL);
-
-            orchestrationService.calcularIndicadoresParaSimbolo(SYMBOL, INTERVAL);
-
-            verify(indicatorsService, times(1))
-                    .calculateBasicIndicators(eq(SYMBOL), eq(velas), eq(true));
-        }
-
-        @Test
-        @DisplayName("✓ No debe llamar calculateBasicIndicators cuando no hay velas en BD")
-        void should_not_calculate_when_no_velas_in_database() {
-            doReturn(Collections.emptyList())
-                    .when(velaRepo).findBySymbolAndIntervalOrderByOpenTimeAsc(SYMBOL, INTERVAL);
-
-            orchestrationService.calcularIndicadoresParaSimbolo(SYMBOL, INTERVAL);
-
-            verify(indicatorsService, never()).calculateBasicIndicators(anyString(), any(), any(Boolean.class));
-        }
-
-        @Test
-        @DisplayName("✓ Debe consultar el repositorio con el símbolo e intervalo correctos")
-        void should_query_repository_with_correct_symbol_and_interval() {
-            doReturn(crearVelasTestList(3))
-                    .when(velaRepo).findBySymbolAndIntervalOrderByOpenTimeAsc("ETHUSDT", "4h");
-            doReturn(Collections.emptyList())
-                    .when(velaRepo).findBySymbolAndIntervalOrderByOpenTimeAsc(anyString(), anyString());
-
-            orchestrationService.calcularIndicadoresParaSimbolo("ETHUSDT", "4h");
-
-            verify(velaRepo, times(1))
-                    .findBySymbolAndIntervalOrderByOpenTimeAsc("ETHUSDT", "4h");
-        }
-
-        @Test
-        @DisplayName("✓ Debe pasar guardarPrimeras50=true a calculateBasicIndicators")
-        void should_pass_guardar_primeras50_true() {
-            List<Vela> velas = crearVelasTestList(10);
-            doReturn(velas).when(velaRepo).findBySymbolAndIntervalOrderByOpenTimeAsc(SYMBOL, INTERVAL);
-
-            orchestrationService.calcularIndicadoresParaSimbolo(SYMBOL, INTERVAL);
-
-            verify(indicatorsService).calculateBasicIndicators(anyString(), any(), eq(true));
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // prepararDatosParaEntrenamiento() — PIPELINE COMPLETO
     // ─────────────────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("prepararDatosParaEntrenamiento() — Pipeline de datos de entrenamiento")
-    class PrepararDatosEntrenamientoTests {
-
-        @Test
-        @DisplayName("✓ Debe llamar fetchIncremental antes de calcular indicadores")
-        void should_call_fetch_incremental_before_calculating_indicators() {
-            long now = System.currentTimeMillis();
-            int dias = 30;
-            long fetchedFrom = now - dias * 24L * 60 * 60 * 1000L;
-
-            doReturn(fetchedFrom).when(fetchService).fetchIncremental(SYMBOL, INTERVAL, dias, now);
-            doReturn(crearVelasTestList(5))
-                    .when(velaRepo).findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
-                            eq(SYMBOL), eq(INTERVAL), any(Long.class));
-
-            orchestrationService.prepararDatosParaEntrenamiento(SYMBOL, INTERVAL, dias, now);
-
-            verify(fetchService, times(1)).fetchIncremental(SYMBOL, INTERVAL, dias, now);
-        }
-
-        @Test
-        @DisplayName("✓ Debe llamar calculateBasicIndicators cuando hay velas cargadas")
-        void should_call_calculateBasicIndicators_when_velas_are_loaded() {
-            long now = System.currentTimeMillis();
-            int dias = 7;
-            long fetchedFrom = now - dias * 24L * 60 * 60 * 1000L;
-            List<Vela> velas = crearVelasTestList(5);
-
-            doReturn(fetchedFrom).when(fetchService).fetchIncremental(SYMBOL, INTERVAL, dias, now);
-            doReturn(velas).when(velaRepo)
-                    .findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
-                            eq(SYMBOL), eq(INTERVAL), any(Long.class));
-
-            orchestrationService.prepararDatosParaEntrenamiento(SYMBOL, INTERVAL, dias, now);
-
-            verify(indicatorsService, times(1))
-                    .calculateBasicIndicators(eq(SYMBOL), eq(velas), any(Boolean.class));
-        }
-
-        @Test
-        @DisplayName("✓ No debe llamar calculateBasicIndicators cuando no hay velas")
-        void should_not_calculate_when_no_velas_available() {
-            long now = System.currentTimeMillis();
-            int dias = 7;
-            long fetchedFrom = now - dias * 24L * 60 * 60 * 1000L;
-
-            doReturn(fetchedFrom).when(fetchService).fetchIncremental(SYMBOL, INTERVAL, dias, now);
-            doReturn(Collections.emptyList())
-                    .when(velaRepo).findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
-                            eq(SYMBOL), eq(INTERVAL), any(Long.class));
-
-            orchestrationService.prepararDatosParaEntrenamiento(SYMBOL, INTERVAL, dias, now);
-
-            verify(indicatorsService, never()).calculateBasicIndicators(anyString(), any(), any(Boolean.class));
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // CONTRATO DE PUERTOS
     // ─────────────────────────────────────────────────────────────────────────

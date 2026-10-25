@@ -32,7 +32,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.shared.exceptions.DataFetchException;
@@ -50,9 +49,6 @@ class FetchServiceTest {
 
     @Mock
     private VelaRepositoryPort velaRepo;
-
-    @Mock
-    private IndicadorRepositoryPort indicadorRepo;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -93,9 +89,9 @@ class FetchServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe aceptar las cuatro dependencias por constructor")
-        void should_accept_constructor_with_four_dependencies() {
-            FetchService sut = new FetchService(velaRepo, indicadorRepo, jdbcTemplate, pythonBridgeFacade);
+        @DisplayName("✓ Debe aceptar las tres dependencias por constructor")
+        void should_accept_constructor_with_three_dependencies() {
+            FetchService sut = new FetchService(velaRepo, jdbcTemplate, pythonBridgeFacade);
             assertThat(sut, is(notNullValue()));
         }
     }
@@ -194,8 +190,8 @@ class FetchServiceTest {
     class FullRefreshTests {
 
         @Test
-        @DisplayName("✓ Debe eliminar indicadores y velas antes de descargar cuando days es null")
-        void should_delete_indicators_and_velas_when_days_is_null() throws PythonBridgeExecutionException {
+        @DisplayName("✓ Debe eliminar las velas antes de descargar cuando days es null")
+        void should_delete_velas_when_days_is_null() throws PythonBridgeExecutionException {
             long minTimestamp = 1704067200000L;
 
             ConsoleLoader consoleMock = mock(ConsoleLoader.class);
@@ -205,9 +201,6 @@ class FetchServiceTest {
                 doReturn(5).when(pythonBridgeFacade).execute(any());
 
                 fetchService.fullRefresh(SYMBOL, INTERVAL, null);
-
-                verify(indicadorRepo, times(1))
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(SYMBOL, INTERVAL, minTimestamp);
                 verify(velaRepo, times(1))
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(SYMBOL, INTERVAL, minTimestamp);
             }
@@ -223,9 +216,6 @@ class FetchServiceTest {
                 doReturn(0).when(pythonBridgeFacade).execute(any());
 
                 fetchService.fullRefresh(SYMBOL, INTERVAL, null);
-
-                verify(indicadorRepo, never())
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(anyString(), anyString(), anyLong());
                 verify(velaRepo, never())
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(anyString(), anyString(), anyLong());
             }
@@ -242,8 +232,6 @@ class FetchServiceTest {
                 fetchService.fullRefresh(SYMBOL, INTERVAL, 30);
 
                 // Con days=30, el anchor es calculado internamente y se pasa al borrado
-                verify(indicadorRepo, times(1))
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(eq(SYMBOL), eq(INTERVAL), anyLong());
                 verify(velaRepo, times(1))
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(eq(SYMBOL), eq(INTERVAL), anyLong());
             }

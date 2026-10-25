@@ -4,7 +4,7 @@ package com.bottrading.config;
  * Centraliza la configuración de procesos Javaava-Python.
  * Proporciona constantes de resiliencia, timeouts y parámetros de serialización.
  *
- * Estándar compartido entre BacktestingService, IndicatorsService, FetchService,
+ * Estándar compartido entre BacktestingService, FetchService,
  * AITrainingService y TradingService.
  */
 public final class ProcessExecutorConfig {

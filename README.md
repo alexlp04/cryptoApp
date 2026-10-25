@@ -231,7 +231,7 @@ MySQL 8 real.
 
 | Comprobacion | Comando | Cobertura actual |
 | --- | --- | --- |
-| Backend Java | `cd code/backendBotTrading && mvn verify` | 347 tests + Checkstyle + PMD |
+| Backend Java | `cd code/backendBotTrading && mvn verify` | tests + PMD + SpotBugs + cobertura JaCoCo |
 | Engines Python | `pytest code/scripts/tests -q` | 184 tests |
 | Linting Python | `ruff check code/` | configurado en `ruff.toml` |
 | Tipos Python | `mypy code/scripts` | configurado en `mypy.ini` |

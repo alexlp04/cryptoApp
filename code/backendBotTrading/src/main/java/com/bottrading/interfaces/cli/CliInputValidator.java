@@ -134,6 +134,12 @@ public final class CliInputValidator {
         return context.scanner().nextLine();
     }
 
+    /** Exige escribir una palabra exacta (mayúsculas incluidas) para acciones con dinero real. */
+    public static boolean readConfirmation(CliCommandContext context, String prompt, String expected) {
+        context.print().accept(prompt);
+        return expected.equals(context.scanner().nextLine().trim());
+    }
+
     public static boolean readYesNo(CliCommandContext context, String prompt) {
         context.print().accept(prompt);
         String answer = context.scanner().nextLine().trim().toLowerCase(java.util.Locale.ROOT);

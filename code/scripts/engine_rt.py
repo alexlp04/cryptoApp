@@ -35,6 +35,21 @@ class StrategyFailure(RuntimeError):
     """La estrategia falla de forma persistente: no tiene sentido seguir reconectando."""
 
 
+#: Cuándo se evalúa la estrategia: al cierre de cada vela, a la apertura de la siguiente, o en ambos.
+SIGNAL_MODES = ("close", "open", "both")
+
+
+def _validate_signal_mode(mode: str) -> str:
+    if mode not in SIGNAL_MODES:
+        raise ValueError(f"signal_mode inválido: {mode!r} (usa {', '.join(SIGNAL_MODES)})")
+    return mode
+
+
+def _should_evaluate(mode: str, candle_closed: bool, new_candle: bool) -> bool:
+    """close: mensaje de vela cerrada; open: primer mensaje de una vela nueva; both: cualquiera de los dos."""
+    return (mode in ("close", "both") and candle_closed) or (mode in ("open", "both") and new_candle)
+
+
 def _buffer_size(max_candles: int, warmup: int) -> int:
     """Tamaño del buffer: nunca menor que el calentamiento que exige la estrategia."""
     return max(max_candles, warmup)
@@ -63,9 +78,10 @@ async def run_symbol(
     risk_per_trade: float,
     is_real: bool,
     max_candles: int = 100,
-    only_closed_candles: bool = False,
+    signal_mode: str = "close",
 ) -> None:
     """Procesa stream kline de un simbolo y emite senales al runtime Java."""
+    _validate_signal_mode(signal_mode)
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
@@ -74,6 +90,7 @@ async def run_symbol(
     min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
     buffer: deque = deque(maxlen=_buffer_size(max_candles, min_candles))
     last_signal: tuple[int, str] | None = None
+    last_open_time: int | None = None  # vela del último mensaje; sobrevive a las reconexiones
 
     retry_delay = 5
     max_retry_delay = 300
@@ -90,10 +107,11 @@ async def run_symbol(
                         continue  # mensajes que no son kline (errores, pings de aplicación)
                     retry_delay = 5  # el backoff solo se reinicia con datos válidos
 
-                    # En runtime suele interesar reaccionar antes del cierre de vela.
-                    # Si se desea comportamiento clásico de cierre, activar only_closed_candles.
-                    if only_closed_candles and not k["x"]:
-                        continue
+                    # Todo mensaje actualiza el buffer; signal_mode decide solo cuándo se evalúa.
+                    open_time = int(k["t"])
+                    # El primer mensaje tras (re)conectar no es una apertura real: se ignora como "nueva vela"
+                    new_candle = last_open_time is not None and open_time != last_open_time
+                    last_open_time = open_time
 
                     # Binance devuelve precios como strings — float para operaciones pandas/numpy.
                     # La clave del precio de cierre original se preserva para emitir la señal
@@ -109,7 +127,7 @@ async def run_symbol(
                         "volume": float(k["v"]),
                     })
 
-                    if len(buffer) < min_candles:
+                    if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
                         continue
 
                     try:
@@ -164,7 +182,7 @@ def main() -> None:
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),
             is_real=payload.get("is_real", False),
-            only_closed_candles=payload.get("only_closed_candles", False),
+            signal_mode=payload.get("signal_mode", "close"),
         ))
     except Exception as e:
         logger.critical("Fallo catastrofico en el motor: %s", str(e), exc_info=True)
@@ -177,7 +195,7 @@ async def run_all(
     capital: float,
     risk_per_trade: float,
     is_real: bool,
-    only_closed_candles: bool = False,
+    signal_mode: str = "close",
 ) -> None:
     """Lanza un task por simbolo y mantiene el proceso vivo mientras haya streams."""
     tasks = [
@@ -188,7 +206,7 @@ async def run_all(
             capital,
             risk_per_trade,
             is_real,
-            only_closed_candles=only_closed_candles,
+            signal_mode=signal_mode,
         )
         for sym in symbols
     ]

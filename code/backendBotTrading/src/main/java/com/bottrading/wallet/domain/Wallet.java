@@ -8,9 +8,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "wallet")
+@Table(name = "wallet", uniqueConstraints = @UniqueConstraint(name = "uk_wallet_usuario_nombre", columnNames = {"usuario_id", "nombre"}))
 public class Wallet extends BaseEntity {
 
     @Column(nullable = false)

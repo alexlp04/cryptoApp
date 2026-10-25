@@ -31,7 +31,7 @@ commits— está en [`../CLAUDE.md`](../CLAUDE.md). No lo repitas aquí.
 
 ## Calidad
 
-Cada PR ejecuta `.github/workflows/ci.yml`: `mvn verify` (Checkstyle, PMD, 347 tests JUnit),
+Cada PR ejecuta `.github/workflows/ci.yml`: `mvn verify` (PMD, SpotBugs, tests JUnit),
 `ruff check code/`, `mypy code/scripts` y `pytest code/scripts/tests` (184 tests), más la
 validación de las migraciones contra MySQL 8 real. La configuración de ruff y mypy está
 fijada en el repositorio (`ruff.toml`, `mypy.ini`) y sus versiones en `requirements.txt`.

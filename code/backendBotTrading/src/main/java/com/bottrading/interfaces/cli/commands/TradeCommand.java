@@ -51,8 +51,15 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
+        if (args.isReal() && !CliInputValidator.readConfirmation(context,
+                "Vas a operar con DINERO REAL. Escribe REAL para confirmar: ", "REAL")) {
+            context.println().accept("Operacion cancelada.");
+            return;
+        }
+
         context.strategyLifecycleUseCase().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
-                args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado);
+                args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado,
+                args.getSignalMode() == null ? "close" : args.getSignalMode());
         context.println().accept("Bot lanzado en segundo plano con exito.");
     }
 
@@ -62,7 +69,7 @@ public final class TradeCommand implements CliCommand {
                 || args.getTimeframe() == null || args.getCoins().isEmpty()
                 || (args.getEstrategia() == null && args.getModelo() == null)) {
             context.println().accept(
-                    "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]");
+                    "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...] [-signal close|open|both]");
             return false;
         }
 
@@ -74,6 +81,12 @@ public final class TradeCommand implements CliCommand {
     }
 
     private boolean validarEstrategiaYModelo(CommandParser args, CliCommandContext context) {
+
+        if (args.getModelo() != null && args.getSignalMode() != null && !"close".equals(args.getSignalMode())) {
+            // Los modelos se entrenan con velas cerradas: sobre una vela recién abierta sus features serían basura.
+            context.println().accept("Error: con -model solo se admite -signal close.");
+            return false;
+        }
 
         if (args.getModelo() != null && args.getEstrategia() == null) {
             context.println().accept("Error: -model requiere tambien -strategy para calcular indicadores.");

@@ -278,3 +278,73 @@ def test_el_cv_deja_un_hueco_de_una_vela_entre_train_y_validacion(monkeypatch):
 
     # n=120, 3 folds → sin gap los trains medirían 30/60/90; con gap=1: 29/59/89
     assert tamanos[:3] == [29, 59, 89]
+
+
+# ── Un único constructor Keras (#100) — requiere TensorFlow ─────────────────
+
+def _datos(n_classes: int, n: int = 120):
+    rng = np.random.default_rng(7)
+    x = rng.normal(size=(n, 4)).astype("float32")
+    y = rng.integers(0, n_classes, size=n)
+    return x, y
+
+
+_PARAMS_RAPIDOS = {"epochs": 2, "batch_size": 32, "hidden_layers": 1, "neurons": 8,
+                   "dropout_rate": 0.1, "learning_rate": 0.01}
+
+
+@pytest.mark.parametrize("n_classes, salida", [(2, 1), (3, 3)])
+def test_fit_keras_mlp_construye_la_salida_segun_las_clases(n_classes, salida):
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _fit_keras_mlp
+
+    x, y = _datos(n_classes)
+
+    model = _fit_keras_mlp(x, y, _PARAMS_RAPIDOS, n_classes, None)
+
+    assert model.output_shape[-1] == salida
+    assert model.predict(x[:5], verbose=0).shape == (5, salida)
+
+
+def test_fit_keras_mlp_fija_las_unidades_por_n_classes_aunque_al_fold_le_falte_una_clase():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _fit_keras_mlp
+
+    x, _ = _datos(3)
+    y_sin_clase_2 = np.random.default_rng(1).integers(0, 2, size=len(x))  # el fold solo ve 0 y 1
+
+    model = _fit_keras_mlp(x, y_sin_clase_2, _PARAMS_RAPIDOS, 3, None)
+
+    assert model.output_shape[-1] == 3
+
+
+def test_el_entrenamiento_final_neuronal_guarda_modelo_y_metadatos(tmp_path):
+    pytest.importorskip("tensorflow")
+    import json
+
+    from engine_optimize import _train_neural_final
+    from shared_utils import encode_labels
+
+    x, y = _datos(3)
+    encoder, y_enc, _, _ = encode_labels(y - 1, y - 1)  # etiquetas originales -1/0/1
+
+    _model, filename, y_pred = _train_neural_final(
+        "neural_network", _PARAMS_RAPIDOS, x, y_enc, x[:10], ["a", "b", "c", "d"], "Estrategia", 20,
+        str(tmp_path), "1h", "BTCUSDT", encoder, train_end_ts=12345)
+
+    assert (tmp_path / filename).exists()
+    meta = json.loads((tmp_path / filename.replace(".keras", ".metadata.json")).read_text())
+    assert meta["train_end_ts"] == 12345 and meta["label_classes"] == [-1, 0, 1]
+    assert y_pred.shape == (10,)
+    assert not list(tmp_path.glob("*.tmp*"))  # guardado atómico: sin temporales
+
+
+def test_la_evaluacion_cv_neuronal_devuelve_las_seis_metricas():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _build_and_eval_neural_network
+
+    x, y = _datos(3, n=150)
+
+    resultado = _build_and_eval_neural_network(x, y, _PARAMS_RAPIDOS, cv_folds=2)
+
+    assert len(resultado) == 6 and all(np.isfinite(v) for v in resultado)

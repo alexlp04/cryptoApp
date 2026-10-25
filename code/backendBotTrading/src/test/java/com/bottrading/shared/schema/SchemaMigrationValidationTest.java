@@ -52,4 +52,32 @@ class SchemaMigrationValidationTest {
         assertTrue(aplicadas != null && aplicadas >= 1,
                 "No hay migraciones aplicadas en flyway_schema_history");
     }
+
+    @Test
+    @DisplayName("La tabla del pipeline de indicadores ya no existe (#88)")
+    void tablaDeIndicadoresEliminada() {
+        Integer existe = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = SCHEMA() AND LOWER(table_name) = 'indicador_tecnico'",
+                Integer.class);
+
+        assertTrue(existe != null && existe == 0, "indicador_tecnico debería haberse eliminado");
+    }
+
+    @Test
+    @DisplayName("capital_reservado ya no existe y wallet tiene clave única (usuario, nombre) (#95)")
+    void walletUnicaYSinCapitalReservado() {
+        Integer capital = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = SCHEMA() AND LOWER(table_name) = 'capital_reservado'",
+                Integer.class);
+        Integer unicas = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.table_constraints "
+                        + "WHERE table_schema = SCHEMA() AND LOWER(table_name) = 'wallet' "
+                        + "AND constraint_type = 'UNIQUE' AND LOWER(constraint_name) = 'uk_wallet_usuario_nombre'",
+                Integer.class);
+
+        assertTrue(capital != null && capital == 0, "capital_reservado debería haberse eliminado");
+        assertTrue(unicas != null && unicas == 1, "Falta la clave única uk_wallet_usuario_nombre");
+    }
 }
