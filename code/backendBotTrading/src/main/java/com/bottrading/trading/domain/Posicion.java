@@ -8,6 +8,8 @@ import com.bottrading.strategy.domain.InstanciaEstrategia;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
@@ -21,7 +23,11 @@ public class Posicion extends BaseEntity {
     private BigDecimal margenInvertido; // USD exactos
     private boolean abierta = true;
 
-    /** Unidades compradas (null en posiciones anteriores a la gestión de riesgo). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 5, nullable = false)
+    private Lado lado = Lado.LONG;
+
+    /** Unidades operadas (null en posiciones anteriores a la gestión de riesgo). */
     @Column(precision = 24, scale = 8)
     private BigDecimal unidades;
 
@@ -72,6 +78,14 @@ public class Posicion extends BaseEntity {
 
     public void setMargenInvertido(BigDecimal margenInvertido) {
         this.margenInvertido = margenInvertido;
+    }
+
+    public Lado getLado() {
+        return lado;
+    }
+
+    public void setLado(Lado lado) {
+        this.lado = lado;
     }
 
     public boolean isAbierta() {

@@ -128,6 +128,15 @@ class SignalProtocolParserTest {
         }
 
         @Test
+        @DisplayName("✓ Debe parsear las señales de corto SHORT y COVER")
+        void should_parse_short_and_cover_signals() {
+            assertThat(parser.parseLineaLog("SIGNAL\t" + buildSignalJson("BTCUSDT", "SHORT", 42000.0), 1L)
+                    .getAction(), is("SHORT"));
+            assertThat(parser.parseLineaLog("SIGNAL\t" + buildSignalJson("BTCUSDT", "cover", 41000.0), 1L)
+                    .getAction(), is("COVER"));
+        }
+
+        @Test
         @DisplayName("✓ Debe funcionar con espacios alrededor de la línea (trim)")
         void should_handle_leading_trailing_spaces() {
             String line = "  SIGNAL\t" + buildSignalJson("BTCUSDT", "BUY", 40000.0) + "  ";

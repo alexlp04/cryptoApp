@@ -91,7 +91,8 @@ public class StrategyRuntimeCoordinator {
         for (Posicion p : posicionRepo.findByInstanciaAndAbiertaTrue(instancia)) {
             if (p.getStopLoss() != null && p.getTakeProfit() != null) {
                 abiertas.put(p.getSimbolo(), Map.of(
-                        "stop", p.getStopLoss().doubleValue(), "take_profit", p.getTakeProfit().doubleValue()));
+                        "stop", p.getStopLoss().doubleValue(), "take_profit", p.getTakeProfit().doubleValue(),
+                        "side", p.getLado().name()));
             }
         }
         return abiertas;
