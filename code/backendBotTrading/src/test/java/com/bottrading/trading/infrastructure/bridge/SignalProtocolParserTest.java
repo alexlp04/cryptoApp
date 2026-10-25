@@ -281,4 +281,21 @@ class SignalProtocolParserTest {
         assertThat(signal.isReal(), is(true));
         assertThat(signal.getPrice(), is(new BigDecimal("67123.45")));
     }
+
+    @Test
+    @DisplayName("El BUY real de engine_rt (strings) y el de engine_ai_rt (números) traen stop y objetivo (#99)")
+    void should_parse_stop_and_target_from_both_python_engines() {
+        SignalDTO rt = parser.parseLineaLog("SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\","
+                + "\"timeframe\":\"1h\",\"price\":\"100.5\",\"timestamp\":1,\"is_real\":false,"
+                + "\"reason\":\"SIGNAL\",\"stop_loss\":\"95.25\",\"take_profit\":\"110.5\"}", 1L);
+        SignalDTO ai = parser.parseLineaLog("SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\","
+                + "\"timeframe\":\"1h\",\"price\":100.5,\"timestamp\":1,\"is_real\":false,"
+                + "\"source\":\"AI_XGB\",\"stop_loss\":95.25,\"take_profit\":110.5}", 1L);
+
+        for (SignalDTO dto : new SignalDTO[] {rt, ai}) {
+            assertThat(dto.getStopLoss().compareTo(new BigDecimal("95.25")), is(0));
+            assertThat(dto.getTakeProfit().compareTo(new BigDecimal("110.5")), is(0));
+        }
+        assertThat(rt.getReason(), is("SIGNAL"));
+    }
 }

@@ -87,6 +87,8 @@ class PaperTradingServiceTest {
         s.setAction("BUY");
         s.setSymbol("BTCUSDT");
         s.setPrice(new BigDecimal("30000"));
+        s.setStopLoss(new BigDecimal("29000"));
+        s.setTakeProfit(new BigDecimal("33000"));
         s.setTimeframe("1h");
         s.setTimestamp(System.currentTimeMillis());
         return s;
@@ -314,17 +316,81 @@ class PaperTradingServiceTest {
         }
 
         @Test
-        @DisplayName("✓ El monto a invertir es capitalReservado * riskPerTrade")
-        void should_invest_correct_amount() {
+        @DisplayName("✓ El tamaño arriesga equity * riskPerTrade hasta el stop (#99)")
+        void should_size_the_position_by_risk_to_the_stop() {
             InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
-            // riskPerTrade = 0.05 → montoAInvertir = 1000 * 0.05 = 50
+            inst.setRiskPerTrade(new BigDecimal("0.01")); // 10 de riesgo
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO s = crearSignalBUY();
+            s.setStopLoss(new BigDecimal("15000")); // stop lejano: manda el riesgo, no el tope del 25 %
+
+            paperTradingService.onSignal(10L, s);
+
+            // entrada con slippage 30015; riesgo ≈ 10 → el margen es ≈ 20 y lo arriesgado ≈ 10
+            verify(accountingService).commitCapital(eq(10L),
+                    argThat(m -> m.subtract(new BigDecimal("19.99")).abs().compareTo(new BigDecimal("0.01")) < 0),
+                    argThat(r -> r.subtract(BigDecimal.TEN).abs().compareTo(new BigDecimal("0.01")) < 0), any());
+        }
+
+        @Test
+        @DisplayName("✓ Un stop muy estrecho lo limita el tope del 25 % del equity (#99)")
+        void should_cap_the_position_at_a_quarter_of_equity() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO s = crearSignalBUY();
+            s.setStopLoss(new BigDecimal("29990"));
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(accountingService).commitCapital(eq(10L),
+                    argThat(m -> m.compareTo(new BigDecimal("250")) <= 0 && m.compareTo(new BigDecimal("249")) > 0),
+                    any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Sin stop válido en la señal no se compra (#99)")
+        void should_reject_buy_without_a_valid_stop() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO sinStop = crearSignalBUY();
+            sinStop.setStopLoss(null);
+            SignalDTO stopArriba = crearSignalBUY();
+            stopArriba.setStopLoss(new BigDecimal("31000"));
+            stopArriba.setTimestamp(1L);
+
+            paperTradingService.onSignal(10L, sinStop);
+            paperTradingService.onSignal(10L, stopArriba);
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+            verify(posicionRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("✓ No se abre si el riesgo abierto superaría el 6 % del equity (#99)")
+        void should_reject_buy_beyond_the_open_risk_limit() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            inst.setRiesgoAbierto(new BigDecimal("59")); // el nuevo trade añade ≈ 8 y el límite es 60
             when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
             when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
 
             paperTradingService.onSignal(10L, crearSignalBUY());
 
-            verify(accountingService, times(1)).commitCapital(
-                    eq(10L), argThat(m -> m.compareTo(new BigDecimal("50")) == 0), eq(new BigDecimal("0.05")), any());
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Una estrategia real no ejecuta señales: solo se simula (#99)")
+        void should_ignore_signals_of_real_strategies() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            inst.setEsReal(true);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+
+            paperTradingService.onSignal(10L, crearSignalBUY());
+
+            verify(accountingService, never()).commitCapital(anyLong(), any(), any(), any());
         }
     }
 
@@ -365,6 +431,42 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, crearSignalSELL());
 
             assertThat(pos.getPnl().compareTo(BigDecimal.ZERO) > 0, is(true));
+        }
+
+        @Test
+        @DisplayName("✓ El PnL descuenta slippage y comisiones, y libera el riesgo de la posición (#99)")
+        void should_close_net_of_costs_and_release_the_position_risk() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            pos.setUnidades(new BigDecimal("0.01"));
+            pos.setPrecioEntrada(new BigDecimal("30015"));
+            pos.setRiesgo(new BigDecimal("10.15"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+
+            paperTradingService.onSignal(10L, crearSignalSELL()); // 31000 → sale a 30984,5
+
+            // bruto = 0.01 * (30984.5 - 30015) = 9.695; comisión = 0.001 * 0.01 * (30015 + 30984.5) = 0.609995
+            verify(accountingService).closeTrade(any(), eq(10L), any(),
+                    eq(new BigDecimal("9.08500500")), eq(new BigDecimal("10.15")), any());
+            assertThat(pos.getComisiones(), is(new BigDecimal("0.60999500")));
+        }
+
+        @Test
+        @DisplayName("✓ Un objetivo se llena a su precio, sin slippage (#99)")
+        void should_fill_a_target_without_slippage() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+            SignalDTO objetivo = crearSignalSELL();
+            objetivo.setReason("TARGET");
+
+            paperTradingService.onSignal(10L, objetivo);
+
+            assertThat(pos.getPrecioSalida(), is(new BigDecimal("31000.00000000")));
         }
 
         @Test
@@ -460,7 +562,7 @@ class PaperTradingServiceTest {
             paperTradingService.onSignal(10L, s);
 
             verify(accountingService).closeTrade(any(), eq(10L), eq(new BigDecimal("50")),
-                    eq(new BigDecimal("6.14372794")), any(), any());
+                    eq(new BigDecimal("6.11565608")), any(), any());
         }
 
         @Test

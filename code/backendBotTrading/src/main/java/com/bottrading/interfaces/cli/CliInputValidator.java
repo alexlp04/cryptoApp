@@ -123,18 +123,18 @@ public final class CliInputValidator {
         return value;
     }
 
-    /** Riesgo por trade en (0, 1]; el prompt dice 0.01-1.0 pero antes no se comprobaba. */
+    /** Riesgo por trade en (0, 0.10]: arriesgar más del 10 % del capital en una operación no es gestión de riesgo. */
     public static BigDecimal readRiskPerTrade(CliCommandContext context, String prompt) {
         BigDecimal value = readBigDecimal(context, prompt, "riesgo");
         if (value != null && !isValidRisk(value)) {
-            context.println().accept("El riesgo debe estar entre 0 (exclusivo) y 1.0.");
+            context.println().accept("El riesgo debe estar entre 0 (exclusivo) y 0.10 (un 10 % del capital).");
             return null;
         }
         return value;
     }
 
     static boolean isValidRisk(BigDecimal risk) {
-        return risk != null && risk.signum() > 0 && risk.compareTo(BigDecimal.ONE) <= 0;
+        return risk != null && risk.signum() > 0 && risk.compareTo(new BigDecimal("0.10")) <= 0;
     }
 
     /**

@@ -12,10 +12,11 @@ import org.junit.jupiter.api.Test;
 class CliInputValidatorTest {
 
     @Test
-    @DisplayName("El riesgo por trade solo es válido en (0, 1] (#65)")
+    @DisplayName("El riesgo por trade solo es válido en (0, 0.10] (#65 #99)")
     void risk_must_be_in_zero_exclusive_one_inclusive() {
         assertTrue(CliInputValidator.isValidRisk(new BigDecimal("0.01")));
-        assertTrue(CliInputValidator.isValidRisk(BigDecimal.ONE));
+        assertTrue(CliInputValidator.isValidRisk(new BigDecimal("0.10")));
+        assertFalse(CliInputValidator.isValidRisk(new BigDecimal("0.11"))); // más del 10 % por operación
         assertFalse(CliInputValidator.isValidRisk(BigDecimal.ZERO));
         assertFalse(CliInputValidator.isValidRisk(new BigDecimal("-0.5")));
         assertFalse(CliInputValidator.isValidRisk(new BigDecimal("1.5")));

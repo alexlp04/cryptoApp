@@ -23,6 +23,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from risk_management import position_size, strategy_levels
 
 # =============================================================================
 # CONFIGURACIÓN DE RUTAS
@@ -64,9 +65,20 @@ RESULTADO_NEUTRO: str = "NEUTRO"
 # HELPERS PRIVADOS DE GESTIÓN DE POSICIÓN
 # =============================================================================
 
-def _open_long(capital: float, risk_per_trade: float, price: float) -> float:
-    """Calcula el tamaño de posición al abrir un long."""
-    return (capital * risk_per_trade) / price
+def _protective_exit(
+    open_: float, high: float, low: float, stop: float, take_profit: float,
+) -> tuple[float, bool] | None:
+    """Salida por stop o por objetivo dentro de la vela: (precio, aplica_slippage), o None.
+
+    Orden pesimista: si la misma vela toca el stop y el objetivo, se asume que saltó primero el stop
+    (con velas no se sabe el orden real). Un hueco más allá del nivel se ejecuta a la apertura:
+    el stop es una orden a mercado (con slippage), el objetivo una orden límite (sin él).
+    """
+    if low <= stop:
+        return min(open_, stop), True
+    if high >= take_profit:
+        return max(open_, take_profit), False
+    return None
 
 
 def _close_long(
@@ -166,6 +178,9 @@ def _simulate(
     cols = df.columns.tolist()
     close_idx = cols.index("close")
     ts_idx = cols.index("timestamp") if "timestamp" in cols else None
+    ohl_idx = [cols.index(c) for c in ("open", "high", "low")] if {"open", "high", "low"} <= set(cols) else None
+    skipped_no_stop = 0
+    stop_price = take_profit = 0.0
     in_position = False
     entry_price = size = 0.0
     entry_fill = 0.0
@@ -177,10 +192,10 @@ def _simulate(
     price = 0.0
     timestamp = 0
 
-    def close_position(price: float, timestamp: int) -> None:
+    def close_position(price: float, timestamp: int, slip: float = slippage) -> None:
         nonlocal capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown
         nonlocal trade_count, in_position
-        exit_fill = price * (1 - slippage)
+        exit_fill = price * (1 - slip)
         fee = fee_rate * size * (entry_fill + exit_fill)
         (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
          peak_capital, max_drawdown, pnl) = _close_long(
@@ -203,17 +218,36 @@ def _simulate(
 
         if not in_position:
             if entry_signal(i, row):
-                in_position = True
-                entry_price = price
+                levels = strategy_levels(strategy, price, row())
                 entry_fill = price * (1 + slippage)
-                size = _open_long(capital, risk_per_trade, entry_fill)
-                trade_count += 1
-                if on_trade:
-                    on_trade("BUY", price, timestamp, None, None)
-        elif exit_signal(i, row, entry_price):
-            close_position(price, timestamp)
+                size = position_size(capital, risk_per_trade, entry_fill, levels[0]) if levels else 0.0
+                if size > 0:
+                    in_position = True
+                    entry_price = price
+                    stop_price, take_profit = levels  # type: ignore[misc]
+                    trade_count += 1
+                    if on_trade:
+                        on_trade("BUY", price, timestamp, None, None)
+                else:
+                    skipped_no_stop += 1
+        else:
+            # Stop y objetivo son órdenes que viven en el mercado: se evalúan con el rango de la vela,
+            # no solo con su cierre. La señal de la estrategia se evalúa al cierre, como antes.
+            hit = None
+            if ohl_idx is not None:
+                hit = _protective_exit(float(vals[ohl_idx[0]]), float(vals[ohl_idx[1]]),
+                                       float(vals[ohl_idx[2]]), stop_price, take_profit)
+            if hit is not None:
+                close_position(hit[0], timestamp, slippage if hit[1] else 0.0)
+            elif exit_signal(i, row, entry_price):
+                close_position(price, timestamp)
 
         equity.append(capital + size * (price * (1 - slippage) - entry_fill) if in_position else capital)
+
+    if skipped_no_stop:
+        logger.warning("%s: %d señales de compra descartadas porque la estrategia no dio un stop válido "
+                       "(por debajo de la entrada): sin stop no se puede dimensionar el riesgo",
+                       symbol, skipped_no_stop)
 
     # Posición abierta al terminar: se cierra al último close (mismo criterio en ambos modos)
     if in_position and len(df) > 0:

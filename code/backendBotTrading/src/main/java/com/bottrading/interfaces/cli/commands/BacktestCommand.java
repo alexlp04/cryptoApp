@@ -39,7 +39,7 @@ public final class BacktestCommand implements CliCommand {
             return;
         }
 
-        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade (0.01 - 1.0): ");
+        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade, fracción del capital que se pierde si salta el stop (0.01 = 1 %, máx. 0.10): ");
         if (risk == null) {
             return;
         }
