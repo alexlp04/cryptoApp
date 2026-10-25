@@ -59,7 +59,7 @@ mvn test          # JUnit + H2 (490 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 335 tests
+pytest code/scripts/tests -q   # 343 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -190,6 +190,22 @@ posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_manageme
 - **Dependencias.** Spring Boot se mantiene en una línea con soporte; `jackson-bom.version` y `log4j2.version` del
   `pom.xml` van por delante del BOM solo para parches GHSA: quítalos cuando Boot gestione una versión igual o mayor.
   Antes de promocionar, consulta las versiones contra OSV (`api.osv.dev/v1/querybatch`).
+
+## Consistencia entre backtest y vivo
+
+Un backtest solo vale si el motor en vivo hace lo mismo. Dos herramientas (desde `code/scripts`, sobre un CSV
+de velas) lo comprueban antes de confiar en una estrategia:
+
+- `consistency_check.py estrategia.py velas.csv`: compara indicadores, señales y stops con el histórico completo,
+  con el prefijo (lookahead: usa el futuro) y con la ventana del buffer RT (un indicador que necesita más velas
+  que el buffer sale NaN o distinto en vivo).
+- `replay_check.py estrategia.py velas.csv`: pasa velas por `engine_rt.run_symbol` (el código real, con
+  trayectoria de precios por vela) y compara las señales con las del backtest. Solo cubre el motor clásico; no el
+  RT con IA ni la contabilidad de Java.
+
+Hallazgo: el buffer RT es `max(100, WARMUP_PERIOD)`. Una estrategia sin `WARMUP_PERIOD` (como un cruce de EMA 20/50)
+con buffer 100 pierde entradas que el backtest sí hace; con 300 coincide. Fija siempre `WARMUP_PERIOD` al mayor
+periodo del indicador más lento (varias veces, para las medias exponenciales).
 
 ## Reglas de código
 
