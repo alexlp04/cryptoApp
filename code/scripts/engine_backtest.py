@@ -79,6 +79,28 @@ def _generar_predicciones(
     return preds
 
 
+def _evaluation_window(
+    df: pd.DataFrame, model, strategy, include_train: bool, symbol: str,
+) -> pd.DataFrame:
+    """Velas sobre las que tiene sentido evaluar el modelo.
+
+    Descarta el calentamiento de indicadores (el entrenamiento también lo hace) y, salvo
+    include_train, lo anterior al corte de entrenamiento: sobre esas filas el modelo ya
+    ha visto las etiquetas y las métricas saldrían infladas.
+    """
+    warmup = int(getattr(model, "warmup_candles", None) or strategy.get_warmup_period())
+    df = df.iloc[warmup:]
+    if include_train:
+        logger.warning("[%s] include_train=true: las métricas incluyen datos de entrenamiento", symbol)
+        return df.reset_index(drop=True)
+    cutoff = getattr(model, "train_end_ts", None)
+    if cutoff is None:
+        logger.warning("[%s] El modelo no guarda su corte de entrenamiento (reentrénalo): "
+                       "se evalúa todo el histórico y puede haber datos in-sample", symbol)
+        return df.reset_index(drop=True)
+    return df[df["timestamp"] > cutoff].reset_index(drop=True)
+
+
 def main() -> None:
     try:
         logger.info("Backtest engine started")
@@ -93,6 +115,7 @@ def main() -> None:
         risk_per_trade = payload.get("risk_per_trade", 0.02)
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico
+        include_train = bool(payload.get("include_train", False))  # incluir el tramo con el que se entrenó el modelo
         fee_rate = float(payload.get("fee_rate", DEFAULT_FEE_RATE))
         slippage = float(payload.get("slippage", DEFAULT_SLIPPAGE))
 
@@ -112,16 +135,11 @@ def main() -> None:
         strategy = load_strategy_by_path(strategy_path, capital=capital, risk_per_trade=risk_per_trade)
         strategy.timeframe = timeframe
 
-        # Cargar modelo si se especificó
-        model = None
-        model_type = None
-        label_classes = None
+        # Los modelos son por símbolo: se cargan (y cachean) dentro del bucle
+        models: dict[str, tuple] = {}
+        skipped_symbols: list[str] = []
         if model_name:
             logger.info("Modo backtest con modelo IA: %s", model_name)
-            # Se carga el modelo una sola vez; symbol se infiere del primer símbolo del payload
-            first_symbol = next(iter(velas), "UNKNOWN")
-            model, model_type, label_classes = load_model(model_name, timeframe, first_symbol)
-            logger.info("Modelo cargado: %s (%s) label_classes=%s", model_name, model_type, label_classes)
 
         # Create strategy results folder
         carpeta_estrategia = crear_carpeta_estrategia(strategy_name)
@@ -140,12 +158,25 @@ def main() -> None:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
             df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
             df = df.dropna(subset=["close", "timestamp"])
+            # Mismo orden que en entrenamiento: pct_change/ewm/rolling dependen de él.
+            df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
             if df.empty:
                 continue
 
-            if model is not None and model_type is not None:
-                # Backtest con predicciones del modelo IA
-                df_con_indicadores = strategy.populate_indicators(df.copy())
+            if model_name:
+                if symbol not in models:
+                    try:
+                        models[symbol] = load_model(model_name, timeframe, symbol, strategy.get_name())
+                    except FileNotFoundError as exc:
+                        logger.warning("Sin modelo para %s, se omite: %s", symbol, exc)
+                        skipped_symbols.append(symbol)
+                        continue
+                model, model_type, label_classes = models[symbol]
+                df_con_indicadores = _evaluation_window(
+                    strategy.populate_indicators(df.copy()), model, strategy, include_train, symbol)
+                if df_con_indicadores.empty:
+                    logger.warning("Sin velas que evaluar para %s tras descartar warmup/entrenamiento", symbol)
+                    continue
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)
                 stats = run_backtest_with_predictions(
                     strategy, df_con_indicadores, predictions, symbol, fee_rate=fee_rate, slippage=slippage)
@@ -175,6 +206,7 @@ def main() -> None:
             "total_trades": total_trades,
             "stats": stats_list,
             "mode": "ai_model" if model_name else "classic",
+            "skipped_symbols": skipped_symbols,
         })
 
     except Exception as e:  # noqa: BLE001 - frontera del engine: todo fallo se reporta por IPC

@@ -736,6 +736,7 @@ def _train_neural_final(
     timeframe: str,
     symbol: str,
     label_encoder: LabelEncoder | None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo neural final. Devuelve (model, filename, y_pred_test)."""
     import tensorflow as tf
@@ -795,6 +796,7 @@ def _train_neural_final(
                 "feature_cols": feature_cols,
                 "strategy_name": strategy_name,
                 "warmup_candles": warmup_candles,
+                "train_end_ts": train_end_ts,
                 "best_params": best_params,
                 "label_classes": label_encoder.classes_.tolist() if label_encoder is not None else None,
             },
@@ -818,6 +820,7 @@ def _train_sklearn_final(
     timeframe: str,
     symbol: str,
     label_encoder: LabelEncoder | None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo sklearn final. Devuelve (model, filename, y_pred_test)."""
     fit_params = dict(best_params)
@@ -836,6 +839,7 @@ def _train_sklearn_final(
     model.feature_cols = feature_cols
     model.strategy_name = strategy_name
     model.warmup_candles = warmup_candles
+    model.train_end_ts = train_end_ts
     model.best_params = best_params
     model.fit_params = fit_params
     model.label_encoder = label_encoder
@@ -860,6 +864,7 @@ def _train_final_model(
     symbol: str,
     timeframe: str,
     label_encoder: LabelEncoder | None = None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, dict[str, float]]:
     """Entrena el modelo final con mejores hiperparámetros y guarda en disk."""
     models_dir = os.path.join(project_root, "models")
@@ -870,13 +875,13 @@ def _train_final_model(
         model, model_filename, y_pred = _train_neural_final(
             model_type, best_params, X, y, X_test,
             feature_cols, strategy_name, warmup_candles,
-            models_dir, timeframe, symbol, label_encoder,
+            models_dir, timeframe, symbol, label_encoder, train_end_ts,
         )
     else:
         model, model_filename, y_pred = _train_sklearn_final(
             model_type, best_params, X, y, X_test,
             feature_cols, strategy_name, warmup_candles,
-            models_dir, timeframe, symbol, label_encoder,
+            models_dir, timeframe, symbol, label_encoder, train_end_ts,
         )
 
     logger.info("Modelo final guardado en: %s/%s", models_dir, model_filename)
@@ -1287,6 +1292,7 @@ def main() -> None:
             symbol=symbol,
             timeframe=timeframe,
             label_encoder=label_encoder,
+            train_end_ts=int(timestamps_train[-1]),
         )
 
         logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
