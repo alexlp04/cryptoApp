@@ -66,3 +66,28 @@ def test_prediccion_binaria_aplica_umbrales(prob, esperado):
     model = _FakeKerasModel(np.array([[prob]], dtype="float32"))
 
     assert _predict_deep_learning(model, None, "neural_network", "BTCUSDT", None) == esperado
+
+
+# ── ml_standard decodifica las clases codificadas (#59) ─────────────────────
+
+class _FakeSklearnModel:
+    """Modelo entrenado sobre etiquetas codificadas 0,1,2 (originales -1,0,1)."""
+    classes_ = [0, 1, 2]
+
+    def __init__(self, encoded_pred: int, probs):
+        self._pred = encoded_pred
+        self._probs = probs
+
+    def predict(self, x):
+        return [self._pred]
+
+    def predict_proba(self, x):
+        return [self._probs]
+
+
+@pytest.mark.parametrize("encoded, esperado", [(0, "SELL"), (1, None), (2, "BUY")])
+def test_ml_standard_decodifica_clases_codificadas(encoded, esperado):
+    from engine_ai_rt import _predict_ml_standard
+
+    model = _FakeSklearnModel(encoded, [0.2, 0.3, 0.5])
+    assert _predict_ml_standard(model, None, "xgb", "BTCUSDT", [-1, 0, 1]) == esperado

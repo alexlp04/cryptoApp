@@ -166,10 +166,21 @@ def _prepare_feature_row(
     return ultima_fila.to_numpy(dtype="float32", copy=False)
 
 
-def _predict_ml_standard(model, x_pred, model_name: str, symbol: str) -> str | None:
-    """Ejecuta predicción con modelos sklearn/XGBoost/LightGBM y devuelve la acción."""
-    prediccion = model.predict(x_pred)[0]
-    clases_modelo = list(getattr(model, "classes_", []))
+def _decode(value, label_classes: list[int] | None):
+    """Pasa una clase codificada (0..n-1) del modelo al espacio original (-1/0/1)."""
+    return int(label_classes[int(value)]) if label_classes is not None else value
+
+
+def _predict_ml_standard(
+    model, x_pred, model_name: str, symbol: str, label_classes: list[int] | None = None,
+) -> str | None:
+    """Ejecuta predicción con modelos sklearn/XGBoost/LightGBM y devuelve la acción.
+
+    El modelo se entrena con etiquetas codificadas (LabelEncoder); label_classes las devuelve
+    al espacio original antes de decidir. Sin label_classes se asume que ya lo están.
+    """
+    prediccion = _decode(model.predict(x_pred)[0], label_classes)
+    clases_modelo = [_decode(c, label_classes) for c in getattr(model, "classes_", [])]
     try:
         probabilidades = model.predict_proba(x_pred)[0]
         prob_por_clase = (
@@ -343,7 +354,7 @@ async def run_symbol(
                         continue
 
                     if model_type == "ml_standard":
-                        action = _predict_ml_standard(model, x_pred, model_name, symbol)
+                        action = _predict_ml_standard(model, x_pred, model_name, symbol, label_classes)
                     elif model_type == "deep_learning":
                         action = _predict_deep_learning(model, x_pred, model_name, symbol, label_classes)
                     else:
