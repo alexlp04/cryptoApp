@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 import com.bottrading.backtesting.application.port.in.ExecuteBacktestUseCase;
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.commands.BacktestCommand;
-import com.bottrading.interfaces.cli.commands.CbiCommand;
 import com.bottrading.interfaces.cli.commands.CliCommand;
 import com.bottrading.interfaces.cli.commands.CreatePaperWalletCommand;
 import com.bottrading.interfaces.cli.commands.FetchCommand;
@@ -124,7 +123,6 @@ public class AppBot implements CommandLineRunner {
         registerCommand(ListStrategiesByStateCommand.detenidas());
         registerCommand(ListStrategiesByStateCommand.terminadas());
         registerCommand(new ModelsCommand());
-        registerCommand(new CbiCommand());
     }
 
     private void registerCommand(CliCommand command) {

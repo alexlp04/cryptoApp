@@ -12,7 +12,6 @@ import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_OPTIMIZE;
 import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_RT;
 import static com.bottrading.shared.utils.AppConstants.FILE_ENGINE_TRAIN;
 import static com.bottrading.shared.utils.AppConstants.FILE_FETCHER;
-import static com.bottrading.shared.utils.AppConstants.FILE_INDICATORS;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -61,7 +60,6 @@ public final class PathConfig {
     public static final String ENGINE_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_RT);
     public static final String ENGINE_BACKTEST_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_BACKTEST);
     public static final String FETCHER_PATH = resolvePath("code", DIR_SCRIPTS, FILE_FETCHER);
-    public static final String INDICATORS_PATH = resolvePath("code", DIR_SCRIPTS, FILE_INDICATORS);
     public static final String ENGINE_TRAIN_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_TRAIN);
     public static final String ENGINE_OPTIMIZE_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_OPTIMIZE);
     public static final String ENGINE_AI_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_AI_RT);

@@ -22,7 +22,6 @@ public final class HelpCommand implements CliCommand {
                  [WALLETS]  mkpwallet <nombre>, lw
                  [DATOS]    fetch -tf <tf> -coins <coin1> [coin2...] [-d <dias>]
                             fetch <coin> <tf> [-d <dias>] [--detect-gaps]
-                            cbi -tf <tf> -coins <coin>   (calcular indicadores)
                  [IA]       train -model <modelo> -tf <tf> -coins <coin> [-strategy <nombre>] [-d <dias>] [-params k=v,...]
                             optimize -model <modelo> -tf <tf> -coins <coin> [-strategy <nombre>] [-d <dias>]
                                      [-min-composite <1-100>] [-n-trials <n>] [-cv-folds <2-20>]

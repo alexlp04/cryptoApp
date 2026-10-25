@@ -24,7 +24,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
-import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.VelaDTO;
@@ -60,7 +59,6 @@ public class FetchService implements FetchMarketDataUseCase {
     private final Gson gson = new Gson();
 
     private final VelaRepositoryPort velaRepo;
-    private final IndicadorRepositoryPort indicadorRepo;
     private final JdbcTemplate jdbcTemplate;
     private final PythonBridgeFacade pythonBridgeFacade;
 
@@ -78,11 +76,9 @@ public class FetchService implements FetchMarketDataUseCase {
             }
 
         public FetchService(VelaRepositoryPort velaRepo,
-            IndicadorRepositoryPort indicadorRepo,
             JdbcTemplate jdbcTemplate,
             PythonBridgeFacade pythonBridgeFacade) {
         this.velaRepo = velaRepo;
-        this.indicadorRepo = indicadorRepo;
         this.jdbcTemplate = jdbcTemplate;
         this.pythonBridgeFacade = pythonBridgeFacade;
     }
@@ -149,7 +145,6 @@ public class FetchService implements FetchMarketDataUseCase {
                 .orElseGet(() -> velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval));
 
         if (deletionAnchor != null) {
-            indicadorRepo.deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
             velaRepo.deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(symbol, interval, deletionAnchor);
         }
 

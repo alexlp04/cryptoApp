@@ -52,4 +52,15 @@ class SchemaMigrationValidationTest {
         assertTrue(aplicadas != null && aplicadas >= 1,
                 "No hay migraciones aplicadas en flyway_schema_history");
     }
+
+    @Test
+    @DisplayName("La tabla del pipeline de indicadores ya no existe (#88)")
+    void tablaDeIndicadoresEliminada() {
+        Integer existe = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = SCHEMA() AND LOWER(table_name) = 'indicador_tecnico'",
+                Integer.class);
+
+        assertTrue(existe != null && existe == 0, "indicador_tecnico debería haberse eliminado");
+    }
 }
