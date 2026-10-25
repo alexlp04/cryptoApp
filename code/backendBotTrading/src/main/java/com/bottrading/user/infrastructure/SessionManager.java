@@ -13,7 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 public class SessionManager {
 
-    private Usuario currentUser;
+    private volatile Usuario currentUser;
 
 
     public void login(Usuario usuario) {

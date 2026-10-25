@@ -131,7 +131,7 @@ public class SignalRetryQueueService {
                 resetFailureCount(instanciaId);
                 log.info("Señal de reintento procesada: {} {}", signal.getAction(), signal.getSymbol());
             } catch (Exception e) {
-                log.warn("⚠️ Reintento fallido, volviendo a encolar: {} - Error: {}", 
+                log.warn("Reintento fallido, volviendo a encolar: {} - Error: {}", 
                         signal.getSymbol(), e.getMessage());
                 cola.offer(signal);  // Reintentar más tarde
             }

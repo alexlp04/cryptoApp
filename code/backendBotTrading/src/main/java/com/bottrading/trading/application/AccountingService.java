@@ -81,35 +81,6 @@ public class AccountingService implements AccountingUseCase {
     }
 
     /**
-     * Pausa temporalmente una estrategia SIN liberar el capital reservado.
-     * El capital permanece congelado pero la estrategia puede reanudarse.
-     * 
-     * NOTA: El capital permanece bloqueado. Si necesitas recuperarlo, usa closeStrategy().
-     *
-     * @param walletId ID de la wallet asociada.
-     * @param estrategiaId ID de la estrategia.
-     */
-    @Override
-    public void pauseStrategyTemporarily(Long walletId, Long estrategiaId) {
-        InstanciaEstrategia e = estrategiaRepo.findByIdWithLock(estrategiaId)
-                .orElseThrow(() -> new ValidationException("Estrategia no encontrada: " + estrategiaId));
-        e.setEstado(EstadoEstrategia.DETENIDA);
-        
-        // Registrar en Ledger la pausa (sin movimiento de dinero, solo meta dato)
-        LedgerEntry le = new LedgerEntry();
-        le.setWalletId(walletId);
-        le.setEstrategiaId(e.getId());
-        le.setType(LedgerType.STRATEGY_PAUSED);
-        le.setAmount(BigDecimal.ZERO);
-        le.setBalanceAfter(e.getCapitalReservado());
-        le.setTimestamp(Instant.now());
-        ledgerRepo.save(le);
-        
-        estrategiaRepo.save(e);
-        log.info("Estrategia {} pausada temporalmente (capital congelado)", estrategiaId);
-    }
-
-    /**
      * Finaliza una estrategia y devuelve el capital remanente a la Wallet.
      * Cambia el estado a FINALIZADA.
      *

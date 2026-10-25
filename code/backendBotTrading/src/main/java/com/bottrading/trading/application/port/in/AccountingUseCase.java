@@ -11,7 +11,6 @@ public interface AccountingUseCase {
 
     InstanciaEstrategia activateStrategy(long walletId, long estrategiaId, BigDecimal capital);
 
-    void pauseStrategyTemporarily(Long walletId, Long estrategiaId);
 
     void closeStrategy(Long walletId, Long estrategiaId);
 

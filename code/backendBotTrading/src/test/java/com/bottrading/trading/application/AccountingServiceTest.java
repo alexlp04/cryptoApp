@@ -181,48 +181,6 @@ class AccountingServiceTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // pauseStrategyTemporarily()
-    // ─────────────────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("pauseStrategyTemporarily() — Pausa sin liberar capital")
-    class PauseStrategyTests {
-
-        @Test
-        @DisplayName("✓ Debe cambiar estado a DETENIDA y guardar ledger de evento")
-        void should_set_detenida_and_save_ledger() {
-            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("200"), BigDecimal.ZERO, BigDecimal.ZERO);
-            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
-
-            accountingService.pauseStrategyTemporarily(1L, 10L);
-
-            assertThat(e.getEstado(), is(EstadoEstrategia.DETENIDA));
-            verify(ledgerRepo, times(1)).save(any(LedgerEntry.class));
-            verify(estrategiaRepo, times(1)).save(e);
-        }
-
-        @Test
-        @DisplayName("✓ Debe lanzar ValidationException cuando la estrategia no existe")
-        void should_throw_when_strategy_not_found() {
-            doReturn(Optional.empty()).when(estrategiaRepo).findByIdWithLock(anyLong());
-
-            assertThrows(ValidationException.class,
-                    () -> accountingService.pauseStrategyTemporarily(1L, 99L));
-        }
-
-        @Test
-        @DisplayName("✓ No debe modificar el capital reservado (solo congela)")
-        void should_not_modify_reserved_capital() {
-            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("300"), BigDecimal.ZERO, BigDecimal.ZERO);
-            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
-
-            accountingService.pauseStrategyTemporarily(1L, 10L);
-
-            assertThat(e.getCapitalReservado(), is(new BigDecimal("300")));
-            verify(walletRepo, never()).save(any());
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // closeStrategy()
     // ─────────────────────────────────────────────────────────────────────────
     @Nested
