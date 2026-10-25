@@ -52,8 +52,8 @@ def strategy_levels(strategy, entry_price: float, row) -> tuple[float, float] | 
     try:
         stop = float(strategy.get_stop_loss(entry_price, row))
         take_profit = float(strategy.get_take_profit(entry_price, row))
-    except (AttributeError, TypeError, ValueError):
-        return None
+    except (AttributeError, TypeError, ValueError, KeyError, IndexError):
+        return None  # incluye una columna de indicador que la fila no trae
     return (stop, take_profit) if valid_stop(entry_price, stop) else None
 
 
