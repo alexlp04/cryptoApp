@@ -172,6 +172,10 @@ def _request_with_backoff(
                     data.get("code"), data.get("msg"))
                 return None
 
+            if not isinstance(data, list):
+                logger.error("Respuesta inesperada de Binance (se esperaba una lista): %s", type(data).__name__)
+                return None
+
             return data
 
         except requests.exceptions.RequestException as exc:

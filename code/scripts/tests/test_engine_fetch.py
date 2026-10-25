@@ -183,3 +183,9 @@ def test_since_anterior_al_listado_se_recorta_al_listado(monkeypatch):
     engine_fetch.fetch("BTCUSDT", "1m", None)
 
     assert desde == [5_000, 9_000, 5_000]
+
+
+def test_respuesta_200_que_no_es_una_lista_se_trata_como_error(monkeypatch):
+    monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: _FakeResp(200, {"inesperado": 1}))
+
+    assert engine_fetch._request_with_backoff({"symbol": "X"}) is None
