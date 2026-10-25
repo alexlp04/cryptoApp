@@ -549,6 +549,35 @@ class FetchServiceTest {
             verify(spy, times(3)).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
         }
 
+        @Test
+        @DisplayName("✓ La cobertura guardada en la BBDD sobrevive a un reinicio: no se vuelve a descargar (#116)")
+        void coverage_persisted_in_db_survives_restart() throws PythonBridgeExecutionException {
+            long now = System.currentTimeMillis();
+            int dias = 30;
+            long windowStart = now - dias * 24L * 60 * 60 * 1000L;
+            long lastTimestamp = now - (INTERVAL_MILLIS / 2);
+            long primera = windowStart + 10 * INTERVAL_MILLIS;
+            // instancia nueva = caché vacía, como tras reiniciar la aplicación
+            FetchService reiniciado = new FetchService(velaRepo, jdbcTemplate, pythonBridgeFacade);
+            doReturn(windowStart).when(jdbcTemplate).query(anyString(),
+                    org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.ResultSetExtractor<Long>>any(),
+                    eq(SYMBOL), eq(INTERVAL));
+
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> cs = mockStatic(ConsoleLoader.class)) {
+                cs.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                doReturn(lastTimestamp).when(velaRepo).findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL);
+                doReturn(primera).when(velaRepo).findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                        anyString(), anyString(), anyLong(), anyLong());
+                doReturn(null).when(velaRepo).findFirstInternalGapOpenTime(
+                        anyString(), anyString(), anyLong(), anyLong(), anyLong());
+
+                reiniciado.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+
+                verify(pythonBridgeFacade, never()).execute(any(PythonBridgeRequest.class));
+            }
+        }
+
         @SuppressWarnings("unchecked")
         private java.net.http.HttpResponse<String> respuesta(int status, String retryAfter, String body) {
             java.net.http.HttpResponse<String> r = mock(java.net.http.HttpResponse.class);

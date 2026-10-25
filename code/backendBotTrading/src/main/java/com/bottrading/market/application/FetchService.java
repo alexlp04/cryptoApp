@@ -21,7 +21,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
@@ -349,9 +351,8 @@ public class FetchService implements FetchMarketDataUseCase {
     }
 
     /**
-     * Menor instante desde el que se ha descargado con éxito por (símbolo, timeframe).
-     * shortcut: solo en memoria (se pierde al reiniciar y cuesta una descarga por ejecución de la app);
-     * subir a una tabla de cobertura si el coste de esa primera descarga molesta.
+     * Menor instante desde el que se ha descargado con éxito por (símbolo, timeframe). Vive en la
+     * tabla cobertura_velas; el mapa es una caché para no consultarla en cada llamada.
      */
     private final Map<String, Long> cubiertoDesde = new ConcurrentHashMap<>();
 
@@ -361,7 +362,28 @@ public class FetchService implements FetchMarketDataUseCase {
 
     private boolean yaCubierto(String symbol, String interval, long desde) {
         Long cubierto = cubiertoDesde.get(clave(symbol, interval));
+        if (cubierto == null) {
+            cubierto = jdbcTemplate.query(
+                    "SELECT cubierto_desde FROM cobertura_velas WHERE symbol = ? AND time_interval = ?",
+                    (ResultSetExtractor<Long>) rs -> rs.next() ? rs.getLong(1) : null, symbol, interval);
+            if (cubierto != null) {
+                cubiertoDesde.put(clave(symbol, interval), cubierto);
+            }
+        }
         return cubierto != null && desde >= cubierto;
+    }
+
+    private void marcarCubierto(String symbol, String interval, long desde) {
+        cubiertoDesde.merge(clave(symbol, interval), desde, Math::min);
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO cobertura_velas (symbol, time_interval, cubierto_desde) VALUES (?, ?, ?) "
+                            + "ON DUPLICATE KEY UPDATE cubierto_desde = LEAST(cubierto_desde, VALUES(cubierto_desde))",
+                    symbol, interval, desde);
+        } catch (DataAccessException e) {
+            // La caché ya lo recuerda en esta ejecución; solo se pierde la memoria entre ejecuciones.
+            log.warn("No se pudo guardar la cobertura de {} [{}]: {}", symbol, interval, e.getMessage());
+        }
     }
 
     /**
@@ -372,7 +394,7 @@ public class FetchService implements FetchMarketDataUseCase {
         try {
             ejecutarIntentoFetch(symbol, interval, fromTimestamp);
             // null = descarga completa desde el listado
-            cubiertoDesde.merge(clave(symbol, interval), fromTimestamp == null ? 0L : fromTimestamp, Math::min);
+            marcarCubierto(symbol, interval, fromTimestamp == null ? 0L : fromTimestamp);
         } catch (Exception e) {
             throw new DataFetchException("Data synchronization failed", e);
         }
