@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pandas as pd
 import requests
@@ -60,18 +60,6 @@ INTERVAL_MS = {
     "3d": 259_200_000,
     "1w": 604_800_000,
     "1M": 2_592_000_000,
-}
-
-UPDATE_THRESHOLD = {
-    "1m": timedelta(minutes=1),
-    "5m": timedelta(minutes=5),
-    "15m": timedelta(minutes=15),
-    "30m": timedelta(minutes=30),
-    "1h": timedelta(hours=1),
-    "4h": timedelta(hours=4),
-    "1d": timedelta(days=1),
-    "1w": timedelta(weeks=1),
-    "1M": timedelta(days=30),
 }
 
 def _parse_candle(candle: list, symbol: str, timeframe: str) -> dict:

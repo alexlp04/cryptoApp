@@ -258,3 +258,23 @@ def test_predict_labels_binario_usa_umbral():
     from engine_optimize import _predict_labels
 
     assert _predict_labels(_FakeKeras([[0.9], [0.2]]), None).tolist() == [1, 0]
+
+
+def test_el_cv_deja_un_hueco_de_una_vela_entre_train_y_validacion(monkeypatch):
+    eo, objective, _ = _objective_fixture(monkeypatch)
+    tamanos = []
+
+    class _Modelo:
+        def predict(self, x):
+            return np.zeros(len(x), dtype=int)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        tamanos.append(len(x))
+        return _Modelo()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=1, catch=(Exception,))
+
+    # n=120, 3 folds → sin gap los trains medirían 30/60/90; con gap=1: 29/59/89
+    assert tamanos[:3] == [29, 59, 89]

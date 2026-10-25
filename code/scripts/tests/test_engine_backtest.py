@@ -95,3 +95,53 @@ def test_main_reporta_error_si_falta_strategy_path(monkeypatch):
         engine_backtest.main()
 
     assert "strategy_path" in errores[0]
+
+
+# ── Decodificación binaria y datos corruptos (#101) ─────────────────────────
+
+class _FakeNet:
+    def __init__(self, raw):
+        self._raw = np.asarray(raw)
+
+    def predict(self, x, verbose=0):
+        return self._raw
+
+
+def test_softmax_binario_sin_label_classes_puede_predecir_compra():
+    # antes: 2 columnas → índice - 1 → {-1, 0}: nunca había una compra (1)
+    probs = [[0.2, 0.8], [0.9, 0.1]]
+
+    preds = engine_backtest._generar_predicciones(_FakeNet(probs), "deep_learning", _Strategy(), _df(2), None)
+
+    assert preds.tolist() == [1, 0]
+
+
+def test_sigmoide_con_banda_neutra_no_genera_valores_basura():
+    probs = [[0.9], [0.5], [0.1]]
+
+    preds = engine_backtest._generar_predicciones(_FakeNet(probs), "deep_learning", _Strategy(), _df(3), None)
+
+    assert preds.tolist() == [1, 0, 0]  # 0.5 cae en la banda neutra: no entrar (antes -100)
+
+
+def test_velas_con_close_cero_se_descartan_en_vez_de_dividir_por_cero(monkeypatch, tmp_path):
+    class BuyAll(_Strategy):
+        def should_buy(self, row):
+            return True
+
+        def should_sell(self, row):
+            return False
+
+    velas = {"BTCUSDT": [
+        {"timestamp": i * 1000, "open": 1, "high": 1, "low": 1, "close": 0 if i == 2 else 100 + i, "volume": 1}
+        for i in range(8)]}
+    payload = {"strategy_path": "x.py", "strategy_name": "S", "timeframe": "1h", "velas": velas}
+    responses: list = []
+    monkeypatch.setattr(engine_backtest, "read_request_payload", lambda: payload)
+    monkeypatch.setattr(engine_backtest, "load_strategy_by_path", lambda *a, **k: BuyAll())
+    monkeypatch.setattr(engine_backtest, "crear_carpeta_estrategia", lambda name: str(tmp_path))
+    monkeypatch.setattr(engine_backtest, "write_response", lambda t, body: responses.append(body))
+
+    engine_backtest.main()  # antes: ZeroDivisionError y SystemExit(1)
+
+    assert responses[0]["status"] == "success"

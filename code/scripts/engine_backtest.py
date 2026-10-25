@@ -64,9 +64,10 @@ def _generar_predicciones(
             encoded_preds = np.clip(encoded_preds, 0, len(lc) - 1)
             preds = lc[encoded_preds]
         else:
-            # Sin metadata: asumir 3 clases {0→-1, 1→0, 2→1}
+            # Sin metadata: 3 clases {0→-1, 1→0, 2→1}; con 2 (sigmoide o softmax binario) ya son 0/1
+            # y la banda neutra de la sigmoide (-99) significa "no entrar".
             n_cls = raw.shape[1] if raw.ndim == 2 else 2
-            preds = encoded_preds - (n_cls // 2)
+            preds = np.maximum(encoded_preds, 0) if n_cls <= 2 else encoded_preds - (n_cls // 2)
 
     else:
         encoded_preds = model.predict(x).astype(int)
@@ -158,6 +159,7 @@ def main() -> None:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
             df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
             df = df.dropna(subset=["close", "timestamp"])
+            df = df[df["close"] > 0]  # close == 0 (dato corrupto) divide por cero al calcular el tamaño de posición
             # Mismo orden que en entrenamiento: pct_change/ewm/rolling dependen de él.
             df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
             if df.empty:
