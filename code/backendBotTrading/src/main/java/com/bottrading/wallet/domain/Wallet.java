@@ -19,10 +19,10 @@ public class Wallet extends BaseEntity {
     @Column(name = "usuario_id", nullable = false)
     private Long usuarioId;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 18, scale = 8)
     private BigDecimal balanceReal; // dinero real en broker
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 18, scale = 8)
     private BigDecimal balanceDisponible; // AVAILABLE
 
     @Enumerated(EnumType.STRING)

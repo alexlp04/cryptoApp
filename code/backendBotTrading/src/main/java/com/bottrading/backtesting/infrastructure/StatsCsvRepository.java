@@ -168,7 +168,9 @@ public class StatsCsvRepository {
             String timeframe) throws IOException {
         List<String> lineas = cargarLineasExistentes(filePath, currentSymbol, timeframe);
 
-        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath,
+        // Se escribe en un temporal y se renombra: un corte a mitad ya no pierde todo el results.csv.
+        Path tmp = filePath.resolveSibling(filePath.getFileName() + ".tmp");
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(tmp,
                 StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))) {
 
             for (String line : lineas) {
@@ -192,6 +194,8 @@ public class StatsCsvRepository {
                     SafeParser.toString(stats.get(AppConstants.KEY_FECHA_FIN), ""),
                     SafeParser.toString(stats.get(AppConstants.KEY_RESULTADO), ""));
         }
+        Files.move(tmp, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     }
 
     /** Número sin notación científica (Double.toString da 1.23456789E7 desde 10^7). */
