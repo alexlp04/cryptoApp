@@ -24,17 +24,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 app
 
-# Dependencias Python: las de requirements.txt sin las herramientas de desarrollo. TensorFlow solo si se pide
-# (TENSORFLOW_SPEC="tensorflow==2.20.0"): no hay rueda de la 2.21.0 para arm64, y los modelos Keras exigen la misma
-# versión mayor.menor con la que se entrenaron. Sin él cargan los modelos de scikit-learn, XGBoost y LightGBM.
-ARG TENSORFLOW_SPEC=""
-COPY requirements.txt /tmp/requirements.txt
-RUN grep -vE '^\s*(#|$)' /tmp/requirements.txt | sed 's/ *#.*//' \
-      | grep -vE '^(pytest|pytest-cov|hypothesis|ruff|mypy|optuna-dashboard|tensorflow)==' > /tmp/runtime.txt \
-    && python -m venv /opt/venv \
-    && pip install --no-cache-dir -r /tmp/runtime.txt \
-    && if [ -n "$TENSORFLOW_SPEC" ]; then pip install --no-cache-dir "$TENSORFLOW_SPEC"; fi \
-    && rm -f /tmp/requirements.txt /tmp/runtime.txt
+# Dependencias Python: las de deploy/requirements.lock (generado desde requirements.txt con deploy/lock-requirements.sh),
+# con hashes de todas las ruedas: la instalación es reproducible y verifica lo que descarga. Solo ruedas, para no
+# ejecutar scripts de instalación; la excepción es `ta`, que solo se publica como código fuente.
+# TensorFlow no va en la imagen: no hay rueda de la versión fijada (2.21.0) para arm64, así que los modelos Keras no
+# se cargan en ella por ahora; cargan los de scikit-learn, XGBoost y LightGBM.
+COPY deploy/requirements.lock /tmp/requirements.lock
+RUN python -m venv /opt/venv \
+    && pip install --no-cache-dir --require-hashes --only-binary :all: --no-binary ta -r /tmp/requirements.lock \
+    && rm -f /tmp/requirements.lock
 
 # Disposición que PathConfig espera: code/backendBotTrading existe (marca la raíz del proyecto), con scripts y
 # estrategias al lado; models, results y logs son volúmenes.

@@ -81,8 +81,10 @@ El intérprete se resuelve según el SO (`AppConstants.resolveDefaultPythonExecu
 `deploy/` tiene la imagen única (Java + motores Python), el `docker-compose.yml` con MySQL 8 y la guía
 (`deploy/README.md`). Decisiones que no deben deshacerse: ningún puerto publicado; la app usa un usuario de MySQL con
 permisos solo sobre `bottradingdb`; la clave de firma de modelos entra como secreto de Docker; los modelos son un
-volumen (se entrenan en el PC) y las estrategias van dentro de la imagen; TensorFlow es opcional
-(`PythonEnvironmentValidator` solo avisa si falta) porque no hay rueda de la versión fijada para arm64. Probado en x86
+volumen (se entrenan en el PC) y las estrategias van dentro de la imagen; las dependencias Python se instalan de
+`deploy/requirements.lock` (con hashes, solo ruedas; se regenera con `deploy/lock-requirements.sh` y un test vigila que
+siga a `requirements.txt`). TensorFlow no va en la imagen (no hay rueda de la versión fijada para arm64) y
+`PythonEnvironmentValidator` solo avisa si falta. Probado en x86
 con la pila completa (Flyway V13, registro, login, `fetch` por el motor Python, parada y reinicio con datos);
 arm64 no se ha podido ejecutar todavía.
 
