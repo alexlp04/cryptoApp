@@ -1,13 +1,17 @@
 package com.bottrading.user.application;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
@@ -41,5 +45,59 @@ class UsuarioApplicationServiceTest {
         ValidationException e = assertThrows(ValidationException.class, () -> service.create("alex", "s3creta!"));
 
         assertTrue(e.getMessage().contains("en uso"));
+    }
+
+    private Usuario conPassword(String password) {
+        Usuario u = new Usuario("alex", com.bottrading.shared.utils.HashUtils.hashPassword(password));
+        when(repo.findByNombreAndEliminadoFalse("alex")).thenReturn(Optional.of(u));
+        return u;
+    }
+
+    @Test
+    @DisplayName("Cinco fallos seguidos bloquean la cuenta y la contraseña correcta deja de valer (#107)")
+    void five_failures_lock_the_account() {
+        Usuario u = conPassword("s3creta!");
+
+        for (int i = 0; i < Usuario.MAX_INTENTOS; i++) {
+            assertFalse(service.validarCredenciales("alex", "mala"));
+        }
+
+        assertTrue(u.estaBloqueado(Instant.now()));
+        ValidationException e = assertThrows(ValidationException.class,
+                () -> service.validarCredenciales("alex", "s3creta!"));
+        assertTrue(e.getMessage().contains("bloqueada"));
+        verify(repo, times(Usuario.MAX_INTENTOS)).save(u);
+    }
+
+    @Test
+    @DisplayName("Un acierto antes del límite reinicia el contador")
+    void success_resets_the_counter() {
+        Usuario u = conPassword("s3creta!");
+
+        service.validarCredenciales("alex", "mala");
+        service.validarCredenciales("alex", "mala");
+        assertEquals(2, u.getIntentosFallidos());
+        assertTrue(service.validarCredenciales("alex", "s3creta!"));
+
+        assertEquals(0, u.getIntentosFallidos());
+    }
+
+    @Test
+    @DisplayName("Pasado el tiempo de bloqueo se puede entrar de nuevo")
+    void lock_expires() {
+        Usuario u = conPassword("s3creta!");
+        u.restaurarBloqueo(0, Instant.now().minusSeconds(1));
+
+        assertTrue(service.validarCredenciales("alex", "s3creta!"));
+        assertEquals(null, u.getBloqueadoHasta());
+    }
+
+    @Test
+    @DisplayName("Un usuario inexistente devuelve false sin guardar nada")
+    void unknown_user_is_rejected() {
+        when(repo.findByNombreAndEliminadoFalse("nadie")).thenReturn(Optional.empty());
+
+        assertFalse(service.validarCredenciales("nadie", "x"));
+        verify(repo, never()).save(any());
     }
 }

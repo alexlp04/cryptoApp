@@ -1,6 +1,8 @@
 package com.bottrading.user.domain;
 
 import com.bottrading.shared.domain.BaseEntity;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 
 /**
@@ -18,6 +20,13 @@ public class Usuario extends BaseEntity {
 
     private final String nombre;
     private final String passwordHash;
+
+    /** Fallos de login seguidos que bloquean la cuenta. */
+    public static final int MAX_INTENTOS = 5;
+    public static final Duration DURACION_BLOQUEO = Duration.ofMinutes(15);
+
+    private int intentosFallidos;
+    private Instant bloqueadoHasta;
 
     /**
      * Crea un usuario con validaciones.
@@ -53,7 +62,39 @@ public class Usuario extends BaseEntity {
         return passwordHash;
     }
 
+    public int getIntentosFallidos() {
+        return intentosFallidos;
+    }
+
+    public Instant getBloqueadoHasta() {
+        return bloqueadoHasta;
+    }
+
+    /** Restaura el estado de bloqueo leído de la BBDD. */
+    public void restaurarBloqueo(int intentosFallidos, Instant bloqueadoHasta) {
+        this.intentosFallidos = intentosFallidos;
+        this.bloqueadoHasta = bloqueadoHasta;
+    }
+
     // COMPORTAMIENTO DE DOMINIO
+    public boolean estaBloqueado(Instant ahora) {
+        return bloqueadoHasta != null && ahora.isBefore(bloqueadoHasta);
+    }
+
+    /** Cuenta un fallo; al llegar a {@link #MAX_INTENTOS} bloquea la cuenta y vuelve a contar desde cero. */
+    public void registrarFallo(Instant ahora) {
+        intentosFallidos++;
+        if (intentosFallidos >= MAX_INTENTOS) {
+            bloqueadoHasta = ahora.plus(DURACION_BLOQUEO);
+            intentosFallidos = 0;
+        }
+    }
+
+    public void registrarAcierto() {
+        intentosFallidos = 0;
+        bloqueadoHasta = null;
+    }
+
     /**
      * Verifica si esta entidad tienen roles suficientes.
      * Puede expandirse con lógica de autorización más compleja.

@@ -1,6 +1,8 @@
 package com.bottrading.user.infrastructure.persistence;
 
 import com.bottrading.shared.domain.BaseEntity;
+import java.time.Instant;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
@@ -24,6 +26,12 @@ public class UsuarioJpaEntity extends BaseEntity {
     @Column(nullable = false)
     private String passwordHash;
 
+    @Column(name = "intentos_fallidos", nullable = false)
+    private int intentosFallidos;
+
+    @Column(name = "bloqueado_hasta")
+    private Instant bloqueadoHasta;
+
     protected UsuarioJpaEntity() {
         super();
     }
@@ -40,6 +48,22 @@ public class UsuarioJpaEntity extends BaseEntity {
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public int getIntentosFallidos() {
+        return intentosFallidos;
+    }
+
+    public void setIntentosFallidos(int intentosFallidos) {
+        this.intentosFallidos = intentosFallidos;
+    }
+
+    public Instant getBloqueadoHasta() {
+        return bloqueadoHasta;
+    }
+
+    public void setBloqueadoHasta(Instant bloqueadoHasta) {
+        this.bloqueadoHasta = bloqueadoHasta;
     }
 
     public String getNombre() {

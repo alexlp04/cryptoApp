@@ -31,6 +31,7 @@ public class UsuarioMapper {
         usuario.setId(jpaEntity.getId());
         usuario.setFechaCreacion(jpaEntity.getFechaCreacion());
         usuario.setEliminado(jpaEntity.isEliminado());
+        usuario.restaurarBloqueo(jpaEntity.getIntentosFallidos(), jpaEntity.getBloqueadoHasta());
         return usuario;
     }
 
@@ -51,6 +52,8 @@ public class UsuarioMapper {
         // Sin esto, re-guardar un usuario existente reseteaba fecha_creacion y reactivaba a uno dado de baja
         entity.setFechaCreacion(domain.getFechaCreacion());
         entity.setEliminado(domain.isEliminado());
+        entity.setIntentosFallidos(domain.getIntentosFallidos());
+        entity.setBloqueadoHasta(domain.getBloqueadoHasta());
         return entity;
     }
 }
