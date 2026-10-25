@@ -262,7 +262,7 @@ class AITrainingServiceTest {
                         () -> trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY));
 
                 verify(trainingEnginePort, never())
-                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString());
+                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt());
             }
         }
     }
@@ -375,7 +375,7 @@ class AITrainingServiceTest {
                 trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY);
 
                 verify(trainingEnginePort, never())
-                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString());
+                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt());
             }
         }
 
@@ -431,7 +431,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoFallidoTest("modelo no converge"));
 
                 assertThrows(StrategyExecutionException.class,
@@ -460,7 +460,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoFallidoTest(errorEsperado));
 
                 StrategyExecutionException ex = assertThrows(StrategyExecutionException.class,
@@ -490,13 +490,45 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY);
 
                 verify(trainingEnginePort).ejecutarEntrenamiento(
-                        eq(MODELO), anyMap(), eq(FAKE_STRATEGY_PATH), anyMap(), eq(TIMEFRAME));
+                        eq(MODELO), anyMap(), eq(FAKE_STRATEGY_PATH), anyMap(), eq(TIMEFRAME), anyInt());
+            }
+        }
+
+        @Test
+        @DisplayName("✓ Debe propagar warmup_candles al engine (si no, entrena con indicadores a medio formar)")
+        void should_forward_warmup_candles_to_engine() {
+            ConsoleLoader loader = crearLoaderMock();
+            try (MockedStatic<ConsoleLoader> cs = mockStatic(ConsoleLoader.class);
+                 MockedStatic<StrategyInspector> si = mockStatic(StrategyInspector.class);
+                 MockedStatic<PathConfig> pc = mockStatic(PathConfig.class)) {
+
+                cs.when(ConsoleLoader::getInstance).thenReturn(loader);
+                si.when(() -> StrategyInspector.getWarmupPeriod(STRATEGY))
+                        .thenReturn(FAKE_WARMUP);
+                si.when(() -> StrategyInspector.getCandlesRequired(TIMEFRAME, DIAS, FAKE_WARMUP))
+                        .thenReturn(FAKE_CANDLES);
+                pc.when(() -> PathConfig.getValidStrategyPath(STRATEGY))
+                        .thenReturn(FAKE_STRATEGY_PATH);
+
+                when(fetchMarketDataUseCase.fetchIncremental(anyString(), anyString(), anyInt(), anyLong()))
+                        .thenReturn(0L);
+                when(velaRepository.findBySymbolAndIntervalAndOpenTimeGreaterThanEqualOrderByOpenTimeAsc(
+                        anyString(), anyString(), anyLong()))
+                        .thenReturn(crearVelasTestList(100));
+                when(trainingEnginePort.ejecutarEntrenamiento(
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
+                        .thenReturn(crearResultadoExitosoTest());
+
+                trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY);
+
+                verify(trainingEnginePort).ejecutarEntrenamiento(
+                        eq(MODELO), anyMap(), eq(FAKE_STRATEGY_PATH), anyMap(), eq(TIMEFRAME), eq(FAKE_WARMUP));
             }
         }
 
@@ -520,13 +552,13 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY);
 
                 verify(trainingEnginePort).ejecutarEntrenamiento(
-                        anyString(), eq(Map.of()), anyString(), anyMap(), anyString());
+                        anyString(), eq(Map.of()), anyString(), anyMap(), anyString(), anyInt());
             }
         }
     }
@@ -555,7 +587,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 String resultado = trainingService.entrenarModelo(
@@ -585,7 +617,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(50));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 String resultado = trainingService.entrenarModelo(
@@ -617,7 +649,7 @@ class AITrainingServiceTest {
 
                 TrainingResult result = crearResultadoExitosoTest();
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(result);
 
                 String resultado = trainingService.entrenarModelo(
@@ -647,7 +679,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(50));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 String resultado = trainingService.entrenarModelo(
@@ -677,13 +709,13 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(100));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, null, STRATEGY);
 
                 verify(trainingEnginePort)
-                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString());
+                        .ejecutarEntrenamiento(anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt());
             }
         }
 
@@ -707,7 +739,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(50));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 String resultado = trainingService.entrenarModelo(
@@ -744,7 +776,7 @@ class AITrainingServiceTest {
 
                 String mensajeOriginal = "fallo controlado en engine";
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenThrow(new StrategyExecutionException(mensajeOriginal));
 
                 StrategyExecutionException ex = assertThrows(StrategyExecutionException.class,
@@ -852,13 +884,13 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(50));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 trainingService.entrenarModelo(MODELO, TIMEFRAME, SYMBOL, DIAS, hyperparams, STRATEGY);
 
                 verify(trainingEnginePort).ejecutarEntrenamiento(
-                        eq(MODELO), eq(hyperparams), anyString(), anyMap(), anyString());
+                        eq(MODELO), eq(hyperparams), anyString(), anyMap(), anyString(), anyInt());
             }
         }
 
@@ -882,7 +914,7 @@ class AITrainingServiceTest {
                         anyString(), anyString(), anyLong()))
                         .thenReturn(crearVelasTestList(50));
                 when(trainingEnginePort.ejecutarEntrenamiento(
-                        anyString(), anyMap(), anyString(), anyMap(), anyString()))
+                        anyString(), anyMap(), anyString(), anyMap(), anyString(), anyInt()))
                         .thenReturn(crearResultadoExitosoTest());
 
                 String resultado = trainingService.entrenarModelo(

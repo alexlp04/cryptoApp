@@ -3,6 +3,7 @@ package com.bottrading.backtesting.infrastructure;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +20,8 @@ import com.bottrading.shared.exceptions.FileOperationException;
 import com.bottrading.shared.utils.AppConstants;
 import com.bottrading.shared.utils.SafeParser;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.ToNumberPolicy;
 import com.google.gson.reflect.TypeToken;
 
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +36,10 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class StatsCsvRepository {
 
-    private final Gson gson = new Gson();
+    // LONG_OR_DOUBLE: con el Gson por defecto todo entero llega como Double (3 -> "3.0" en el CSV).
+    private final Gson gson = new GsonBuilder()
+            .setObjectToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE)
+            .create();
     private final CsvUtilities csvUtils;
 
     public StatsCsvRepository(CsvUtilities csvUtils) {
@@ -60,11 +66,16 @@ public class StatsCsvRepository {
             List<Map<String, Object>> statsList = gson.fromJson(statsJson,
                     new TypeToken<List<Map<String, Object>>>() {}.getType());
 
-            if (statsList != null) {
-                for (Map<String, Object> stats : statsList) {
-                    guardarStats(nombreEstrategia, timeframe, stats, true, modelName);
-                }
+            if (statsList == null || statsList.isEmpty()) {
+                // Sin esto el CLI anunciaba "resultados guardados" sin haber guardado nada.
+                throw new FileOperationException("El motor de backtest no devolvió estadísticas "
+                        + "(¿ningún símbolo con datos o modelo?)");
             }
+            for (Map<String, Object> stats : statsList) {
+                guardarStats(nombreEstrategia, timeframe, stats, true, modelName);
+            }
+        } catch (FileOperationException e) {
+            throw e;
         } catch (Exception e) {
             throw new FileOperationException("Error al procesar JSON de estadísticas: " + e.getMessage(), e);
         }
@@ -157,7 +168,9 @@ public class StatsCsvRepository {
             String timeframe) throws IOException {
         List<String> lineas = cargarLineasExistentes(filePath, currentSymbol, timeframe);
 
-        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(filePath,
+        // Se escribe en un temporal y se renombra: un corte a mitad ya no pierde todo el results.csv.
+        Path tmp = filePath.resolveSibling(filePath.getFileName() + ".tmp");
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(tmp,
                 StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))) {
 
             for (String line : lineas) {
@@ -168,19 +181,33 @@ public class StatsCsvRepository {
             pw.printf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s%n",
                     SafeParser.toString(stats.get(AppConstants.KEY_SYMBOL), ""),
                     SafeParser.toString(stats.get(AppConstants.KEY_TIMEFRAME), ""),
-                    SafeParser.toString(stats.get(AppConstants.KEY_OP_GANADAS), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_OP_PERDIDAS), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_OP_TOTALES), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_MAX_DRAWDOWN), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_ABS_DRAWDOWN), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_RET_ACUMULADO), "0"),
-                    SafeParser.toString(stats.get(AppConstants.KEY_RET_TOTAL), "0"),
-                    csvUtils.escapeCsv(SafeParser.toString(stats.get(AppConstants.KEY_WIN_RATE), "0%")),
-                    SafeParser.toString(stats.get(AppConstants.KEY_PROFIT_FACTOR), "0"),
+                    plainNumber(stats.get(AppConstants.KEY_OP_GANADAS)),
+                    plainNumber(stats.get(AppConstants.KEY_OP_PERDIDAS)),
+                    plainNumber(stats.get(AppConstants.KEY_OP_TOTALES)),
+                    plainNumber(stats.get(AppConstants.KEY_MAX_DRAWDOWN)),
+                    plainNumber(stats.get(AppConstants.KEY_ABS_DRAWDOWN)),
+                    plainNumber(stats.get(AppConstants.KEY_RET_ACUMULADO)),
+                    plainNumber(stats.get(AppConstants.KEY_RET_TOTAL)),
+                    csvUtils.escapeCsv(stats.get(AppConstants.KEY_WIN_RATE) == null ? "0%" : plainNumber(stats.get(AppConstants.KEY_WIN_RATE))),
+                    plainNumber(stats.get(AppConstants.KEY_PROFIT_FACTOR)),
                     SafeParser.toString(stats.get(AppConstants.KEY_FECHA_INICIO), ""),
                     SafeParser.toString(stats.get(AppConstants.KEY_FECHA_FIN), ""),
                     SafeParser.toString(stats.get(AppConstants.KEY_RESULTADO), ""));
         }
+        Files.move(tmp, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /** Número sin notación científica (Double.toString da 1.23456789E7 desde 10^7). */
+    static String plainNumber(Object value) {
+        if (value instanceof Double || value instanceof Float) {
+            try {
+                return BigDecimal.valueOf(((Number) value).doubleValue()).toPlainString();
+            } catch (NumberFormatException e) { // NaN / infinito
+                return String.valueOf(value);
+            }
+        }
+        return SafeParser.toString(value, "0");
     }
 
     private List<String> cargarLineasExistentes(Path filePath, String currentSymbol, String timeframe)

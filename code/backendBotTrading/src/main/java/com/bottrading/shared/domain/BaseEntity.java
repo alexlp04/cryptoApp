@@ -37,6 +37,10 @@ public abstract class BaseEntity {
         return fechaCreacion;
     }
 
+    public void setFechaCreacion(Instant fechaCreacion) {
+        this.fechaCreacion = fechaCreacion;
+    }
+
     public boolean isEliminado() {
         return eliminado;
     }

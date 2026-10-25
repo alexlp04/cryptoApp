@@ -115,29 +115,8 @@ public final class TestCommand implements CliCommand {
     private void ejecutarBacktestConValoresFijos(String[] cmdParts, CliCommandContext context) {
         context.println().accept("[test] Backtest automatico con capital=10000, riesgo=0.2.");
         try (Scanner scanner = new Scanner(BACKTEST_TEST_INPUT)) {
-            new BacktestCommand().execute(cmdParts, createContextWithScanner(context, scanner));
+            new BacktestCommand().execute(cmdParts, context.withScanner(scanner));
         }
-    }
-
-    private CliCommandContext createContextWithScanner(CliCommandContext context, Scanner scanner) {
-        return new CliCommandContext(
-                scanner,
-                context.createUsuarioUseCase(),
-                context.getUsuarioUseCase(),
-                context.authenticateUseCase(),
-                context.sessionManager(),
-                context.strategyLifecycleUseCase(),
-                context.queryStrategiesUseCase(),
-                context.strategyCatalogUseCase(),
-                context.executeBacktestUseCase(),
-                context.walletManagementUseCase(),
-                context.aiTrainingService(),
-                context.aiOptimizationService(),
-                context.marketDataService(),
-                context.fetchMarketDataService(),
-                context.fetchGapDetector(),
-                context.print(),
-                context.println());
     }
 
     private List<String[]> parsearComandos(List<String> lineas) {

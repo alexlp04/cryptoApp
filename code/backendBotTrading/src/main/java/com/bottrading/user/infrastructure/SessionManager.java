@@ -1,30 +1,19 @@
 package com.bottrading.user.infrastructure;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
 import com.bottrading.user.domain.Usuario;
 
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Gestiona el estado de la sesión del usuario y la carga de configuración de
- * entorno.
+ * Gestiona el estado de la sesión del usuario.
  */
 @Slf4j
 @Component
 public class SessionManager {
 
-    private Usuario currentUser;
-
-    private final StrategyLifecycleUseCase strategyLifecycleUseCase;
-
-    @Autowired
-    public SessionManager(StrategyLifecycleUseCase strategyLifecycleUseCase) {
-        this.strategyLifecycleUseCase = strategyLifecycleUseCase;
-    }
+    private volatile Usuario currentUser;
 
 
     public void login(Usuario usuario) {
@@ -49,13 +38,5 @@ public class SessionManager {
 
     public boolean isLoggedIn() {
         return currentUser != null;
-    }
-
-    @PreDestroy
-    public void cleanup() {
-        log.info("Cerrando todas las estrategias antes de apagar el sistema...");
-        // Delegamos la limpieza al servicio que tiene el mapa
-        strategyLifecycleUseCase.terminarTodas();
-
     }
 }

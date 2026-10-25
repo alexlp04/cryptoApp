@@ -202,55 +202,100 @@ class SignalProtocolParserTest {
     // validarSignal (via parseLineaLog) — campo symbol
     // ─────────────────────────────────────────────────────────────────────────
     @Nested
-    @DisplayName("validarSignal() — Validación de campos obligatorios")
+    @DisplayName("VALIDAR SEÑAL: una línea inválida se descarta sin matar el motor (#70)")
     class ValidarSignalTests {
 
-        @Test
-        @DisplayName("✓ Debe lanzar SignalProcessingException cuando falta el symbol")
-        void should_throw_when_symbol_is_missing() {
-            String line = "SIGNAL\t{\"action\":\"BUY\",\"price\":40000,\"timeframe\":\"1h\",\"timestamp\":1234}";
-
-            assertThrows(SignalProcessingException.class,
-                    () -> parser.parseLineaLog(line, 1L));
+        private String line(String json) {
+            return "SIGNAL\t" + json;
         }
 
         @Test
-        @DisplayName("✓ Debe lanzar SignalProcessingException cuando symbol está vacío")
-        void should_throw_when_symbol_is_empty() {
-            String line = "SIGNAL\t{\"symbol\":\"\",\"action\":\"BUY\",\"price\":40000,\"timestamp\":1234}";
-
-            assertThrows(SignalProcessingException.class,
-                    () -> parser.parseLineaLog(line, 1L));
+        @DisplayName("✓ Falta el symbol → descartada (null)")
+        void should_discard_when_symbol_is_missing() {
+            assertThat(parser.parseLineaLog(
+                    line("{\"action\":\"BUY\",\"price\":40000,\"timestamp\":1234}"), 1L), is(nullValue()));
         }
 
         @Test
-        @DisplayName("✓ Debe lanzar SignalProcessingException cuando falta la action")
-        void should_throw_when_action_is_missing() {
-            String line = "SIGNAL\t{\"symbol\":\"BTCUSDT\",\"price\":40000,\"timeframe\":\"1h\",\"timestamp\":1234}";
-
-            assertThrows(SignalProcessingException.class,
-                    () -> parser.parseLineaLog(line, 1L));
+        @DisplayName("✓ symbol vacío → descartada")
+        void should_discard_when_symbol_is_empty() {
+            assertThat(parser.parseLineaLog(line(
+                    "{\"symbol\":\"\",\"action\":\"BUY\",\"price\":40000,\"timestamp\":1234}"), 1L), is(nullValue()));
         }
 
         @Test
-        @DisplayName("✓ Debe lanzar SignalProcessingException cuando action está vacía")
-        void should_throw_when_action_is_empty() {
-            String line = "SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"\",\"price\":40000,\"timestamp\":1234}";
-
-            assertThrows(SignalProcessingException.class,
-                    () -> parser.parseLineaLog(line, 1L));
+        @DisplayName("✓ Falta o está vacía la action → descartada")
+        void should_discard_when_action_is_missing_or_empty() {
+            assertThat(parser.parseLineaLog(line(
+                    "{\"symbol\":\"BTCUSDT\",\"price\":40000,\"timestamp\":1234}"), 1L), is(nullValue()));
+            assertThat(parser.parseLineaLog(line(
+                    "{\"symbol\":\"BTCUSDT\",\"action\":\"\",\"price\":40000,\"timestamp\":1234}"), 1L),
+                    is(nullValue()));
         }
 
         @Test
-        @DisplayName("✓ Debe aceptar señal con solo symbol y action como mínimo")
-        void should_accept_signal_with_minimum_required_fields() {
-            String line = "SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\"}";
+        @DisplayName("✓ Acción desconocida → descartada")
+        void should_discard_unknown_action() {
+            assertThat(parser.parseLineaLog(line(
+                    "{\"symbol\":\"BTCUSDT\",\"action\":\"HOLD\",\"price\":40000,\"timestamp\":1234}"), 1L),
+                    is(nullValue()));
+        }
 
-            SignalDTO result = parser.parseLineaLog(line, 1L);
+        @Test
+        @DisplayName("✓ Precio ausente, 0 o negativo → descartada (posición imposible de cerrar)")
+        void should_discard_when_price_is_not_positive() {
+            for (String price : new String[] {"", ",\"price\":0", ",\"price\":-5"}) {
+                assertThat(parser.parseLineaLog(line(
+                        "{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\",\"timestamp\":1234" + price + "}"), 1L),
+                        is(nullValue()));
+            }
+        }
+
+        @Test
+        @DisplayName("✓ Timestamp ausente → descartada")
+        void should_discard_when_timestamp_is_missing() {
+            assertThat(parser.parseLineaLog(line(
+                    "{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\",\"price\":40000}"), 1L), is(nullValue()));
+        }
+
+        @Test
+        @DisplayName("✓ La acción en minúsculas se normaliza a mayúsculas")
+        void should_normalize_action_to_upper_case() {
+            SignalDTO result = parser.parseLineaLog(line(
+                    "{\"symbol\":\"BTCUSDT\",\"action\":\"buy\",\"price\":40000,\"timestamp\":1234}"), 1L);
 
             assertThat(result, is(notNullValue()));
-            assertThat(result.getSymbol(), is("BTCUSDT"));
             assertThat(result.getAction(), is("BUY"));
         }
+    }
+
+    @Test
+    @DisplayName("✓ Señal real del motor Python (is_real, source) se parsea y conserva el flag (#53 #54)")
+    void should_parse_signal_emitted_by_python_engine() {
+        String json = "{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\",\"timeframe\":\"1h\","
+                + "\"price\":\"67123.45\",\"timestamp\":1234567890,\"is_real\":true,\"source\":\"AI_XGB\"}";
+
+        SignalDTO signal = parser.parseLineaLog("SIGNAL\t" + json, 1L);
+
+        assertThat(signal, is(notNullValue()));
+        assertThat(signal.isReal(), is(true));
+        assertThat(signal.getPrice(), is(new BigDecimal("67123.45")));
+    }
+
+    @Test
+    @DisplayName("El BUY real de engine_rt (strings) y el de engine_ai_rt (números) traen stop y objetivo (#99)")
+    void should_parse_stop_and_target_from_both_python_engines() {
+        SignalDTO rt = parser.parseLineaLog("SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\","
+                + "\"timeframe\":\"1h\",\"price\":\"100.5\",\"timestamp\":1,\"is_real\":false,"
+                + "\"reason\":\"SIGNAL\",\"stop_loss\":\"95.25\",\"take_profit\":\"110.5\"}", 1L);
+        SignalDTO ai = parser.parseLineaLog("SIGNAL\t{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\","
+                + "\"timeframe\":\"1h\",\"price\":100.5,\"timestamp\":1,\"is_real\":false,"
+                + "\"source\":\"AI_XGB\",\"stop_loss\":95.25,\"take_profit\":110.5}", 1L);
+
+        for (SignalDTO dto : new SignalDTO[] {rt, ai}) {
+            assertThat(dto.getStopLoss().compareTo(new BigDecimal("95.25")), is(0));
+            assertThat(dto.getTakeProfit().compareTo(new BigDecimal("110.5")), is(0));
+        }
+        assertThat(rt.getReason(), is("SIGNAL"));
     }
 }

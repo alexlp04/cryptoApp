@@ -13,13 +13,20 @@ import importlib.util
 import inspect
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import time
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+import requests
+
+if TYPE_CHECKING:
+    # Solo para anotaciones: numpy se importa de forma diferida dentro de las
+    # funciones que lo necesitan para no encarecer el arranque de los engines.
+    import numpy as np
 
 # =============================================================================
 # RUTAS DEL PROYECTO
@@ -49,37 +56,235 @@ _GPU_RUNTIME_DISABLED_MODELS: set[str] = set()
 # SETUP DE LOGGING UNIFICADO
 # =============================================================================
 
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUPS = 3
+_HANDLER_TAG = "_cryptoapp_engine_handler"
+
+
 def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
     """
     Configura logging dual (archivo + stream) para un engine y devuelve su logger.
-    Escribe siempre a logs/{engine_name}.log.
+    Escribe a logs/{engine_name}.log con rotación (5 MB x 3).
+
+    Idempotente: una segunda llamada en el mismo proceso (p. ej. engine_backtest importa
+    engine_ai_rt) sustituye los handlers anteriores en vez de acumularlos, así que cada línea
+    sale una sola vez. Si logs/ no es escribible se degrada a solo stream en lugar de morir
+    al importar el módulo.
     """
     if stream is None:
         stream = sys.stderr
 
-    log_dir = os.path.join(PROJECT_ROOT, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    fmt_file = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    # %(process)d: varios procesos del mismo engine (una instancia de estrategia cada uno) comparten fichero
+    fmt_file = logging.Formatter("%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s")
     fmt_stream = logging.Formatter("[%(levelname)s] %(message)s")
 
-    file_handler = logging.FileHandler(
-        os.path.join(log_dir, f"{engine_name}.log"), encoding="utf-8"
-    )
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(fmt_file)
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if getattr(h, _HANDLER_TAG, False)]:
+        root.removeHandler(handler)
+        handler.close()
+    root.setLevel(logging.INFO)  # siempre: si una librería hizo basicConfig el nivel quedaba en WARNING
+
+    handlers: list[logging.Handler] = []
+    try:
+        log_dir = os.path.join(PROJECT_ROOT, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir, f"{engine_name}.log"),
+            maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8",
+        )
+        file_handler.setFormatter(fmt_file)
+        handlers.append(file_handler)
+    except OSError as exc:
+        print(f"[WARNING] Sin log en fichero ({exc}); solo stderr", file=sys.stderr)
 
     stream_handler = logging.StreamHandler(stream)
-    stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(fmt_stream)
+    handlers.append(stream_handler)
 
-    root = logging.getLogger()
-    if not root.handlers:
-        root.setLevel(logging.INFO)
-    root.addHandler(file_handler)
-    root.addHandler(stream_handler)
+    for handler in handlers:
+        handler.setLevel(logging.INFO)
+        setattr(handler, _HANDLER_TAG, True)
+        root.addHandler(handler)
 
     return logging.getLogger(engine_name)
+
+
+# =============================================================================
+# PROTOCOLO DE LÍNEA DEL CANAL RT (Python -> Java)
+# =============================================================================
+# El canal de tiempo real NO usa MessagePack framed (a diferencia del canal
+# request/response): es NDJSON, una línea por mensaje con el formato
+# ``PREFIJO\tJSON`` sobre stdout. Java lo parsea línea a línea. Este es el punto
+# único donde se define el formato de las líneas de señal (ver IPC_PROTOCOL.md).
+SIGNAL_PREFIX: str = "SIGNAL\t"
+
+
+def upsert_candle(buffer: Any, candle: dict) -> None:
+    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden."""
+    if buffer and buffer[-1]["timestamp"] == candle["timestamp"]:
+        buffer[-1] = candle
+    else:
+        buffer.append(candle)
+
+
+def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[dict]:
+    """Últimas velas CERRADAS por REST (para sembrar el buffer RT y cerrar huecos al reconectar)."""
+    params: dict[str, str | int] = {
+        "symbol": symbol.replace("/", "").upper(), "interval": timeframe, "limit": limit}
+    response = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
+    response.raise_for_status()
+    now_ms = time.time() * 1000
+    return [
+        {"timestamp": int(c[0]), "open": float(c[1]), "high": float(c[2]),
+         "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
+        for c in response.json() if c[6] < now_ms  # closeTime pasada = vela cerrada
+    ]
+
+
+async def seed_buffer(buffer: Any, symbol: str, timeframe: str, limit: int, fetch: Any = None) -> None:
+    """Rellena el buffer con velas cerradas por REST (`fetch` por defecto es fetch_recent_klines).
+
+    Se llama al conectar y al reconectar el stream RT: sin esperar horas a juntar el calentamiento
+    y sin huecos por las velas que se perdieron mientras el WebSocket estuvo caído. Si el REST
+    falla se sigue con lo que haya en el buffer y se acumula desde el stream.
+    """
+    import asyncio
+
+    log = logging.getLogger(__name__)
+    try:
+        klines = await asyncio.to_thread(fetch or fetch_recent_klines, symbol, timeframe, limit)
+    except Exception:
+        log.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
+        return
+    buffer.clear()
+    buffer.extend(klines)
+    log.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(buffer))
+
+
+def encode_labels(y_train_raw: Any, y_test_raw: Any) -> tuple[Any, Any, Any, Any]:
+    """Codifica labels a 0..K-1 con las clases de train y descarta del test las que no vio.
+
+    Devuelve (encoder, y_train, y_test, keep): keep es la máscara de filas de test conservadas
+    (el llamador debe filtrar con ella X_test y los timestamps). Sin esto, una clase rara que
+    solo aparece en el tramo final aborta la ejecución con 'unseen labels'.
+    """
+    import numpy as np
+    from sklearn.preprocessing import LabelEncoder
+
+    encoder = LabelEncoder()
+    y_train = encoder.fit_transform(y_train_raw)
+    y_test_raw = np.asarray(y_test_raw)
+    keep = np.isin(y_test_raw, encoder.classes_)
+    if not keep.all():
+        logging.getLogger(__name__).warning(
+            "Test: %d filas con clases ausentes en train (%s) descartadas",
+            int((~keep).sum()), sorted(set(y_test_raw[~keep].tolist())),
+        )
+    return encoder, y_train, encoder.transform(y_test_raw[keep]), keep
+
+
+def metric_average(*labels: Any) -> str:
+    """'binary' solo si todas las etiquetas son 0/1 (pos_label=1 existe); si no, 'weighted'."""
+    import numpy as np
+
+    present = set(np.unique(np.concatenate([np.asarray(x).ravel() for x in labels])).tolist())
+    return "binary" if present <= {0, 1} else "weighted"
+
+
+def atomic_save(path: str, save_fn: Any) -> None:
+    """Guarda en un temporal y renombra: un RT que lee el modelo nunca ve un fichero a medias."""
+    base, ext = os.path.splitext(path)
+    tmp = f"{base}.tmp{ext}"  # conserva la extensión: Keras decide el formato por ella
+    try:
+        save_fn(tmp)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+class ModelIntegrityError(ValueError):
+    """El fichero del modelo no es el que se guardó (manipulado o corrupto) o viene de otras librerías."""
+
+
+#: Librerías cuyo formato interno cambia entre versiones menores y afecta a un modelo guardado.
+_MODEL_LIBRARIES = ("scikit-learn", "xgboost", "lightgbm", "tensorflow")
+
+
+def _manifest_path(model_path: str) -> str:
+    return os.path.splitext(model_path)[0] + ".manifest.json"
+
+
+def _sha256_of(path: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _installed_versions() -> dict[str, str]:
+    from importlib import metadata
+
+    found: dict[str, str] = {}
+    for lib in _MODEL_LIBRARIES:
+        try:
+            found[lib] = metadata.version(lib)
+        except metadata.PackageNotFoundError:
+            continue
+    return found
+
+
+def save_model(path: str, save_fn: Any) -> None:
+    """atomic_save + manifiesto con el sha256 y las versiones de las librerías (issues #33 y #93).
+
+    shortcut: el sha256 detecta ficheros corruptos o cambiados por error, no a quien reescriba
+    también el manifiesto; firmarlo con una clave (HMAC) si los modelos se comparten entre máquinas.
+    """
+    atomic_save(path, save_fn)
+    manifest = {"sha256": _sha256_of(path), "libraries": _installed_versions()}
+    atomic_save(_manifest_path(path), lambda tmp: _write_json(tmp, manifest))
+
+
+def _write_json(path: str, content: dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(content, f, indent=2)
+
+
+def _major_minor(version: str) -> str:
+    return ".".join(version.split(".")[:2])
+
+
+def verify_model_manifest(model_path: str) -> None:
+    """Rechaza un modelo cuyo contenido no coincide con su manifiesto o que se guardó con otra
+    versión (mayor.menor) de sklearn/xgboost/lightgbm/tensorflow. Sin manifiesto (modelo anterior
+    a esta comprobación) solo avisa: se carga igual."""
+    manifest_file = _manifest_path(model_path)
+    if not os.path.exists(manifest_file):
+        logging.getLogger(__name__).warning(
+            "El modelo %s no tiene manifiesto: no se puede comprobar su integridad. Reentrénalo.",
+            os.path.basename(model_path))
+        return
+    with open(manifest_file, encoding="utf-8") as f:
+        manifest = json.load(f)
+    if manifest.get("sha256") != _sha256_of(model_path):
+        raise ModelIntegrityError(
+            f"El modelo {os.path.basename(model_path)} no coincide con su manifiesto: "
+            "está corrupto o lo han modificado. Reentrénalo.")
+    actuales = _installed_versions()
+    for lib, guardada in manifest.get("libraries", {}).items():
+        actual = actuales.get(lib)
+        if actual is not None and _major_minor(actual) != _major_minor(guardada):
+            raise ModelIntegrityError(
+                f"El modelo {os.path.basename(model_path)} se guardó con {lib} {guardada} y ahora "
+                f"está instalada la {actual}: el formato puede haber cambiado. Reentrénalo.")
+
+
+def build_signal_line(signal: dict) -> str:
+    """Construye una línea de señal RT para stdout (``SIGNAL\\tJSON``)."""
+    return SIGNAL_PREFIX + json.dumps(signal)
 
 
 # =============================================================================
@@ -121,7 +326,15 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
 
     visible_gpus = tf.config.list_physical_devices("GPU")
     gpu_names = [gpu.name for gpu in visible_gpus]
-    if not visible_gpus or not gpu_execution_enabled():
+    if not visible_gpus:
+        return False, gpu_names
+    if not gpu_execution_enabled():
+        try:
+            # Sin esto TensorFlow sigue colocando operaciones en la GPU aunque el log diga "CPU".
+            tf.config.set_visible_devices([], "GPU")
+        except RuntimeError:
+            logging.getLogger(__name__).warning(
+                "TensorFlow ya estaba inicializado: no se pudo ocultar la GPU (CRYPTOAPP_ENABLE_GPU=0)")
         return False, gpu_names
 
     for gpu in visible_gpus:
@@ -129,7 +342,7 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
             tf.config.experimental.set_memory_growth(gpu, True)
         except RuntimeError:
             break
-        except Exception as exc:  # pragma: no cover - depende del runtime CUDA real
+        except Exception as exc:  # noqa: BLE001 # pragma: no cover - runtime CUDA real
             logging.getLogger(__name__).debug(
                 "No se pudo activar memory growth para %s: %s",
                 gpu.name,
@@ -137,20 +350,6 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
             )
 
     return True, gpu_names
-
-
-def _apply_class_weight_if_supported(model: Any, class_weight: dict[int, float] | None) -> None:
-    if class_weight is None or not hasattr(model, "class_weight"):
-        return
-
-    try:
-        model.set_params(class_weight=class_weight)
-    except (TypeError, ValueError):
-        logging.getLogger(__name__).debug(
-            "El modelo %s ignora class_weight=%s",
-            type(model).__name__,
-            class_weight,
-        )
 
 
 def _build_sample_weight(
@@ -165,8 +364,13 @@ def _build_sample_weight(
     except ImportError:
         return None
 
+    # Se recorre el diccionario de clases (unas pocas) en vez de las muestras (muchas):
+    # esto se ejecuta en cada fit, es decir por fold y por trial de Optuna.
     y_np = np.asarray(y_train)
-    return np.array([float(class_weight.get(int(label), 1.0)) for label in y_np], dtype=float)
+    pesos = np.ones(len(y_np), dtype=float)
+    for clase, peso in class_weight.items():
+        pesos[y_np == clase] = float(peso)
+    return pesos
 
 
 def _fit_supports_sample_weight(model: Any) -> bool:
@@ -211,11 +415,14 @@ def _disable_gpu_backend_for_process(model_type: str, exc: Exception) -> None:
 
 def _describe_model_backend(model: Any) -> str:
     module_name = type(model).__module__
+    # El fallback `dict` cubre modelos sin get_params (dobles de test, por ejemplo);
+    # se anota porque sin ello el tipo inferido es dict[Never, Never] y .get() no encaja.
+    params: dict[str, Any] = getattr(model, "get_params", dict)()
     if module_name.startswith("xgboost."):
-        device = getattr(model, "get_params", lambda: {})().get("device", "cpu")
+        device = params.get("device", "cpu")
         return "GPU (XGBoost CUDA)" if str(device).lower() == "cuda" else "CPU (XGBoost)"
     if module_name.startswith("lightgbm."):
-        device_type = getattr(model, "get_params", lambda: {})().get("device_type", "cpu")
+        device_type = params.get("device_type", "cpu")
         return "GPU (LightGBM)" if str(device_type).lower() == "gpu" else "CPU (LightGBM)"
     if module_name.startswith("sklearn."):
         return "CPU (sklearn)"
@@ -248,12 +455,15 @@ def load_strategy_by_name(
     """
     Carga una estrategia por nombre de módulo y valida que herede de BaseStrategy.
 
-    Busca primero en strategies.<strategy_name> y luego en <strategy_name>.
+    Solo busca en strategies.<strategy_name>: el segundo intento anterior (importar el nombre "a pelo")
+    cargaba cualquier módulo del sys.path (p. ej. "os") con un nombre que llega desde Java.
     """
     if not strategy_name or not strategy_name.strip():
         raise ValueError("strategy_name está vacío o no es válido.")
 
     strategy_name = strategy_name.strip()
+    if not strategy_name.isidentifier():
+        raise ValueError(f"Nombre de estrategia no válido: {strategy_name!r}")
 
     try:
         from strategies.BaseStrategy import BaseStrategy
@@ -262,11 +472,11 @@ def load_strategy_by_name(
 
     module = None
     errors: list[str] = []
-    for module_name in (f"strategies.{strategy_name}", strategy_name):
+    for module_name in (f"strategies.{strategy_name}",):
         try:
             module = importlib.import_module(module_name)
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - se prueban varias rutas antes de rendirse
             errors.append(f"{module_name}: {exc}")
 
     if module is None:
@@ -280,7 +490,9 @@ def load_strategy_by_name(
         raise ValueError(f"No existe la clase '{strategy_name}' en el módulo de estrategia.")
 
     if not isinstance(strategy_class, type) or not issubclass(strategy_class, BaseStrategy):
-        raise ValueError(f"La clase '{strategy_name}' no hereda de BaseStrategy.")
+        raise ValueError(  # noqa: TRY004 - coherente con las validaciones vecinas
+            f"La clase '{strategy_name}' no hereda de BaseStrategy."
+        )
 
     return strategy_class(capital=capital, risk_per_trade=risk_per_trade)
 
@@ -300,20 +512,35 @@ def load_strategy_by_path(
     except Exception as exc:
         raise ValueError(f"No se pudo importar BaseStrategy: {exc}") from exc
 
-    spec = importlib.util.spec_from_file_location("user_strategy", path)
+    module_name = f"user_strategy_{os.path.splitext(os.path.basename(path))[0]}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"No se pudo cargar el fichero de estrategia: {path}")
 
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Registrado antes de ejecutarlo: pickle, dataclasses y typing resuelven la clase por su módulo.
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
 
-    for obj in module.__dict__.values():
-        if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-            return obj(capital=capital, risk_per_trade=risk_per_trade)
-
-    raise ValueError(
-        f"No se encontró ninguna clase válida (subclase de BaseStrategy) en: {path}"
-    )
+    # Solo clases DEFINIDAS en el fichero y concretas: la primera subclase del módulo podía ser una
+    # estrategia importada, una base intermedia o una clase abstracta.
+    candidates = [
+        obj for obj in module.__dict__.values()
+        if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy
+        and obj.__module__ == module.__name__ and not inspect.isabstract(obj)
+    ]
+    if len(candidates) > 1:
+        names = ", ".join(c.__name__ for c in candidates)
+        raise ValueError(f"Hay varias estrategias concretas en {path}: {names}. Deja una por fichero.")
+    if not candidates:
+        raise ValueError(
+            f"No se encontró ninguna clase válida (subclase concreta de BaseStrategy) en: {path}"
+        )
+    return candidates[0](capital=capital, risk_per_trade=risk_per_trade)
 
 
 # =============================================================================
@@ -424,11 +651,9 @@ def build_sklearn_model(
     GPU se usa solo para XGBoost. LightGBM, SVM y
     RandomForest quedan fijados a CPU para evitar rutas inestables o sin ventaja real.
     """
-    import joblib as _jl  # noqa: F401 — importado aquí para no añadir dep al nivel de módulo
-
     try:
-        import xgboost as xgb
         import lightgbm as lgb
+        import xgboost as xgb
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
         from sklearn.svm import SVC
@@ -440,13 +665,18 @@ def build_sklearn_model(
     # Eliminar params propios de redes neuronales que no aplican a sklearn
     nn_keys = {"epochs", "batch_size", "hidden_layers", "neurons",
                "learning_rate", "dropout_rate"}
+    if model_type in ("xgboost", "lightgbm"):
+        nn_keys = nn_keys - {"learning_rate"}  # hiperparámetro propio de los árboles con boosting
     clean = {k: v for k, v in params.items() if k not in nn_keys}
 
     use_gpu = _gpu_backend_allowed(model_type, prefer_gpu)
 
     if model_type == "xgboost":
         clean.pop("use_label_encoder", None)  # clave obsoleta de versiones antiguas
-        base = {"n_estimators": 150, "learning_rate": 0.05,
+        # Bolsa heterogénea de hiperparámetros (str/int/float/bool): sin la anotación
+        # se infiere dict[str, object] y el desempaquetado **base choca con las firmas
+        # tipadas de los estimadores.
+        base: dict[str, Any] = {"n_estimators": 150, "learning_rate": 0.05,
                 "max_depth": 6, "random_state": 42, "eval_metric": "logloss"}
         if use_gpu:
             base.update({"tree_method": "hist", "device": "cuda"})
@@ -494,10 +724,13 @@ def fit_sklearn_model(
     y_train: Any,
     class_weight: dict[int, float] | None = None,
 ) -> Any:
-    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado."""
+    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado.
+
+    El peso de clase se aplica solo vía sample_weight: sklearn y LightGBM multiplican
+    class_weight por sample_weight, así que usar ambos elevaría el peso al cuadrado.
+    """
     model = build_sklearn_model(model_type, params, prefer_gpu=True)
     _log_model_backend_once(model_type, model)
-    _apply_class_weight_if_supported(model, class_weight)
     sample_weight = _build_sample_weight(y_train, class_weight)
     fit_kwargs: dict[str, Any] = {}
     if sample_weight is not None and _fit_supports_sample_weight(model):
@@ -507,7 +740,8 @@ def fit_sklearn_model(
         model.fit(x_train, y_train, **fit_kwargs)
         return model
     except Exception as exc:
-        if model_type not in (GPU_PREFERRED_MODEL_TYPES | {"random_forest", "svm"}) or not _is_gpu_runtime_error(exc):
+        # random_forest/svm nunca usan GPU: reintentarlos "por GPU" entrenaba dos veces y desactivaba la GPU para todo el proceso
+        if model_type not in GPU_PREFERRED_MODEL_TYPES or not _is_gpu_runtime_error(exc):
             raise
 
         _disable_gpu_backend_for_process(model_type, exc)
@@ -517,7 +751,6 @@ def fit_sklearn_model(
             prefer_gpu=False,
         )
         _log_model_backend_once(model_type, cpu_model)
-        _apply_class_weight_if_supported(cpu_model, class_weight)
         cpu_fit_kwargs: dict[str, Any] = {}
         if sample_weight is not None and _fit_supports_sample_weight(cpu_model):
             cpu_fit_kwargs["sample_weight"] = sample_weight
@@ -526,13 +759,13 @@ def fit_sklearn_model(
 
 
 def build_and_train_neural_network(
-    X_train: "np.ndarray",
-    y_train: "np.ndarray",
-    X_test: "np.ndarray",
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
     hyperparams: dict[str, Any],
     n_classes: int = 2,
     class_weight: dict[int, float] | None = None,
-) -> "tuple[Any, np.ndarray]":
+) -> tuple[Any, np.ndarray]:
     """
     Construye, entrena y evalúa una Red Neuronal Feed-Forward.
 

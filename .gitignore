@@ -87,3 +87,5 @@ models/
 results/
 
 .env
+.code-graph/
+.claude/settings.local.json

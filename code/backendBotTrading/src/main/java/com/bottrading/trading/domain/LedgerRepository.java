@@ -8,7 +8,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface LedgerRepository extends JpaRepository<LedgerEntry, Long> {
 
-    List<LedgerEntry> findByWalletIdOrderByTimestampDesc(Long walletId);
+    List<LedgerEntry> findByWalletIdOrderByIdDesc(Long walletId);
 
-    List<LedgerEntry> findByEstrategiaIdOrderByTimestampDesc(Long estrategiaId);
+    List<LedgerEntry> findByEstrategiaIdOrderByIdDesc(Long estrategiaId);
 }

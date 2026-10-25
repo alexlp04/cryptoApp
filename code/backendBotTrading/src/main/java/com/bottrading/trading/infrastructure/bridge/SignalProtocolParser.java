@@ -64,11 +64,16 @@ public class SignalProtocolParser {
             log.error("JSON corrupto de Python (será ignorado): {} - Error: {}", jsonLine, e.getMessage());
             // No lanzar excepción, simplemente ignorar líneas malformadas
             return null;
+        } catch (SignalProcessingException e) {
+            // Misma política que el JSON roto: una línea mala se descarta, no mata el motor entero.
+            log.warn("Señal inválida de [{}] descartada: {} - {}", instanciaId, e.getMessage(), jsonLine);
+            return null;
         }
     }
 
     /**
-     * Valida que una señal tenga los campos mínimos requeridos.
+     * Valida los campos que el motor de trading necesita y normaliza la acción a mayúsculas.
+     * Un precio nulo o 0 dejaba posiciones imposibles de cerrar (división por cero).
      */
     private void validarSignal(SignalDTO signal) throws SignalProcessingException {
         if (signal == null) {
@@ -79,6 +84,17 @@ public class SignalProtocolParser {
         }
         if (signal.getAction() == null || signal.getAction().isEmpty()) {
             throw new SignalProcessingException("SignalDTO: falta action");
+        }
+        String action = signal.getAction().toUpperCase(java.util.Locale.ROOT);
+        if (!"BUY".equals(action) && !"SELL".equals(action)) {
+            throw new SignalProcessingException("SignalDTO: action desconocida '" + signal.getAction() + "'");
+        }
+        signal.setAction(action);
+        if (signal.getPrice() == null || signal.getPrice().signum() <= 0) {
+            throw new SignalProcessingException("SignalDTO: price nulo o no positivo");
+        }
+        if (signal.getTimestamp() <= 0) {
+            throw new SignalProcessingException("SignalDTO: timestamp no positivo");
         }
     }
 }

@@ -30,6 +30,16 @@ public class InstanciaEstrategiaPersistenceAdapter implements InstanciaEstrategi
     }
 
     @Override
+    public List<InstanciaEstrategia> findByUsuarioId(Long usuarioId) {
+        return instanciaEstrategiaRepository.findByUsuarioId(usuarioId);
+    }
+
+    @Override
+    public List<InstanciaEstrategia> findByUsuarioIdAndEstado(Long usuarioId, EstadoEstrategia estado) {
+        return instanciaEstrategiaRepository.findByUsuarioIdAndEstado(usuarioId, estado);
+    }
+
+    @Override
     public BigDecimal sumCapitalActivoByWallet(Long walletAsociada) {
         return instanciaEstrategiaRepository.sumCapitalActivoByWallet(walletAsociada);
     }

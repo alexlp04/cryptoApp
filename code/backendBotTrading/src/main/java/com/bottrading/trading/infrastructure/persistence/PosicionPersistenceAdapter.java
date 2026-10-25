@@ -1,5 +1,6 @@
 package com.bottrading.trading.infrastructure.persistence;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.stereotype.Component;
@@ -30,6 +31,11 @@ public class PosicionPersistenceAdapter implements PosicionRepositoryPort {
     @Override
     public boolean existsByInstanciaAndSimboloAndAbiertaTrue(InstanciaEstrategia instancia, String simbolo) {
         return posicionRepository.existsByInstanciaAndSimboloAndAbiertaTrue(instancia, simbolo);
+    }
+
+    @Override
+    public List<Posicion> findByInstanciaAndAbiertaTrue(InstanciaEstrategia instancia) {
+        return posicionRepository.findByInstanciaAndAbiertaTrue(instancia);
     }
 
     @Override

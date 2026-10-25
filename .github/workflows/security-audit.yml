@@ -1,0 +1,99 @@
+name: Auditoría de dependencias
+
+# Lo que el CI principal NO cubre.
+#
+# El pom tiene OWASP dependency-check con sus `executions` comentadas a propósito
+# ("NVD API is unreliable in CI/CD context"), así que hoy no se ejecuta nunca: las
+# dependencias Java no se auditan. Las Python tampoco, porque requirements.txt no pasa
+# por ningún escáner.
+#
+# La decisión del pom es razonable para el camino de PR —una API externa intermitente no
+# debe tumbar la validación de un cambio de código— pero eso no significa renunciar al
+# análisis, sino sacarlo de ahí. Aquí corre en su propio workflow: semanal, manual bajo
+# demanda, y sin bloquear a nadie. Si encuentra algo, queda en los artefactos.
+
+on:
+  schedule:
+    # Lunes a las 06:00 UTC. Semanal basta: los CVE nuevos no aparecen por hora.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  java:
+    name: Dependencias Java (OWASP)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backendBotTrading
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # La base de datos del NVD son cientos de MB y su descarga es la parte lenta y
+      # frágil del análisis. Cachearla entre semanas evita repetirla desde cero.
+      - name: Cache de la base NVD
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: nvd-${{ runner.os }}-
+
+      # -N (non-recursive) es la invocación que documenta el propio pom.
+      # NVD_API_KEY es opcional: sin ella funciona, pero con límite de peticiones muy bajo.
+      # El pom ya tiene failOnError=false y failBuildOnCVSS=7.
+      - name: dependency-check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: mvn -B --no-transfer-progress dependency-check:check -N
+
+      - name: Publicar informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: code/backendBotTrading/target/dependency-check-report.html
+          if-no-files-found: ignore
+          retention-days: 30
+
+  python:
+    name: Dependencias Python (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar pip-audit
+        run: pip install --only-binary=:all: pip-audit==2.10.1
+
+      # Se audita requirements.txt directamente en lugar del entorno instalado: es la
+      # lista que declara el proyecto y evita instalar TensorFlow solo para escanear.
+      # continue-on-error porque este workflow informa, no bloquea; el resultado queda
+      # en el resumen del run y en el artefacto.
+      - name: pip-audit
+        id: audit
+        continue-on-error: true
+        run: pip-audit --requirement requirements.txt --format json --output pip-audit.json
+
+      - name: Resumen legible
+        if: always()
+        run: pip-audit --requirement requirements.txt --desc || true
+
+      - name: Publicar informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: ignore
+          retention-days: 30

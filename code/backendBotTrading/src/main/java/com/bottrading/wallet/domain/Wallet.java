@@ -8,9 +8,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "wallet")
+@Table(name = "wallet", uniqueConstraints = @UniqueConstraint(name = "uk_wallet_usuario_nombre", columnNames = {"usuario_id", "nombre"}))
 public class Wallet extends BaseEntity {
 
     @Column(nullable = false)
@@ -19,10 +20,10 @@ public class Wallet extends BaseEntity {
     @Column(name = "usuario_id", nullable = false)
     private Long usuarioId;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 18, scale = 8)
     private BigDecimal balanceReal; // dinero real en broker
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 18, scale = 8)
     private BigDecimal balanceDisponible; // AVAILABLE
 
     @Enumerated(EnumType.STRING)

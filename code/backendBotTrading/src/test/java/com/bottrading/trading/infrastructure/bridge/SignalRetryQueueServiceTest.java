@@ -5,13 +5,16 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import com.bottrading.trading.application.port.in.ProcessSignalUseCase;
+import com.bottrading.trading.application.port.out.FailedSignalStorePort;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,10 +36,12 @@ import lombok.extern.slf4j.Slf4j;
 class SignalRetryQueueServiceTest {
 
     private SignalRetryQueueService retryService;
+    private FailedSignalStorePort failedSignalStore;
 
     @BeforeEach
     void setup() {
-        retryService = new SignalRetryQueueService();
+        failedSignalStore = mock(FailedSignalStorePort.class);
+        retryService = new SignalRetryQueueService(failedSignalStore);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -325,6 +331,91 @@ class SignalRetryQueueServiceTest {
         void should_not_throw_when_strategy_not_found() {
             retryService.cleanup(999L);
             assertThat(retryService.getPendingSignalCount(999L), is(0));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Durabilidad (C4) — persistencia y recuperación
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Durabilidad — persistencia y recuperación de la cola")
+    class DurabilidadTests {
+
+        @Test
+        @DisplayName("✓ Debe persistir en el store al encolar una señal fallida")
+        void should_persist_on_enqueue() {
+            SignalDTO signal = crearSignalTest("BTCUSDT", "BUY");
+
+            retryService.enqueueFailedSignal(7L, signal);
+
+            verify(failedSignalStore, times(1)).save(eq(7L), any(SignalDTO.class));
+        }
+
+        @Test
+        @DisplayName("✓ Debe marcar como procesada en el store tras un reintento exitoso")
+        void should_mark_processed_on_successful_retry() {
+            ProcessSignalUseCase mockService = mock(ProcessSignalUseCase.class);
+            retryService.enqueueFailedSignal(7L, crearSignalTest("BTCUSDT", "BUY"));
+
+            retryService.procesarSignalesPendientes(7L, mockService);
+
+            verify(failedSignalStore, times(1)).markProcessed(eq(7L), any(SignalDTO.class));
+        }
+
+        @Test
+        @DisplayName("✓ NO debe marcar como procesada si el reintento falla")
+        void should_not_mark_processed_when_retry_fails() {
+            ProcessSignalUseCase mockService = mock(ProcessSignalUseCase.class);
+            doThrow(new RuntimeException("Error temporal")).when(mockService).onSignal(anyLong(), any());
+            retryService.enqueueFailedSignal(7L, crearSignalTest("BTCUSDT", "BUY"));
+
+            retryService.procesarSignalesPendientes(7L, mockService);
+
+            verify(failedSignalStore, never()).markProcessed(anyLong(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Debe borrar del store al hacer cleanup")
+        void should_delete_from_store_on_cleanup() {
+            retryService.enqueueFailedSignal(7L, crearSignalTest("BTCUSDT", "BUY"));
+
+            retryService.cleanup(7L);
+
+            verify(failedSignalStore, times(1)).deleteAllForInstance(7L);
+        }
+
+        @Test
+        @DisplayName("✓ Debe recuperar señales persistidas a memoria al arrancar")
+        void should_recover_pending_signals_on_startup() {
+            when(failedSignalStore.instancesWithPending()).thenReturn(List.of(7L));
+            when(failedSignalStore.loadPending(7L)).thenReturn(List.of(
+                    crearSignalTest("BTCUSDT", "BUY"),
+                    crearSignalTest("ETHUSDT", "SELL")));
+
+            retryService.recuperarPendientes();
+
+            assertThat(retryService.getPendingSignalCount(7L), is(2));
+        }
+
+        @Test
+        @DisplayName("✓ La recuperación no debe volver a persistir lo ya guardado")
+        void should_not_resave_on_recovery() {
+            when(failedSignalStore.instancesWithPending()).thenReturn(List.of(7L));
+            when(failedSignalStore.loadPending(7L)).thenReturn(List.of(crearSignalTest("BTCUSDT", "BUY")));
+
+            retryService.recuperarPendientes();
+
+            verify(failedSignalStore, never()).save(anyLong(), any());
+        }
+
+        @Test
+        @DisplayName("✓ instanciasConPendientes solo debe listar estrategias con cola no vacía")
+        void should_list_only_instances_with_pending() {
+            retryService.enqueueFailedSignal(1L, crearSignalTest("BTCUSDT", "BUY"));
+            retryService.enqueueFailedSignal(2L, crearSignalTest("ETHUSDT", "SELL"));
+            retryService.cleanup(2L);
+
+            assertThat(retryService.instanciasConPendientes(), is(java.util.Set.of(1L)));
         }
     }
 }

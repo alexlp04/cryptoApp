@@ -32,7 +32,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import com.bottrading.market.application.port.out.IndicadorRepositoryPort;
 import com.bottrading.market.application.port.out.VelaRepositoryPort;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.shared.exceptions.DataFetchException;
@@ -50,9 +49,6 @@ class FetchServiceTest {
 
     @Mock
     private VelaRepositoryPort velaRepo;
-
-    @Mock
-    private IndicadorRepositoryPort indicadorRepo;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -93,9 +89,9 @@ class FetchServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe aceptar las cuatro dependencias por constructor")
-        void should_accept_constructor_with_four_dependencies() {
-            FetchService sut = new FetchService(velaRepo, indicadorRepo, jdbcTemplate, pythonBridgeFacade);
+        @DisplayName("✓ Debe aceptar las tres dependencias por constructor")
+        void should_accept_constructor_with_three_dependencies() {
+            FetchService sut = new FetchService(velaRepo, jdbcTemplate, pythonBridgeFacade);
             assertThat(sut, is(notNullValue()));
         }
     }
@@ -194,8 +190,8 @@ class FetchServiceTest {
     class FullRefreshTests {
 
         @Test
-        @DisplayName("✓ Debe eliminar indicadores y velas antes de descargar cuando days es null")
-        void should_delete_indicators_and_velas_when_days_is_null() throws PythonBridgeExecutionException {
+        @DisplayName("✓ Debe eliminar las velas antes de descargar cuando days es null")
+        void should_delete_velas_when_days_is_null() throws PythonBridgeExecutionException {
             long minTimestamp = 1704067200000L;
 
             ConsoleLoader consoleMock = mock(ConsoleLoader.class);
@@ -205,9 +201,6 @@ class FetchServiceTest {
                 doReturn(5).when(pythonBridgeFacade).execute(any());
 
                 fetchService.fullRefresh(SYMBOL, INTERVAL, null);
-
-                verify(indicadorRepo, times(1))
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(SYMBOL, INTERVAL, minTimestamp);
                 verify(velaRepo, times(1))
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(SYMBOL, INTERVAL, minTimestamp);
             }
@@ -223,9 +216,6 @@ class FetchServiceTest {
                 doReturn(0).when(pythonBridgeFacade).execute(any());
 
                 fetchService.fullRefresh(SYMBOL, INTERVAL, null);
-
-                verify(indicadorRepo, never())
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(anyString(), anyString(), anyLong());
                 verify(velaRepo, never())
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(anyString(), anyString(), anyLong());
             }
@@ -242,8 +232,6 @@ class FetchServiceTest {
                 fetchService.fullRefresh(SYMBOL, INTERVAL, 30);
 
                 // Con days=30, el anchor es calculado internamente y se pasa al borrado
-                verify(indicadorRepo, times(1))
-                        .deleteByVelaSymbolAndIntervalAndOpenTimeGreaterThanEqual(eq(SYMBOL), eq(INTERVAL), anyLong());
                 verify(velaRepo, times(1))
                         .deleteBySymbolAndIntervalAndOpenTimeGreaterThanEqual(eq(SYMBOL), eq(INTERVAL), anyLong());
             }
@@ -457,9 +445,10 @@ class FetchServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe retornar 60000 (fallback) para intervalo desconocido")
-        void should_return_60000_for_unknown_interval() {
-            assertThat(FetchService.getIntervalMillis("unknown"), is(60_000L));
+        @DisplayName("✓ Un intervalo desconocido falla en vez de caer a 1 minuto (#84)")
+        void should_throw_for_unknown_interval() {
+            assertThrows(IllegalArgumentException.class, () -> FetchService.getIntervalMillis("unknown"));
+            assertThrows(IllegalArgumentException.class, () -> FetchService.getIntervalMillis("30m"));
         }
     }
 
@@ -498,5 +487,184 @@ class FetchServiceTest {
                     com.bottrading.market.application.port.in.FetchMarketDataUseCase,
                     is(true));
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Huecos reales, rangos con páginas vacías e interrupciones (#116 #118)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Convergencia de huecos y fetchRange")
+    class HuecosYRangosTests {
+
+        private com.google.gson.JsonArray velas(long... openTimes) {
+            com.google.gson.JsonArray array = new com.google.gson.JsonArray();
+            for (long t : openTimes) {
+                array.add(com.google.gson.JsonParser.parseString("[" + t + ",\"1\",\"2\",\"0.5\",\"1.5\",\"10\","
+                        + (t + 3_599_999) + ",\"100\",5,\"3\",\"4\"]"));
+            }
+            return array;
+        }
+
+        @Test
+        @DisplayName("✓ Un hueco ya pedido a Binance no se vuelve a descargar en la misma ejecución (#116)")
+        void already_requested_gap_is_not_downloaded_again() throws PythonBridgeExecutionException {
+            long now = System.currentTimeMillis();
+            int dias = 30;
+            long windowStart = now - dias * 24L * 60 * 60 * 1000L;
+            long lastTimestamp = now - (INTERVAL_MILLIS / 2); // al día: sin cola nueva que descargar
+            // el par es más joven que la ventana: la primera vela está lejos de windowStart
+            long primera = windowStart + 10 * INTERVAL_MILLIS;
+
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> cs = mockStatic(ConsoleLoader.class)) {
+                cs.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                doReturn(lastTimestamp).when(velaRepo).findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL);
+                doReturn(primera).when(velaRepo).findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                        anyString(), anyString(), anyLong(), anyLong());
+                doReturn(null).when(velaRepo).findFirstInternalGapOpenTime(
+                        anyString(), anyString(), anyLong(), anyLong(), anyLong());
+                doReturn(30).when(pythonBridgeFacade).execute(any());
+
+                fetchService.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+                fetchService.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+
+                verify(pythonBridgeFacade, times(1)).execute(any(PythonBridgeRequest.class));
+            }
+        }
+
+        @Test
+        @DisplayName("✓ fetchRange sigue con la página siguiente cuando una está vacía (#118)")
+        void fetch_range_continues_after_an_empty_page() {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            long t0 = 1_700_000_000_000L - (1_700_000_000_000L % INTERVAL_MILLIS);
+            LocalDateTime from = LocalDateTime.ofEpochSecond(t0 / 1000, 0, java.time.ZoneOffset.UTC);
+            LocalDateTime to = from.plusHours(2_500);
+            doReturn(velas()).doReturn(velas(t0 + 1_500 * INTERVAL_MILLIS)).doReturn(velas())
+                    .when(spy).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+            doReturn(new int[] {1}).when(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+
+            int inserted = spy.fetchRange(SYMBOL, INTERVAL, from, to);
+
+            assertThat(inserted, is(1));
+            verify(spy, times(3)).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("✓ La cobertura guardada en la BBDD sobrevive a un reinicio: no se vuelve a descargar (#116)")
+        void coverage_persisted_in_db_survives_restart() throws PythonBridgeExecutionException {
+            long now = System.currentTimeMillis();
+            int dias = 30;
+            long windowStart = now - dias * 24L * 60 * 60 * 1000L;
+            long lastTimestamp = now - (INTERVAL_MILLIS / 2);
+            long primera = windowStart + 10 * INTERVAL_MILLIS;
+            // instancia nueva = caché vacía, como tras reiniciar la aplicación
+            FetchService reiniciado = new FetchService(velaRepo, jdbcTemplate, pythonBridgeFacade);
+            doReturn(windowStart).when(jdbcTemplate).query(anyString(),
+                    org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.ResultSetExtractor<Long>>any(),
+                    eq(SYMBOL), eq(INTERVAL));
+
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> cs = mockStatic(ConsoleLoader.class)) {
+                cs.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                doReturn(lastTimestamp).when(velaRepo).findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL);
+                doReturn(primera).when(velaRepo).findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                        anyString(), anyString(), anyLong(), anyLong());
+                doReturn(null).when(velaRepo).findFirstInternalGapOpenTime(
+                        anyString(), anyString(), anyLong(), anyLong(), anyLong());
+
+                reiniciado.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+
+                verify(pythonBridgeFacade, never()).execute(any(PythonBridgeRequest.class));
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private java.net.http.HttpResponse<String> respuesta(int status, String retryAfter, String body) {
+            java.net.http.HttpResponse<String> r = mock(java.net.http.HttpResponse.class);
+            doReturn(status).when(r).statusCode();
+            doReturn(body).when(r).body();
+            java.util.Map<String, java.util.List<String>> cabeceras =
+                    retryAfter == null ? java.util.Map.of() : java.util.Map.of("Retry-After", java.util.List.of(retryAfter));
+            doReturn(java.net.http.HttpHeaders.of(cabeceras, (a, b) -> true)).when(r).headers();
+            return r;
+        }
+
+        @Test
+        @DisplayName("✓ Un 429 se reintenta esperando el Retry-After de Binance (#118)")
+        void rate_limit_is_retried_honouring_retry_after() throws Exception {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            org.mockito.Mockito.doNothing().when(spy).pausar(anyLong());
+            java.net.http.HttpClient client = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> limitada = respuesta(429, "7", "");
+            java.net.http.HttpResponse<String> ok = respuesta(200, null, "[]");
+            doReturn(limitada).doReturn(ok).when(client).send(any(), any());
+
+            assertThat(spy.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L).isEmpty(), is(true));
+
+            verify(spy).pausar(7_000L);
+        }
+
+        @Test
+        @DisplayName("✓ Un 5xx persistente falla tras los reintentos y un 400 no se reintenta (#118)")
+        void persistent_server_error_gives_up_and_client_error_is_not_retried() throws Exception {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            org.mockito.Mockito.doNothing().when(spy).pausar(anyLong());
+            java.net.http.HttpClient caido = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> r503 = respuesta(503, null, "");
+            doReturn(r503).when(caido).send(any(), any());
+            java.net.http.HttpClient malo = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> r400 = respuesta(400, null, "");
+            doReturn(r400).when(malo).send(any(), any());
+
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.requestKlines(caido, SYMBOL, INTERVAL, 0L, 1L));
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.requestKlines(malo, SYMBOL, INTERVAL, 0L, 1L));
+
+            verify(caido, times(3)).send(any(), any());
+            verify(malo, times(1)).send(any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Si una página falla, lo ya descargado se guarda y el error dice hasta dónde se llegó (#118)")
+        void failure_keeps_downloaded_candles_and_reports_progress() {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            long t0 = 1_700_000_000_000L - (1_700_000_000_000L % INTERVAL_MILLIS);
+            LocalDateTime from = LocalDateTime.ofEpochSecond(t0 / 1000, 0, java.time.ZoneOffset.UTC);
+            doReturn(velas(t0)).doThrow(new com.bottrading.shared.exceptions.DataFetchException("Binance returned HTTP 503"))
+                    .when(spy).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+            doReturn(new int[] {1}).when(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+
+            com.bottrading.shared.exceptions.DataFetchException e = assertThrows(
+                    com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.fetchRange(SYMBOL, INTERVAL, from, from.plusHours(2_500)));
+
+            assertThat(e.getMessage().contains("1 velas guardadas"), is(true));
+            verify(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+        }
+
+        @Test
+        @DisplayName("✓ Un IOException de red no deja el hilo marcado como interrumpido (#118)")
+        void io_error_does_not_set_the_interrupt_flag() throws Exception {
+            java.net.http.HttpClient client = mock(java.net.http.HttpClient.class);
+            doThrow(new java.io.IOException("timeout")).when(client).send(any(), any());
+
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> fetchService.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L));
+
+            assertThat(Thread.currentThread().isInterrupted(), is(false));
+        }
+    }
+
+    @Test
+    @DisplayName("✓ Un frame ERROR de Python lanza DataFetchException con su mensaje (#81)")
+    void python_error_frame_is_a_fetch_failure() {
+        java.util.Map<String, Object> envelope = java.util.Map.of(
+                "message_type", "ERROR", "payload", java.util.Map.of("status", "error", "message", "símbolo inválido"));
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                        () -> FetchService.lanzarSiEsError(envelope)).getMessage().contains("símbolo inválido"));
+        FetchService.lanzarSiEsError(java.util.Map.of("message_type", "FETCH_CHUNK", "payload", java.util.Map.of()));
     }
 }

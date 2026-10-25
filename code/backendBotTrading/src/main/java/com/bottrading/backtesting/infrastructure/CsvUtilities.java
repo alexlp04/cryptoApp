@@ -5,10 +5,7 @@ import com.bottrading.shared.utils.PathConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,17 +23,7 @@ public class CsvUtilities {
      * Obtiene o crea la carpeta de una estrategia.
      */
     public Path getCarpetaEstrategia(String nombreEstrategia) throws FileOperationException {
-        try {
-            Path path = Paths.get(PathConfig.RESULTS_DIR, nombreEstrategia);
-            if (!Files.exists(path)) {
-                Files.createDirectories(path);
-                log.debug("Carpeta creada: {}", path);
-            }
-            return path;
-        } catch (IOException e) {
-            throw new FileOperationException(
-                "Error al crear carpeta de estrategia: " + e.getMessage(), e);
-        }
+        return PathConfig.getCarpetaEstrategia(nombreEstrategia);
     }
 
     /**
@@ -46,53 +33,45 @@ public class CsvUtilities {
         List<String> tokens = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;
-        int i = 0;
+        boolean quoted = false;
 
-        while (i < line.length()) {
+        for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
-
-            if (handleQuoteCharacter(c, i, line, inQuotes, current)) {
-                if (line.charAt(i) == '\"' && i + 1 < line.length() && line.charAt(i + 1) == '\"') {
-                    i++;  // Salta comilla doble
+            if (inQuotes) {
+                if (c == '"' && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"'); // "" dentro de comillas = comilla literal
+                    i++;
+                } else if (c == '"') {
+                    inQuotes = false;    // comilla de cierre: antes se quedaba en modo comillas hasta el final
+                } else {
+                    current.append(c);
                 }
-                inQuotes = !inQuotes;
-            } else if (c == ',' && !inQuotes) {
-                tokens.add(trimQuotedString(current.toString()));
-                current = new StringBuilder();
-            } else {
+            } else if (c == '"' && !quoted && current.toString().trim().isEmpty()) {
+                inQuotes = true;
+                quoted = true;
+                current.setLength(0);
+            } else if (c == ',') {
+                tokens.add(quoted ? current.toString() : current.toString().trim());
+                current.setLength(0);
+                quoted = false;
+            } else if (!quoted || !Character.isWhitespace(c)) {
                 current.append(c);
             }
-            i++;
         }
 
-        tokens.add(trimQuotedString(current.toString()));
+        tokens.add(quoted ? current.toString() : current.toString().trim());
         return tokens.toArray(new String[0]);
     }
 
     /**
      * Determina si el carácter es una comilla válida para procesar.
      */
-    private boolean handleQuoteCharacter(char c, int index, String line, boolean inQuotes, StringBuilder current) {
-        if (c != '\"') {
-            return false;
-        }
-        if (inQuotes && index + 1 < line.length() && line.charAt(index + 1) == '\"') {
-            current.append('\"');
-            return true;
-        }
-        return !inQuotes && current.toString().trim().isEmpty();
-    }
+
 
     /**
      * Limpia una cadena entrecomillada.
      */
-    private String trimQuotedString(String token) {
-        token = token.trim();
-        if (token.startsWith("\"") && token.endsWith("\"") && token.length() >= 2) {
-            token = token.substring(1, token.length() - 1);
-        }
-        return token;
-    }
+
 
     /**
      * Escapa un valor para CSV.

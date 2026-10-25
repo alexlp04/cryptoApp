@@ -84,9 +84,9 @@ public class RealtimeProcessSupervisor {
     /**
      * Envía la configuración inicial al proceso Python por STDIN.
      */
-    public void enviarPayload(Process process, InstanciaEstrategia instancia, List<String> symbols) 
-            throws PythonProcessException {
-        Map<String, Object> payload = construirPayload(instancia, symbols);
+    public void enviarPayload(Process process, InstanciaEstrategia instancia, List<String> symbols,
+            Map<String, Map<String, Object>> posicionesAbiertas) throws PythonProcessException {
+        Map<String, Object> payload = construirPayload(instancia, symbols, posicionesAbiertas);
         
         try (OutputStream os = process.getOutputStream()) {
             IpcMessagePackCodec.writeEnvelope(os, IpcMessageType.RT_SIGNAL, payload);
@@ -94,28 +94,6 @@ public class RealtimeProcessSupervisor {
         } catch (IOException e) {
             throw new PythonProcessException("Error al enviar configuración a Python: " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * Limpia la referencia del proceso registrado.
-     */
-    public void unregisterProcess(Long instanciaId) {
-        activeProcesses.remove(instanciaId);
-    }
-
-    /**
-     * Obtiene el proceso registrado para una estrategia.
-     */
-    public Process getProcess(Long instanciaId) {
-        return activeProcesses.get(instanciaId);
-    }
-
-    /**
-     * Verifica si hay un proceso activo para la estrategia.
-     */
-    public boolean hasActiveProcess(Long instanciaId) {
-        Process p = activeProcesses.get(instanciaId);
-        return p != null && p.isAlive();
     }
 
 
@@ -127,7 +105,12 @@ public class RealtimeProcessSupervisor {
         }
     }
 
-    private Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols) {
+    /**
+     * @param posicionesAbiertas stop y objetivo de lo que Java ya tiene abierto por símbolo, para que el
+     *                           motor siga protegiéndolo tras un reinicio
+     */
+    Map<String, Object> construirPayload(InstanciaEstrategia instancia, List<String> symbols,
+            Map<String, Map<String, Object>> posicionesAbiertas) {
         Map<String, Object> payload = new HashMap<>();
 
         if (instancia.getNombreEstrategia() != null && !instancia.getNombreEstrategia().isBlank()) {
@@ -136,6 +119,12 @@ public class RealtimeProcessSupervisor {
         payload.put("symbols", new ArrayList<>(symbols));
         payload.put("timeframe", instancia.getTimeframe());
         payload.put("capital", instancia.getCapitalReservado());
+        payload.put("is_real", instancia.isEsReal());
+        payload.put("signal_mode", instancia.getSignalMode());
+        payload.put("open_positions", posicionesAbiertas);
+        if (instancia.getRiskPerTrade() != null) {
+            payload.put("risk_per_trade", instancia.getRiskPerTrade());
+        }
 
         // Agregar modelo si existe (para estrategias de IA)
         if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {

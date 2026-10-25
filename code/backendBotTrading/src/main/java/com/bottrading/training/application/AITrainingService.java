@@ -7,6 +7,7 @@ import java.util.Map;
 import org.springframework.stereotype.Service;
 
 import com.bottrading.market.application.port.in.FetchMarketDataUseCase;
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
@@ -97,7 +98,8 @@ public class AITrainingService implements TrainModelUseCase {
                 hyperparams == null ? Map.of() : hyperparams,
                 strategyPath,
                 candlesBySymbol,
-                timeframe);
+                timeframe,
+                trainingWindow.warmupCandles());
 
         if (!result.success()) {
             loader.stop("El entrenamiento no pudo completarse.");
@@ -115,19 +117,20 @@ public class AITrainingService implements TrainModelUseCase {
 
     private TrainingWindow resolverVentanaEntrenamiento(String strategyName, String timeframe, int dias) {
         if (strategyName == null || strategyName.isBlank()) {
-            return new TrainingWindow(dias, null);
+            return new TrainingWindow(dias, null, 0);
         }
 
         try {
-            int totalCandles = StrategyInspector.getCandlesRequired(strategyName, timeframe, dias);
-            int candlesPerDay = resolveCandlesPerDay(timeframe);
-            int daysForPreparation = (int) Math.ceil((double) totalCandles / candlesPerDay);
+            int warmupCandles = StrategyInspector.getWarmupPeriod(strategyName);
+            int totalCandles = StrategyInspector.getCandlesRequired(timeframe, dias, warmupCandles);
+            int daysForPreparation = (int) Math.ceil(
+                    (double) totalCandles / Timeframe.velasPorDiaOrDefault(timeframe));
             String strategyPath = PathConfig.getValidStrategyPath(strategyName);
 
-            log.info("Modo estrategia dinámica: strategy='{}', velas_requeridas={}, dias_efectivos={}",
-                    strategyName, totalCandles, daysForPreparation);
+            log.info("Modo estrategia dinámica: strategy='{}', warmup={}, velas_requeridas={}, dias_efectivos={}",
+                    strategyName, warmupCandles, totalCandles, daysForPreparation);
 
-            return new TrainingWindow(daysForPreparation, strategyPath);
+            return new TrainingWindow(daysForPreparation, strategyPath, warmupCandles);
         } catch (Exception e) {
             throw new StrategyExecutionException(
                     "Error al inspeccionar estrategia '" + strategyName + "': " + e.getMessage(),
@@ -151,18 +154,6 @@ public class AITrainingService implements TrainModelUseCase {
         return gson.toJson(output);
     }
 
-    private int resolveCandlesPerDay(String timeframe) {
-        return switch (timeframe == null ? "" : timeframe.toLowerCase()) {
-            case "1m" -> 1440;
-            case "5m" -> 288;
-            case "15m" -> 96;
-            case "1h" -> 24;
-            case "4h" -> 6;
-            case "1d" -> 1;
-            default -> 288;
-        };
-    }
-
-    private record TrainingWindow(int daysForPreparation, String strategyPath) {
+    private record TrainingWindow(int daysForPreparation, String strategyPath, int warmupCandles) {
     }
 }

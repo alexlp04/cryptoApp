@@ -60,16 +60,6 @@ public class WalletApplicationService implements WalletManagementUseCase {
         walletRepositoryPort.delete(wallet);
     }
 
-    @Transactional
-    public void cambiarEstadoActivo(String nombre, boolean activo) {
-        Usuario usuario = sessionManager.getCurrentUser();
-        Wallet wallet = walletRepositoryPort.findByUsuarioIdAndNombre(usuario.getId(), nombre)
-                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + nombre));
-
-        wallet.setActive(activo);
-        walletRepositoryPort.save(wallet);
-    }
-
     @Override
     public BigDecimal getBalance(String nombre) {
         Usuario usuario = sessionManager.getCurrentUser();

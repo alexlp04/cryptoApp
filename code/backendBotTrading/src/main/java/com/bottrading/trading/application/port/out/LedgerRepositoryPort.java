@@ -9,9 +9,9 @@ import com.bottrading.trading.domain.LedgerEntry;
  */
 public interface LedgerRepositoryPort {
 
-    List<LedgerEntry> findByWalletIdOrderByTimestampDesc(Long walletId);
+    List<LedgerEntry> findByWalletIdOrderByIdDesc(Long walletId);
 
-    List<LedgerEntry> findByEstrategiaIdOrderByTimestampDesc(Long estrategiaId);
+    List<LedgerEntry> findByEstrategiaIdOrderByIdDesc(Long estrategiaId);
 
     <S extends LedgerEntry> S save(S entry);
 }

@@ -1,19 +1,23 @@
 import asyncio
 import json
 import sys
-import pandas as pd
-import websockets
-import os
 import types
-import logging
 from collections import deque
 from decimal import Decimal
+
+import pandas as pd
+import websockets
 from ipc_protocol import read_request_payload
+from risk_management import PositionTracker, strategy_levels
 from shared_utils import (
-    load_strategy_by_path,
-    setup_engine_logging,
-    emit_heartbeats,
     CODE_DIR,
+    build_signal_line,
+    emit_heartbeats,
+    fetch_recent_klines,
+    load_strategy_by_path,
+    seed_buffer,
+    setup_engine_logging,
+    upsert_candle,
 )
 
 logger = setup_engine_logging("engine_rt")
@@ -27,19 +31,56 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 
+MAX_STRATEGY_ERRORS = 5
+
+
+class StrategyFailure(RuntimeError):
+    """La estrategia falla de forma persistente: no tiene sentido seguir reconectando."""
+
+
+#: Cuándo se evalúa la estrategia: al cierre de cada vela, a la apertura de la siguiente, o en ambos.
+SIGNAL_MODES = ("close", "open", "both")
+
+
+def _validate_signal_mode(mode: str) -> str:
+    if mode not in SIGNAL_MODES:
+        raise ValueError(f"signal_mode inválido: {mode!r} (usa {', '.join(SIGNAL_MODES)})")
+    return mode
+
+
+def _should_evaluate(mode: str, candle_closed: bool, new_candle: bool) -> bool:
+    """close: mensaje de vela cerrada; open: primer mensaje de una vela nueva; both: cualquiera de los dos."""
+    return (mode in ("close", "both") and candle_closed) or (mode in ("open", "both") and new_candle)
+
+
+def _buffer_size(max_candles: int, warmup: int) -> int:
+    """Tamaño del buffer: nunca menor que el calentamiento que exige la estrategia."""
+    return max(max_candles, warmup)
+
+
 def _build_rt_signal(
     symbol: str, action: str, timeframe: str,
     raw_close: str, row: "pd.Series", is_real: bool,
+    levels: tuple[float, float] | None = None, reason: str = "SIGNAL",
 ) -> dict:
-    """Construye el diccionario de señal para enviar a Java por stdout."""
-    return {
+    """Construye el diccionario de señal para enviar a Java por stdout.
+
+    Un BUY lleva el stop y el objetivo con los que Java dimensiona la posición; un SELL, el motivo
+    (SIGNAL de la estrategia, STOP u TARGET si saltó una orden protectora).
+    """
+    signal = {
         "symbol": symbol,
         "action": action,
         "timeframe": timeframe,
         "price": str(Decimal(raw_close)),
         "timestamp": int(row["timestamp"]),
         "is_real": is_real,
+        "reason": reason,
     }
+    if levels is not None:
+        signal["stop_loss"] = str(Decimal(str(levels[0])))
+        signal["take_profit"] = str(Decimal(str(levels[1])))
+    return signal
 
 
 async def run_symbol(
@@ -50,39 +91,56 @@ async def run_symbol(
     risk_per_trade: float,
     is_real: bool,
     max_candles: int = 100,
-    only_closed_candles: bool = False,
+    signal_mode: str = "close",
+    open_position: dict | None = None,
 ) -> None:
-    """Procesa stream kline de un simbolo y emite senales al runtime Java."""
+    """Procesa stream kline de un simbolo y emite senales al runtime Java.
+
+    open_position: stop y objetivo de la posición que Java ya tiene abierta en este símbolo (al
+    reanudar tras un reinicio), para no dejarla sin protección.
+    """
+    _validate_signal_mode(signal_mode)
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
 
     logger.info("Iniciando stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
-    buffer: deque = deque(maxlen=max_candles)
+    min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
+    buffer: deque = deque(maxlen=_buffer_size(max_candles, min_candles))
+    last_signal: tuple[int, str] | None = None
+    last_open_time: int | None = None  # vela del último mensaje; sobrevive a las reconexiones
 
     retry_delay = 5
     max_retry_delay = 300
+
+    consecutive_errors = 0
+    tracker = PositionTracker(open_position)
 
     while True:
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                retry_delay = 5  # reset on successful connection
+                # Al conectar y al reconectar: calentamiento al instante y sin las velas perdidas.
+                await seed_buffer(buffer, symbol, timeframe, _buffer_size(max_candles, min_candles),
+                                  fetch_recent_klines)
                 async for msg in ws:
-                    data = json.loads(msg)
-                    k = data["k"]
+                    k = json.loads(msg).get("k")
+                    if not k:
+                        continue  # mensajes que no son kline (errores, pings de aplicación)
+                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
 
-                    # En runtime suele interesar reaccionar antes del cierre de vela.
-                    # Si se desea comportamiento clásico de cierre, activar only_closed_candles.
-                    if only_closed_candles and not k["x"]:
-                        continue
+                    # Todo mensaje actualiza el buffer; signal_mode decide solo cuándo se evalúa.
+                    open_time = int(k["t"])
+                    # El primer mensaje tras (re)conectar no es una apertura real: se ignora como "nueva vela"
+                    new_candle = last_open_time is not None and open_time != last_open_time
+                    last_open_time = open_time
 
                     # Binance devuelve precios como strings — float para operaciones pandas/numpy.
                     # La clave del precio de cierre original se preserva para emitir la señal
                     # con precisión total (Decimal) sin depender del redondeo de float64.
                     raw_close: str = k["c"]
 
-                    buffer.append({
+                    upsert_candle(buffer, {
                         "timestamp": int(k["t"]),
                         "open": float(k["o"]),
                         "high": float(k["h"]),
@@ -91,29 +149,76 @@ async def run_symbol(
                         "volume": float(k["v"]),
                     })
 
-                    min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
-                    if len(buffer) < min_candles:
+                    # Stop y objetivo se vigilan en cada mensaje, no solo al evaluar la estrategia.
+                    protective = tracker.protective_exit(float(raw_close))
+                    if protective is not None:
+                        exit_price, reason = protective
+                        tracker.close()
+                        signal = _build_rt_signal(symbol, "SELL", timeframe, str(exit_price), buffer[-1],
+                                                  is_real, reason=reason)
+                        last_signal = (int(buffer[-1]["timestamp"]), "SELL")
+                        print(build_signal_line(signal), flush=True)
+                        logger.info("SEÑAL ENVIADA: SELL (%s) para %s a precio %s", reason, symbol, exit_price)
                         continue
 
-                    df = pd.DataFrame(list(buffer))
-                    df = strategy.populate_indicators(df)
-                    row = df.iloc[-1]
+                    if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
+                        continue
 
-                    action = None
-                    if strategy.should_buy(row):
-                        action = "BUY"
-                    elif strategy.should_sell(row):
-                        action = "SELL"
+                    try:
+                        df = pd.DataFrame(list(buffer))
+                        df = strategy.populate_indicators(df)
+                        row = df.iloc[-1]
 
-                    if action:
-                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
-                        print("SIGNAL\t" + json.dumps(signal), flush=True)
+                        action = None
+                        if strategy.should_buy(row):
+                            action = "BUY"
+                        elif strategy.should_sell(row):
+                            action = "SELL"
+                        consecutive_errors = 0
+                    except Exception:
+                        # Un bug de la estrategia no es una caída de red: reconectar no lo arregla.
+                        consecutive_errors += 1
+                        logger.exception("Error de estrategia en %s (%d/%d)",
+                                         symbol, consecutive_errors, MAX_STRATEGY_ERRORS)
+                        if consecutive_errors >= MAX_STRATEGY_ERRORS:
+                            raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
+                        continue
+
+                    levels = None
+                    if action == "BUY":
+                        if tracker.is_open:
+                            action = None  # ya hay posición: no se reabre ni se cambian sus niveles
+                        else:
+                            levels = strategy_levels(strategy, float(raw_close), row)
+                            if levels is None:
+                                logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
+                                               "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
+                                               symbol)
+                                action = None
+                    elif action == "SELL" and not tracker.is_open:
+                        action = None  # nada que vender
+
+                    # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
+                    if action and (int(row["timestamp"]), action) != last_signal:
+                        last_signal = (int(row["timestamp"]), action)
+                        if levels is not None:
+                            tracker.open(*levels)
+                        else:
+                            tracker.close()
+                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real, levels)
+                        print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
-        except Exception as e:
-            logger.error("Error en loop de %s: %s", symbol, str(e), exc_info=True)
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
+            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+        except StrategyFailure:
+            raise  # el proceso debe terminar con código != 0 para que Java lo supervise
+        except Exception:
+            logger.exception("Error en loop de %s", symbol)
+
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
+
+
 
 def main() -> None:
     """Punto de entrada: recibe configuracion IPC y arranca tareas async."""
@@ -129,7 +234,8 @@ def main() -> None:
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),
             is_real=payload.get("is_real", False),
-            only_closed_candles=payload.get("only_closed_candles", False),
+            signal_mode=payload.get("signal_mode", "close"),
+            open_positions=payload.get("open_positions") or {},
         ))
     except Exception as e:
         logger.critical("Fallo catastrofico en el motor: %s", str(e), exc_info=True)
@@ -142,7 +248,8 @@ async def run_all(
     capital: float,
     risk_per_trade: float,
     is_real: bool,
-    only_closed_candles: bool = False,
+    signal_mode: str = "close",
+    open_positions: dict | None = None,
 ) -> None:
     """Lanza un task por simbolo y mantiene el proceso vivo mientras haya streams."""
     tasks = [
@@ -153,7 +260,8 @@ async def run_all(
             capital,
             risk_per_trade,
             is_real,
-            only_closed_candles=only_closed_candles,
+            signal_mode=signal_mode,
+            open_position=(open_positions or {}).get(sym),
         )
         for sym in symbols
     ]

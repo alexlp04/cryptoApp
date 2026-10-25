@@ -33,6 +33,8 @@ import lombok.extern.slf4j.Slf4j;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class StrategyQueryServiceTest {
 
+    private static final Long USER = 5L;
+
     @Mock
     private InstanciaEstrategiaRepositoryPort instanciaRepo;
 
@@ -84,22 +86,22 @@ class StrategyQueryServiceTest {
         void should_return_string_list_from_findAll() {
             InstanciaEstrategia inst1 = crearInstanciaTest("RSISMAStrategy", EstadoEstrategia.ACTIVA);
             InstanciaEstrategia inst2 = crearInstanciaTest("ToggleStrategy", EstadoEstrategia.DETENIDA);
-            doReturn(List.of(inst1, inst2)).when(instanciaRepo).findAll();
+            doReturn(List.of(inst1, inst2)).when(instanciaRepo).findByUsuarioId(USER);
 
-            List<String> result = queryService.listarEstrategias();
+            List<String> result = queryService.listarEstrategias(USER);
 
             assertThat(result, hasSize(2));
             assertThat(result.get(0), is(inst1.toString()));
             assertThat(result.get(1), is(inst2.toString()));
-            verify(instanciaRepo, times(1)).findAll();
+            verify(instanciaRepo, times(1)).findByUsuarioId(USER);
         }
 
         @Test
         @DisplayName("✓ Debe retornar lista vacía cuando no hay instancias")
         void should_return_empty_list_when_no_instances() {
-            doReturn(List.of()).when(instanciaRepo).findAll();
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioId(USER);
 
-            List<String> result = queryService.listarEstrategias();
+            List<String> result = queryService.listarEstrategias(USER);
 
             assertThat(result, hasSize(0));
         }
@@ -108,9 +110,9 @@ class StrategyQueryServiceTest {
         @DisplayName("✓ Debe retornar lista de un elemento con una sola instancia")
         void should_return_single_element_list_when_one_instance() {
             InstanciaEstrategia inst = crearInstanciaTest("RSISMAStrategy", EstadoEstrategia.ACTIVA);
-            doReturn(List.of(inst)).when(instanciaRepo).findAll();
+            doReturn(List.of(inst)).when(instanciaRepo).findByUsuarioId(USER);
 
-            List<String> result = queryService.listarEstrategias();
+            List<String> result = queryService.listarEstrategias(USER);
 
             assertThat(result, hasSize(1));
         }
@@ -127,21 +129,21 @@ class StrategyQueryServiceTest {
         @DisplayName("✓ Debe retornar strings de instancias activas cuando existen")
         void should_return_active_instances_when_exist() {
             InstanciaEstrategia inst = crearInstanciaTest("RSISMAStrategy", EstadoEstrategia.ACTIVA);
-            doReturn(List.of(inst)).when(instanciaRepo).findByEstado(EstadoEstrategia.ACTIVA);
+            doReturn(List.of(inst)).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
 
-            List<String> result = queryService.listarEstrategiasActivas();
+            List<String> result = queryService.listarEstrategiasActivas(USER);
 
             assertThat(result, hasSize(1));
             assertThat(result.get(0), is(inst.toString()));
-            verify(instanciaRepo, times(1)).findByEstado(EstadoEstrategia.ACTIVA);
+            verify(instanciaRepo, times(1)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
         }
 
         @Test
         @DisplayName("✓ Debe retornar mensaje 'No hay estrategias activas.' cuando la lista está vacía")
         void should_return_no_active_message_when_empty() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.ACTIVA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
 
-            List<String> result = queryService.listarEstrategiasActivas();
+            List<String> result = queryService.listarEstrategiasActivas(USER);
 
             assertThat(result, contains("No hay estrategias activas."));
         }
@@ -149,12 +151,12 @@ class StrategyQueryServiceTest {
         @Test
         @DisplayName("✓ Debe filtrar solo por estado ACTIVA, no DETENIDA")
         void should_query_only_activa_state() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.ACTIVA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
 
-            queryService.listarEstrategiasActivas();
+            queryService.listarEstrategiasActivas(USER);
 
-            verify(instanciaRepo, times(0)).findByEstado(EstadoEstrategia.DETENIDA);
-            verify(instanciaRepo, times(1)).findByEstado(EstadoEstrategia.ACTIVA);
+            verify(instanciaRepo, times(0)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
+            verify(instanciaRepo, times(1)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
         }
     }
 
@@ -169,9 +171,9 @@ class StrategyQueryServiceTest {
         @DisplayName("✓ Debe retornar strings de instancias detenidas cuando existen")
         void should_return_paused_instances_when_exist() {
             InstanciaEstrategia inst = crearInstanciaTest("ToggleStrategy", EstadoEstrategia.DETENIDA);
-            doReturn(List.of(inst)).when(instanciaRepo).findByEstado(EstadoEstrategia.DETENIDA);
+            doReturn(List.of(inst)).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
 
-            List<String> result = queryService.listarEstrategiasDetenidas();
+            List<String> result = queryService.listarEstrategiasDetenidas(USER);
 
             assertThat(result, hasSize(1));
             assertThat(result.get(0), is(inst.toString()));
@@ -180,9 +182,9 @@ class StrategyQueryServiceTest {
         @Test
         @DisplayName("✓ Debe retornar mensaje 'No hay estrategias en pausa.' cuando la lista está vacía")
         void should_return_no_paused_message_when_empty() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.DETENIDA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
 
-            List<String> result = queryService.listarEstrategiasDetenidas();
+            List<String> result = queryService.listarEstrategiasDetenidas(USER);
 
             assertThat(result, contains("No hay estrategias en pausa."));
         }
@@ -190,12 +192,12 @@ class StrategyQueryServiceTest {
         @Test
         @DisplayName("✓ Debe filtrar solo por estado DETENIDA")
         void should_query_only_detenida_state() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.DETENIDA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
 
-            queryService.listarEstrategiasDetenidas();
+            queryService.listarEstrategiasDetenidas(USER);
 
-            verify(instanciaRepo, times(1)).findByEstado(EstadoEstrategia.DETENIDA);
-            verify(instanciaRepo, times(0)).findByEstado(EstadoEstrategia.ACTIVA);
+            verify(instanciaRepo, times(1)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
+            verify(instanciaRepo, times(0)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
         }
 
         @Test
@@ -203,9 +205,9 @@ class StrategyQueryServiceTest {
         void should_return_multiple_paused_instances() {
             InstanciaEstrategia inst1 = crearInstanciaTest("RsiStrategy", EstadoEstrategia.DETENIDA);
             InstanciaEstrategia inst2 = crearInstanciaTest("SmaStrategy", EstadoEstrategia.DETENIDA);
-            doReturn(List.of(inst1, inst2)).when(instanciaRepo).findByEstado(EstadoEstrategia.DETENIDA);
+            doReturn(List.of(inst1, inst2)).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.DETENIDA);
 
-            List<String> result = queryService.listarEstrategiasDetenidas();
+            List<String> result = queryService.listarEstrategiasDetenidas(USER);
 
             assertThat(result, hasSize(2));
         }
@@ -222,9 +224,9 @@ class StrategyQueryServiceTest {
         @DisplayName("✓ Debe retornar strings de instancias terminadas cuando existen")
         void should_return_terminated_instances_when_exist() {
             InstanciaEstrategia inst = crearInstanciaTest("RSISMAStrategy", EstadoEstrategia.TERMINADA);
-            doReturn(List.of(inst)).when(instanciaRepo).findByEstado(EstadoEstrategia.TERMINADA);
+            doReturn(List.of(inst)).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.TERMINADA);
 
-            List<String> result = queryService.listarEstrategiasTerminadas();
+            List<String> result = queryService.listarEstrategiasTerminadas(USER);
 
             assertThat(result, hasSize(1));
             assertThat(result.get(0), is(inst.toString()));
@@ -233,9 +235,9 @@ class StrategyQueryServiceTest {
         @Test
         @DisplayName("✓ Debe retornar mensaje 'No hay estrategias terminadas.' cuando la lista está vacía")
         void should_return_no_terminated_message_when_empty() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.TERMINADA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.TERMINADA);
 
-            List<String> result = queryService.listarEstrategiasTerminadas();
+            List<String> result = queryService.listarEstrategiasTerminadas(USER);
 
             assertThat(result, contains("No hay estrategias terminadas."));
         }
@@ -243,12 +245,12 @@ class StrategyQueryServiceTest {
         @Test
         @DisplayName("✓ Debe filtrar solo por estado TERMINADA")
         void should_query_only_terminada_state() {
-            doReturn(List.of()).when(instanciaRepo).findByEstado(EstadoEstrategia.TERMINADA);
+            doReturn(List.of()).when(instanciaRepo).findByUsuarioIdAndEstado(USER, EstadoEstrategia.TERMINADA);
 
-            queryService.listarEstrategiasTerminadas();
+            queryService.listarEstrategiasTerminadas(USER);
 
-            verify(instanciaRepo, times(1)).findByEstado(EstadoEstrategia.TERMINADA);
-            verify(instanciaRepo, times(0)).findByEstado(EstadoEstrategia.ACTIVA);
+            verify(instanciaRepo, times(1)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.TERMINADA);
+            verify(instanciaRepo, times(0)).findByUsuarioIdAndEstado(USER, EstadoEstrategia.ACTIVA);
         }
     }
 

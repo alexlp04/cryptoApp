@@ -36,6 +36,13 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
+        if (args.isReal()) {
+            // Una orden real necesita un adaptador de exchange; sin él sería una simulación con otro nombre.
+            context.println().accept("El modo real (-r) no está disponible: no hay ningún exchange conectado. "
+                    + "Usa -v para operar en paper trading.");
+            return;
+        }
+
         if (!validarEstrategiaYModelo(args, context)) {
             return;
         }
@@ -46,13 +53,15 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
-        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
+        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade, fracción del capital que se pierde si salta el stop (0.01 = 1 %, máx. 0.10): ");
         if (risk == null) {
             return;
         }
 
         context.strategyLifecycleUseCase().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
-                args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado);
+                args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado,
+                args.getSignalMode() == null ? "close" : args.getSignalMode(),
+                context.sessionManager().getCurrentUser().getId());
         context.println().accept("Bot lanzado en segundo plano con exito.");
     }
 
@@ -62,18 +71,20 @@ public final class TradeCommand implements CliCommand {
                 || args.getTimeframe() == null || args.getCoins().isEmpty()
                 || (args.getEstrategia() == null && args.getModelo() == null)) {
             context.println().accept(
-                    "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...]");
+                    "Uso correcto: trade -v|-r [-strategy <nombre>] [-model <nombre>] -tf <timeframe> -coins <coin1> [coin2...] [-signal close|open|both]");
             return false;
-        }
-
-        if (args.isReal()) {
-            context.println().accept("ADVERTENCIA: Has seleccionado MODO REAL. Asegurate de tener fondos y entender los riesgos.");
         }
 
         return true;
     }
 
     private boolean validarEstrategiaYModelo(CommandParser args, CliCommandContext context) {
+
+        if (args.getModelo() != null && args.getSignalMode() != null && !"close".equals(args.getSignalMode())) {
+            // Los modelos se entrenan con velas cerradas: sobre una vela recién abierta sus features serían basura.
+            context.println().accept("Error: con -model solo se admite -signal close.");
+            return false;
+        }
 
         if (args.getModelo() != null && args.getEstrategia() == null) {
             context.println().accept("Error: -model requiere tambien -strategy para calcular indicadores.");
@@ -123,7 +134,7 @@ public final class TradeCommand implements CliCommand {
 
     private BigDecimal leerCapitalAsignado(CliCommandContext context, BigDecimal disponible) {
 
-        BigDecimal capitalAsignado = CliInputValidator.readBigDecimal(context,
+        BigDecimal capitalAsignado = CliInputValidator.readPositiveBigDecimal(context,
             "Capital a asignar a este bot: ", "capital asignado");
         if (capitalAsignado == null) {
             return null;
