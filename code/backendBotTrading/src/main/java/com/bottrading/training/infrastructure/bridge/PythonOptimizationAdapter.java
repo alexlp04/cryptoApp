@@ -56,8 +56,8 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
                     .operationName("optimize-hyperparams")
                     .noTimeout()
                     .inactivityTimeout(ProcessExecutorConfig.OPTIMIZE_INACTIVITY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
-                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
+                    // No idempotente ni barato: un fallo del script debe llegar al usuario, no relanzar horas de trabajo.
+                    .maxRetries(1)
                     .stdinWriter(os -> IpcMessagePackCodec.writeEnvelope(os, IpcMessageType.OPTIMIZE_REQUEST, payload))
                     .stdoutReader(this::leerOptimizationResult)
                     .onStderrLine(line -> log.info("PY [optimize]: {}", line))
@@ -126,7 +126,7 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
         return fileName.endsWith(".py") ? fileName.substring(0, fileName.length() - 3) : fileName;
     }
 
-    private OptimizationResult leerOptimizationResult(InputStream inputStream) throws IOException {
+    OptimizationResult leerOptimizationResult(InputStream inputStream) throws IOException {
         Map<String, Object> envelope = IpcMessagePackCodec.readEnvelope(inputStream);
         Object payload = envelope.get("payload");
         if (!(payload instanceof Map<?, ?> rawPayload)) {
@@ -141,7 +141,8 @@ public class PythonOptimizationAdapter implements OptimizationEnginePort {
         Map<String, Object> resultData = (Map<String, Object>) rawPayload;
 
         String errorMessage = success ? null : String.valueOf(
-                rawPayload.containsKey("error") ? rawPayload.get("error") : "Optimización fallida");
+                rawPayload.get("message") != null ? rawPayload.get("message")
+                        : (rawPayload.get("error") != null ? rawPayload.get("error") : "Optimización fallida"));
         return new OptimizationResult(resultData, success, errorMessage);
     }
 }
