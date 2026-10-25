@@ -166,6 +166,7 @@ posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_manageme
 - Stop y objetivo se ejecutan con el rango de la vela (`low`/`high`), no solo con el cierre; si una vela toca los dos
   gana el stop. En vivo los vigila el motor Python en cada mensaje del stream (`PositionTracker`) y emite un `SELL`
   con `reason` `STOP` u `TARGET`. Java le pasa las posiciones abiertas (`open_positions`) al (re)arrancar.
+- Ejecución en backtest: `execution` `market` (por defecto) o `limit` (orden pasiva al cierre, vive una vela, se llena solo si el precio la atraviesa; sin slippage). Medido en BTC/ETH/SOL con tendencia long-only: en 4h la orden límite rinde menos que mercado (se pierden las entradas que se escapan). No hay modo límite en vivo.
 - La señal `BUY` lleva `stop_loss` y `take_profit`; el `SELL`, `reason` (`SIGNAL`, `STOP`, `TARGET`).
 - No existe modo real: `trade -r` y `iniciarTradeRT(isReal=true)` se rechazan porque no hay adaptador de exchange.
   Una orden «real» sin él sería una simulación con otro nombre. Cuando haya adaptador, va detrás de un puerto de
