@@ -44,11 +44,12 @@ El contenedor se reinicia solo (`restart: unless-stopped`), también tras un cor
 - Modo real: sigue rechazado (no hay adaptador de exchange). Esto es paper trading.
 
 ## Limitaciones conocidas
-- **TensorFlow:** no hay rueda de `tensorflow==2.21.0` para arm64 (la última es la 2.20.0). Por defecto la imagen no lo
-  trae, y cargan los modelos de scikit-learn, XGBoost y LightGBM. Para modelos Keras fija la misma versión en tu PC y en
-  `TENSORFLOW_SPEC` (p. ej. `tensorflow==2.20.0`) y reentrénalos: el manifiesto rechaza modelos con otra versión mayor.menor.
-- **Versiones de librerías:** el PC y la imagen usan las de `requirements.txt`. Si actualizas una en un lado, actualízala en
-  el otro y reentrena.
+- **TensorFlow / modelos Keras:** no hay rueda de `tensorflow==2.21.0` para arm64 (la última es la 2.20.0), así que la imagen
+  no lo trae y no carga modelos Keras; sí los de scikit-learn, XGBoost y LightGBM. Para Keras en la Pi habría que fijar en
+  el PC y en la imagen una versión que exista para arm64 y reentrenar: el manifiesto rechaza otra versión mayor.menor.
+- **Versiones de librerías:** el PC usa `requirements.txt` y la imagen `deploy/requirements.lock` (mismas versiones, con
+  hashes). Si cambias una versión, regenera el bloqueo con `pip install uv && deploy/lock-requirements.sh` (un test
+  falla si se desincronizan) y reentrena los modelos afectados.
 - **Sin healthcheck de la app:** Docker reinicia el contenedor si el proceso muere, pero no detecta un motor Python colgado.
   La API de estado lo resolverá.
 - **Probado en x86:** la imagen se ha construido y arrancado en x86. En arm64 las dependencias tienen rueda (comprobado
