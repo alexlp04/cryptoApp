@@ -171,3 +171,19 @@ def test_si_falta_una_columna_del_modelo_el_backtest_falla_en_alto():
 
     with pytest.raises(ValueError, match="no_existe"):
         engine_backtest._generar_predicciones(net, "deep_learning", _Strategy(), _df(1), None)
+
+
+def test_un_modelo_de_tres_clases_mantiene_la_posicion_con_la_prediccion_neutral():
+    from engine_backtest import _holds_on_neutral
+
+    class _Encoder:
+        classes_ = (-1, 0, 1)
+
+    class _Binario:
+        classes_ = (0, 1)
+
+    class _Tres:
+        label_encoder = _Encoder()
+
+    assert _holds_on_neutral(_Tres(), None) and _holds_on_neutral(object(), [-1, 0, 1])
+    assert not _holds_on_neutral(_Binario(), None) and not _holds_on_neutral(object(), [0, 1])

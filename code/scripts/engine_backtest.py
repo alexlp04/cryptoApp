@@ -93,6 +93,14 @@ def _generar_predicciones(
     return preds
 
 
+def _holds_on_neutral(model, label_classes: list[int] | None) -> bool:
+    """Modelo de 3 clases (-1/0/1): la predicción neutral no cierra, igual que en el motor RT con IA."""
+    if label_classes is not None:
+        return -1 in label_classes
+    classes = getattr(getattr(model, "label_encoder", None), "classes_", getattr(model, "classes_", []))
+    return -1 in list(classes)
+
+
 def _evaluation_window(
     df: pd.DataFrame, model, strategy, include_train: bool, symbol: str,
 ) -> pd.DataFrame:
@@ -204,7 +212,8 @@ def main() -> None:
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)
                 stats = run_backtest_with_predictions(
                     strategy, df_con_indicadores, predictions, symbol,
-                    fee_rate=fee_rate, slippage=slippage, execution=execution)
+                    fee_rate=fee_rate, slippage=slippage, execution=execution,
+                    hold_on_neutral=_holds_on_neutral(model, label_classes))
                 trade_count = stats.get("op_totales", 0)
                 logger.info(
                     "Backtest IA para %s: %d ops, win_rate=%.1f%%, pf=%.4f",

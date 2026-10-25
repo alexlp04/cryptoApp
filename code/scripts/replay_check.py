@@ -19,6 +19,7 @@ import io
 import itertools
 import json
 import sys
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -72,18 +73,21 @@ class _ReplayStream:
                 high, low = max(high, price), min(low, price)
                 last = i == len(prices) - 1
                 yield json.dumps({"k": {
-                    "t": candle["timestamp"], "o": str(candle["open"]),
+                    "t": candle["timestamp"], "T": candle["timestamp"] + 1, "o": str(candle["open"]),
                     "h": str(candle["high"] if last else high), "l": str(candle["low"] if last else low),
                     "c": str(price), "v": str(candle["volume"]), "x": last}})
 
 
-def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int) -> list[dict]:
-    """Señales que emite engine_rt.run_symbol al recibir `candles` tras sembrar su buffer con `seed`.
+def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int, ai_model=None) -> list[dict]:
+    """Señales que emite el motor RT al recibir `candles` tras sembrar su buffer con `seed`.
 
     window es el max_candles del motor; el buffer real es max(window, WARMUP_PERIOD de la estrategia).
+    Con ai_model se usa engine_ai_rt (el modelo ya cargado); sin él, engine_rt.
     """
+    import engine_ai_rt
     import engine_rt
 
+    engine = engine_ai_rt if ai_model is not None else engine_rt
     out = io.StringIO()
 
     async def stop(*_):
@@ -91,31 +95,56 @@ def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int) 
 
     async def run() -> None:
         with contextlib.suppress(_Done):
-            await engine_rt.run_symbol("TESTUSDT", "1h", "x.py", 10_000.0, 0.01, False, max_candles=window)
+            if ai_model is not None:
+                await engine.run_symbol("TESTUSDT", "1h", "x.py", "stub", 10_000.0, 0.01, False, max_candles=window)
+            else:
+                await engine.run_symbol("TESTUSDT", "1h", "x.py", 10_000.0, 0.01, False, max_candles=window)
 
-    with (contextlib.redirect_stdout(out),
-          mock.patch.object(engine_rt, "load_strategy_by_path", lambda *a, **k: strategy_rt),
-          mock.patch.object(engine_rt, "fetch_recent_klines", lambda *a, **k: list(seed)),
-          mock.patch.object(engine_rt.websockets, "connect", lambda url: _ReplayStream(candles, out)),
-          mock.patch.object(asyncio, "sleep", stop)):
+    patches: list[Any] = [
+        mock.patch.object(engine, "load_strategy_by_path", lambda *a, **k: strategy_rt),
+        mock.patch.object(engine, "fetch_recent_klines", lambda *a, **k: list(seed)),
+        mock.patch.object(engine.websockets, "connect", lambda url: _ReplayStream(candles, out)),
+        mock.patch.object(asyncio, "sleep", stop),
+    ]
+    if ai_model is not None:
+        patches.append(mock.patch.object(engine, "load_model", lambda *a, **k: (ai_model[0], "ml_standard", ai_model[1])))
+    with contextlib.redirect_stdout(out), contextlib.ExitStack() as stack:
+        for patch in patches:
+            stack.enter_context(patch)
         asyncio.run(run())
     signals = [json.loads(ln.split("\t", 1)[1]) for ln in out.getvalue().splitlines() if ln.startswith("SIGNAL")]
     return [{**s, "price": float(s["price"])} for s in signals]  # el motor emite el precio como texto
 
 
-def _backtest_events(strategy_bt, df: pd.DataFrame) -> list[dict]:
-    from backtest_engine import run_backtest
-
+def _backtest_events(strategy_bt, df: pd.DataFrame, ai_model=None) -> list[dict]:
+    """Operaciones del backtest (clásico o, con ai_model=(modelo, clases), con predicciones del modelo)."""
     events: list[dict] = []
-    # on_trade no se expone en run_backtest: se captura escribiendo los trades a un CSV temporal
+
+    def on_trade(side: str, price: float, timestamp: int, pnl: float | None, cap: float | None) -> None:
+        events.append({"action": side, "timestamp": timestamp, "price": price})
+
+    if ai_model is not None:
+        from backtest_engine import run_backtest_with_predictions
+        from engine_backtest import _generar_predicciones, _holds_on_neutral
+
+        model, label_classes = ai_model
+        enriched = strategy_bt.populate_indicators(df.copy()).reset_index(drop=True)
+        preds = _generar_predicciones(model, "ml_standard", strategy_bt, enriched, label_classes)
+        run_backtest_with_predictions(strategy_bt, enriched, preds, "TESTUSDT", fee_rate=0.0, slippage=0.0,
+                                      hold_on_neutral=_holds_on_neutral(model, label_classes), on_trade=on_trade)
+        return events
+
     import csv
     import tempfile
+
+    from backtest_engine import run_backtest
+
+    # run_backtest no expone on_trade: se captura escribiendo los trades a un CSV temporal
     with tempfile.TemporaryDirectory() as tmp:
         run_backtest(strategy_bt, df.copy(), "TESTUSDT", carpeta_estrategia=tmp, timeframe="1h",
                      escribir_trades=True, fee_rate=0.0, slippage=0.0)
-        path = f"{tmp}/TESTUSDT-1h-trades_backtest.csv"
         try:
-            with open(path, newline="", encoding="utf-8") as fh:
+            with open(f"{tmp}/TESTUSDT-1h-trades_backtest.csv", newline="", encoding="utf-8") as fh:
                 events = [{"action": r["side"], "timestamp": int(float(r["timestamp"])), "price": float(r["price"])}
                           for r in csv.DictReader(fh)]
         except FileNotFoundError:
@@ -123,11 +152,12 @@ def _backtest_events(strategy_bt, df: pd.DataFrame) -> list[dict]:
     return events
 
 
-def replay_vs_backtest(make_strategy, df: pd.DataFrame, window: int, candles: int = 1000) -> dict:
+def replay_vs_backtest(make_strategy, df: pd.DataFrame, window: int, candles: int = 1000, ai_model=None) -> dict:
     """Compara las operaciones del motor RT con las del backtest sobre las últimas `candles` velas de df.
 
     make_strategy: función sin argumentos que devuelve una estrategia nueva (cada lado necesita la suya).
     El backtest recibe `window` velas de calentamiento más las del replay, como el buffer sembrado del RT.
+    ai_model: (modelo, label_classes) para comparar el motor RT con IA contra el backtest con predicciones.
     """
     df = df.reset_index(drop=True)
     candles = min(candles, len(df) - window)
@@ -137,8 +167,8 @@ def replay_vs_backtest(make_strategy, df: pd.DataFrame, window: int, candles: in
     seed = df.iloc[start - window: start].to_dict("records")
     replay = df.iloc[start:].to_dict("records")
 
-    backtest = _backtest_events(make_strategy(), df.iloc[start - window:])
-    rt = _rt_events(make_strategy(), seed, replay, window)
+    backtest = _backtest_events(make_strategy(), df.iloc[start - window:], ai_model)
+    rt = _rt_events(make_strategy(), seed, replay, window, ai_model)
 
     # Se compara desde la primera apertura del backtest en el tramo del replay: el RT arranca sin posición.
     first_ts = int(df.iloc[start]["timestamp"])
