@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (490 tests)
+mvn test          # JUnit + H2 (496 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 343 tests
+pytest code/scripts/tests -q   # 347 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -200,8 +200,17 @@ de velas) lo comprueban antes de confiar en una estrategia:
   con el prefijo (lookahead: usa el futuro) y con la ventana del buffer RT (un indicador que necesita más velas
   que el buffer sale NaN o distinto en vivo).
 - `replay_check.py estrategia.py velas.csv`: pasa velas por `engine_rt.run_symbol` (el código real, con
-  trayectoria de precios por vela) y compara las señales con las del backtest. Solo cubre el motor clásico; no el
-  RT con IA ni la contabilidad de Java.
+  trayectoria de precios por vela) y compara las señales con las del backtest. Con un modelo (`ai_model`) hace lo
+  mismo con `engine_ai_rt` contra el backtest con predicciones.
+- `BacktestParityTest` (Java): seis operaciones (largo y corto; cierre por señal, stop y objetivo) dan en
+  `PaperTradingService` el mismo PnL neto que `run_backtest`. Si cambian costes o dimensionado, regenera los
+  valores esperados en los dos lados.
+
+Regla de decisión de la IA (backtest = vivo): con un modelo de 3 clases, 1 abre un largo, -1 lo cierra (y abre un
+corto si la estrategia los permite) y la predicción neutral no hace nada. Antes el backtest cerraba con cualquier
+predicción distinta de 1. Diferencias conocidas que quedan: el motor RT exige probabilidad >= 0,52 en modelos
+binarios de scikit-learn y el backtest usa el argmax; el RT omite la predicción si algún feature es NaN y el
+backtest los rellena con 0.
 
 Hallazgo: el buffer RT es `max(100, WARMUP_PERIOD)`. Una estrategia sin `WARMUP_PERIOD` (como un cruce de EMA 20/50)
 con buffer 100 pierde entradas que el backtest sí hace; con 300 coincide. Fija siempre `WARMUP_PERIOD` al mayor
