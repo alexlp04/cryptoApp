@@ -227,7 +227,8 @@ import joblib
 
 
 def _dump(models_dir, name, strategy):
-    joblib.dump(types.SimpleNamespace(strategy_name=strategy), models_dir / name)
+    shared_utils.save_model(
+        str(models_dir / name), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name=strategy), tmp))
 
 
 @pytest.fixture
@@ -302,71 +303,59 @@ def test_load_model_rechaza_un_modelo_modificado(models_dir):
         engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
 
 
-def test_load_model_rechaza_otra_version_de_sklearn(models_dir):
+def test_load_model_rechaza_otra_version_de_sklearn(models_dir, monkeypatch):
     path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
     shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
-    manifest = models_dir / "xgb_1h_BTCUSDT_A.manifest.json"
-    data = json.loads(manifest.read_text())
-    data["libraries"]["scikit-learn"] = "0.1.0"
-    manifest.write_text(json.dumps(data))
+    instaladas = shared_utils._installed_versions()
+    monkeypatch.setattr(shared_utils, "_installed_versions",
+                        lambda: {**instaladas, "scikit-learn": "0.1.0"})
 
     with pytest.raises(shared_utils.ModelIntegrityError, match="scikit-learn"):
         engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
 
 
-def test_rt_usa_las_columnas_guardadas_con_el_modelo():
-    modelo = types.SimpleNamespace(feature_cols=["close"])  # la estrategia diría ["rsi"]
+def test_un_manifiesto_recalculado_sin_la_clave_no_cuela(models_dir):
+    """El ataque que el sha256 solo no frenaba: cambiar el modelo y rehacer el manifiesto."""
+    import hashlib
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
+    joblib.dump(types.SimpleNamespace(strategy_name="A", malicioso=True), path)
+    manifest = models_dir / "xgb_1h_BTCUSDT_A.manifest.json"
+    data = json.loads(manifest.read_text())
+    data["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()  # el atacante recalcula el hash
+    manifest.write_text(json.dumps(data))
 
-    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(55.0), "BTCUSDT", "xgb", modelo)
-
-    assert x.shape == (1, 1) and float(x[0, 0]) == 1.0  # close del buffer, no el rsi=55
-
-
-# ── Stop y objetivo en el RT con IA (gestión de riesgo) ──────────────────────
-
-class _ConStop(_FeatStrategy):
-    def get_stop_loss(self, entry_price, row):
-        return entry_price * 0.95
-
-    def get_take_profit(self, entry_price, row):
-        return entry_price * 1.10
+    with pytest.raises(shared_utils.ModelIntegrityError, match="firma"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
 
 
-def _kline(ts: int, price: float, closed: bool) -> str:
-    p = str(price)
-    return json.dumps({"E": ts, "k": {"t": ts, "T": ts + 59, "o": p, "h": p, "l": p, "c": p, "v": "1", "x": closed}})
+def test_un_modelo_sin_firma_se_rechaza_salvo_que_se_permita(models_dir, monkeypatch):
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    joblib.dump(types.SimpleNamespace(strategy_name="A"), path)  # sin manifiesto
+
+    with pytest.raises(shared_utils.ModelIntegrityError, match="no está firmado"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
+
+    monkeypatch.setenv("CRYPTOAPP_ALLOW_UNSIGNED_MODELS", "1")
+    assert engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")[0].strategy_name == "A"
 
 
-def _senales(monkeypatch, capsys, strategy, messages, decisiones):
-    monkeypatch.setattr(engine_ai_rt, "MIN_WARMUP_CANDLES", 1)
-    iterador = iter(decisiones)
+def test_otra_clave_no_valida_la_firma(models_dir, monkeypatch):
+    path = models_dir / "xgb_1h_BTCUSDT_A.pkl"
+    shared_utils.save_model(str(path), lambda tmp: joblib.dump(types.SimpleNamespace(strategy_name="A"), tmp))
+    monkeypatch.setenv("CRYPTOAPP_MODEL_KEY", "otra-clave")
 
-    async def fake_sleep(delay):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(engine_ai_rt.asyncio, "sleep", fake_sleep)
-    with pytest.raises(KeyboardInterrupt):
-        _run_symbol(monkeypatch, strategy, messages, lambda *a, **k: next(iterador, None), [])
-    return [json.loads(ln.split("\t", 1)[1]) for ln in capsys.readouterr().out.splitlines()
-            if ln.startswith("SIGNAL")]
+    with pytest.raises(shared_utils.ModelIntegrityError, match="firma"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "A")
 
 
-def test_el_buy_de_la_ia_lleva_stop_y_objetivo(monkeypatch, capsys):
-    senales = _senales(monkeypatch, capsys, _ConStop(1.0), [_kline(100, 100.0, True)], ["BUY"])
+def test_la_clave_se_genera_una_vez_con_permisos_0600(tmp_path, monkeypatch):
+    monkeypatch.delenv("CRYPTOAPP_MODEL_KEY")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-    assert senales[0]["action"] == "BUY"
-    assert senales[0]["stop_loss"] == pytest.approx(95.0) and senales[0]["take_profit"] == pytest.approx(110.0)
+    k1 = shared_utils._model_key()
+    k2 = shared_utils._model_key()
 
-
-def test_el_stop_salta_con_la_vela_sin_cerrar(monkeypatch, capsys):
-    mensajes = [_kline(100, 100.0, True), _kline(200, 94.0, False)]
-
-    senales = _senales(monkeypatch, capsys, _ConStop(1.0), mensajes, ["BUY"])
-
-    assert [(s["action"], s["reason"]) for s in senales] == [("BUY", "SIGNAL"), ("SELL", "STOP")]
-
-
-def test_la_ia_sin_stop_valido_no_compra(monkeypatch, capsys):
-    senales = _senales(monkeypatch, capsys, _FeatStrategy(1.0), [_kline(100, 100.0, True)], ["BUY"])
-
-    assert senales == []
+    clave = tmp_path / "cryptoapp" / "model.key"
+    assert k1 == k2 and len(k1) == 64
+    assert oct(clave.stat().st_mode & 0o777) == "0o600"

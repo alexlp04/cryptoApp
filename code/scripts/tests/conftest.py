@@ -20,6 +20,13 @@ for _p in (_CODE_DIR, _SCRIPTS_DIR):
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _clave_de_modelos(monkeypatch):
+    """Los tests firman y verifican modelos con una clave propia: nunca tocan ~/.config del usuario."""
+    monkeypatch.setenv("CRYPTOAPP_MODEL_KEY", "clave-solo-para-tests")
+    monkeypatch.delenv("CRYPTOAPP_ALLOW_UNSIGNED_MODELS", raising=False)
+
+
 @pytest.fixture
 def df_ohlcv_mock() -> pd.DataFrame:
     """DataFrame OHLCV sintético de 200 velas (seed fija para reproducibilidad)."""

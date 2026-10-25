@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (481 tests)
+mvn test          # JUnit + H2 (482 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 285 tests
+pytest code/scripts/tests -q   # 306 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -170,6 +170,19 @@ posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_manageme
 - No existe modo real: `trade -r` y `iniciarTradeRT(isReal=true)` se rechazan porque no hay adaptador de exchange.
   Una orden «real» sin él sería una simulación con otro nombre. Cuando haya adaptador, va detrás de un puerto de
   ejecución y `PaperTradingService` pasa a ser una de sus implementaciones.
+
+## Seguridad (decisiones que no deben deshacerse)
+
+- **Modelos firmados.** `joblib.load` ejecuta código: `save_model` guarda un manifiesto con sha256, versiones de
+  librerías y un HMAC; `load_model` rechaza lo que no esté firmado por esta instalación. La clave sale de
+  `CRYPTOAPP_MODEL_KEY` o de `~/.config/cryptoapp/model.key` (0600, fuera de `models/`). Un modelo sin firma exige
+  reentrenar, o `CRYPTOAPP_ALLOW_UNSIGNED_MODELS=1` si confías en el fichero.
+- **Nombres a rutas.** Símbolo (`[A-Z0-9]{2,20}`), timeframe y nombre de modelo o estrategia se validan en la CLI
+  (`CommandParser.esSimboloValido`) **y** en la frontera de cada engine (`require_symbol`, `require_timeframe`,
+  `require_name`): acaban en nombres de fichero y URLs.
+- **Dependencias.** Spring Boot se mantiene en una línea con soporte; `jackson-bom.version` y `log4j2.version` del
+  `pom.xml` van por delante del BOM solo para parches GHSA: quítalos cuando Boot gestione una versión igual o mayor.
+  Antes de promocionar, consulta las versiones contra OSV (`api.osv.dev/v1/querybatch`).
 
 ## Reglas de código
 
