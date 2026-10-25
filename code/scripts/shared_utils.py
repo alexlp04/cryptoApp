@@ -141,6 +141,26 @@ def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[d
     ]
 
 
+async def seed_buffer(buffer: Any, symbol: str, timeframe: str, limit: int, fetch: Any = None) -> None:
+    """Rellena el buffer con velas cerradas por REST (`fetch` por defecto es fetch_recent_klines).
+
+    Se llama al conectar y al reconectar el stream RT: sin esperar horas a juntar el calentamiento
+    y sin huecos por las velas que se perdieron mientras el WebSocket estuvo caído. Si el REST
+    falla se sigue con lo que haya en el buffer y se acumula desde el stream.
+    """
+    import asyncio
+
+    log = logging.getLogger(__name__)
+    try:
+        klines = await asyncio.to_thread(fetch or fetch_recent_klines, symbol, timeframe, limit)
+    except Exception:
+        log.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
+        return
+    buffer.clear()
+    buffer.extend(klines)
+    log.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(buffer))
+
+
 def encode_labels(y_train_raw: Any, y_test_raw: Any) -> tuple[Any, Any, Any, Any]:
     """Codifica labels a 0..K-1 con las clases de train y descarta del test las que no vio.
 

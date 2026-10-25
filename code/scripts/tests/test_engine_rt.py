@@ -90,6 +90,12 @@ class _Strategy:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _sin_red(monkeypatch):
+    """Los tests no tocan el REST de Binance: el sembrado devuelve vacío salvo que el test lo cambie."""
+    monkeypatch.setattr(engine_rt, "fetch_recent_klines", lambda *a, **k: [])
+
+
 def _run(monkeypatch, messages, strategy, sleeps):
     monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: strategy)
     monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
@@ -182,3 +188,34 @@ def test_modo_both_evalua_cierre_y_apertura(monkeypatch, capsys):
 def test_un_modo_desconocido_es_un_error():
     with pytest.raises(ValueError, match="signal_mode"):
         asyncio.run(engine_rt.run_symbol("BTCUSDT", "1m", "x.py", 1000.0, 0.02, False, signal_mode="nunca"))
+
+
+# ── Sembrado y huecos al (re)conectar (#63) ─────────────────────────────────
+
+def test_al_conectar_el_buffer_se_siembra_y_la_estrategia_no_espera_al_calentamiento(monkeypatch):
+    sleeps: list = []
+    strategy = _Strategy()
+    strategy.WARMUP_PERIOD = 5
+    historico = [{"timestamp": t, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}
+                 for t in range(1, 6)]
+    monkeypatch.setattr(engine_rt, "fetch_recent_klines", lambda *a, **k: list(historico))
+
+    with pytest.raises(_Stop):
+        _run(monkeypatch, [_kline(6)], strategy, sleeps)
+
+    assert strategy.calls == 3  # sin sembrar, 1 vela < WARMUP_PERIOD=5 y no se evaluaba nunca
+
+
+def test_si_el_rest_falla_se_sigue_con_el_stream(monkeypatch):
+    sleeps: list = []
+    strategy = _Strategy()
+
+    def roto(*a, **k):
+        raise OSError("sin red")
+
+    monkeypatch.setattr(engine_rt, "fetch_recent_klines", roto)
+
+    with pytest.raises(_Stop):
+        _run(monkeypatch, [_kline(1)], strategy, sleeps)
+
+    assert strategy.calls == 3  # el stream se procesó igual en cada conexión
