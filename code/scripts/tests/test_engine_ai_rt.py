@@ -359,3 +359,106 @@ def test_la_clave_se_genera_una_vez_con_permisos_0600(tmp_path, monkeypatch):
     clave = tmp_path / "cryptoapp" / "model.key"
     assert k1 == k2 and len(k1) == 64
     assert oct(clave.stat().st_mode & 0o777) == "0o600"
+
+
+def test_rt_usa_las_columnas_guardadas_con_el_modelo():
+    modelo = types.SimpleNamespace(feature_cols=["close"])  # la estrategia diría ["rsi"]
+
+    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(55.0), "BTCUSDT", "xgb", modelo)
+
+    assert x.shape == (1, 1) and float(x[0, 0]) == 1.0  # close del buffer, no el rsi=55
+
+
+# ── Stop y objetivo en el RT con IA (gestión de riesgo) ──────────────────────
+
+class _ConStop(_FeatStrategy):
+    def get_stop_loss(self, entry_price, row):
+        return entry_price * 0.95
+
+    def get_take_profit(self, entry_price, row):
+        return entry_price * 1.10
+
+
+def _kline(ts: int, price: float, closed: bool) -> str:
+    p = str(price)
+    return json.dumps({"E": ts, "k": {"t": ts, "T": ts + 59, "o": p, "h": p, "l": p, "c": p, "v": "1", "x": closed}})
+
+
+def _senales(monkeypatch, capsys, strategy, messages, decisiones):
+    monkeypatch.setattr(engine_ai_rt, "MIN_WARMUP_CANDLES", 1)
+    iterador = iter(decisiones)
+
+    async def fake_sleep(delay):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(engine_ai_rt.asyncio, "sleep", fake_sleep)
+    with pytest.raises(KeyboardInterrupt):
+        _run_symbol(monkeypatch, strategy, messages, lambda *a, **k: next(iterador, None), [])
+    return [json.loads(ln.split("\t", 1)[1]) for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("SIGNAL")]
+
+
+def test_el_buy_de_la_ia_lleva_stop_y_objetivo(monkeypatch, capsys):
+    senales = _senales(monkeypatch, capsys, _ConStop(1.0), [_kline(100, 100.0, True)], ["BUY"])
+
+    assert senales[0]["action"] == "BUY"
+    assert senales[0]["stop_loss"] == pytest.approx(95.0) and senales[0]["take_profit"] == pytest.approx(110.0)
+
+
+def test_el_stop_salta_con_la_vela_sin_cerrar(monkeypatch, capsys):
+    mensajes = [_kline(100, 100.0, True), _kline(200, 94.0, False)]
+
+    senales = _senales(monkeypatch, capsys, _ConStop(1.0), mensajes, ["BUY"])
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("BUY", "SIGNAL"), ("SELL", "STOP")]
+
+
+def test_la_ia_sin_stop_valido_no_compra(monkeypatch, capsys):
+    senales = _senales(monkeypatch, capsys, _FeatStrategy(1.0), [_kline(100, 100.0, True)], ["BUY"])
+
+    assert senales == []
+
+
+class _StopPorAtr(_FeatStrategy):
+    """Como una estrategia real: el stop sale de una columna de indicador, no de la vela cruda."""
+
+    def populate_indicators(self, df):
+        df["rsi"] = 1.0
+        df["atr"] = 2.0
+        return df
+
+    def get_stop_loss(self, entry_price, row):
+        return entry_price - 1.5 * row["atr"]
+
+    def get_take_profit(self, entry_price, row):
+        return entry_price + 3.0 * row["atr"]
+
+
+def test_el_stop_por_atr_usa_la_fila_con_indicadores(monkeypatch, capsys):
+    senales = _senales(monkeypatch, capsys, _StopPorAtr(1.0), [_kline(100, 100.0, True)], ["BUY"])
+
+    assert senales[0]["action"] == "BUY"
+    assert senales[0]["stop_loss"] == pytest.approx(97.0) and senales[0]["take_profit"] == pytest.approx(106.0)
+
+
+class _ConStopYCortos(_ConStop):
+    allow_short = True
+
+    def get_short_stop_loss(self, entry_price, row):
+        return entry_price * 1.05
+
+    def get_short_take_profit(self, entry_price, row):
+        return entry_price * 0.90
+
+
+def test_la_ia_abre_un_corto_con_la_prediccion_de_bajada_y_el_stop_lo_cubre(monkeypatch, capsys):
+    mensajes = [_kline(100, 100.0, True), _kline(200, 106.0, False)]
+
+    senales = _senales(monkeypatch, capsys, _ConStopYCortos(1.0), mensajes, ["SELL"])
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("SHORT", "SIGNAL"), ("COVER", "STOP")]
+    assert senales[0]["stop_loss"] == pytest.approx(105.0)
+
+
+def test_la_ia_sin_allow_short_ignora_la_prediccion_de_bajada_sin_posicion(monkeypatch, capsys):
+    assert _senales(monkeypatch, capsys, _ConStop(1.0), [_kline(100, 100.0, True)], ["SELL"]) == []

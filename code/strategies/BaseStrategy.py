@@ -60,6 +60,26 @@ class BaseStrategy(ABC):
             or row["close"] >= self.get_take_profit(entry_price, row)
         )
 
+    # ── Cortos (opcionales) ────────────────────────────────────────────
+    # Una estrategia que opera en las dos direcciones pone allow_short = True y sobreescribe should_short /
+    # should_cover. Se simulan sin apalancamiento (el nocional sale del mismo capital), sin funding.
+
+    allow_short: bool = False
+
+    def should_short(self, row: dict) -> bool:
+        return False
+
+    def should_cover(self, row: dict) -> bool:
+        return False
+
+    def get_short_stop_loss(self, entry_price: float, row: dict) -> float:
+        """Por defecto, la misma distancia que el stop largo pero por encima de la entrada."""
+        return 2 * entry_price - self.get_stop_loss(entry_price, row)
+
+    def get_short_take_profit(self, entry_price: float, row: dict) -> float:
+        """Por defecto, simétrico al objetivo largo; si cae a 0 o menos, el corto no tiene objetivo."""
+        return 2 * entry_price - self.get_take_profit(entry_price, row)
+
     def max_open_trades(self) -> int:
         return 1
 

@@ -317,3 +317,62 @@ def test_una_posicion_abierta_al_arrancar_tambien_esta_protegida(monkeypatch, ca
     senales = _signals(monkeypatch, capsys, _Strategy(), [_tick(1000, False, 90.0)], open_position=posicion)
 
     assert [(s["action"], s["reason"]) for s in senales] == [("SELL", "STOP")]
+
+
+class _SoloCorto(_SoloCompra):
+    allow_short = True
+
+    def should_buy(self, row):
+        return False
+
+    def should_short(self, row):
+        return True
+
+    def should_cover(self, row):
+        return False
+
+    def get_short_stop_loss(self, entry_price, row):
+        return 105.0
+
+    def get_short_take_profit(self, entry_price, row):
+        return 90.0
+
+
+def test_el_short_lleva_stop_por_encima_y_se_cubre_con_cover(monkeypatch, capsys):
+    mensajes = [_tick(1000, True, 100.0), _tick(2000, False, 106.0)]
+
+    senales = _signals(monkeypatch, capsys, _SoloCorto(), mensajes)
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("SHORT", "SIGNAL"), ("COVER", "STOP")]
+    assert senales[0]["stop_loss"] == "105.0" and senales[0]["take_profit"] == "90.0"
+
+
+def test_el_objetivo_de_un_corto_se_cubre_a_su_precio(monkeypatch, capsys):
+    mensajes = [_tick(1000, True, 100.0), _tick(2000, False, 85.0)]
+
+    senales = _signals(monkeypatch, capsys, _SoloCorto(), mensajes)
+
+    assert (senales[1]["action"], senales[1]["reason"], senales[1]["price"]) == ("COVER", "TARGET", "90.0")
+
+
+def test_sin_allow_short_no_se_emite_short(monkeypatch, capsys):
+    estrategia = _SoloCorto()
+    estrategia.allow_short = False
+
+    assert _signals(monkeypatch, capsys, estrategia, [_tick(1000, True, 100.0)]) == []
+
+
+class _GiroLargoACorto(_SoloCorto):
+    """Con un largo abierto, la venta llega junto a la señal de corto: se cierra y se gira."""
+
+    def should_sell(self, row):
+        return True
+
+
+def test_un_giro_de_largo_a_corto_emite_sell_y_short_seguidos(monkeypatch, capsys):
+    posicion = {"stop": 90.0, "take_profit": 120.0, "side": "LONG"}
+
+    senales = _signals(monkeypatch, capsys, _GiroLargoACorto(), [_tick(1000, True, 100.0)], open_position=posicion)
+
+    assert [s["action"] for s in senales] == ["SELL", "SHORT"]
+    assert senales[1]["stop_loss"] == "105.0"

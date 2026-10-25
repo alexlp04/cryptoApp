@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import websockets
 from ipc_protocol import read_request_payload
-from risk_management import PositionTracker, strategy_levels
+from risk_management import PositionTracker, signal_actions, strategy_levels
 from shared_utils import (
     CODE_DIR,
     PROJECT_ROOT,
@@ -380,6 +380,12 @@ def _warmup_candles(strategy) -> int:
     return max(strategy.get_warmup_period(), MIN_WARMUP_CANDLES)
 
 
+def _indicator_row(df_buffer: deque, strategy):
+    """Última fila con los indicadores de la estrategia: sus stops (p. ej. por ATR) los necesitan.
+    Trabajo de CPU: se ejecuta fuera del event loop."""
+    return strategy.populate_indicators(pd.DataFrame(list(df_buffer)).copy()).iloc[-1]
+
+
 def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_name, label_classes):
     """Features + predicción (trabajo de CPU, se ejecuta fuera del event loop)."""
     x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name, model)
@@ -437,8 +443,9 @@ async def run_symbol(
                     protective = tracker.protective_exit(float(k["c"]))
                     if protective is not None:
                         exit_price, reason = protective
+                        exit_action = "COVER" if tracker.side == "short" else "SELL"
                         tracker.close()
-                        _emit_signal(symbol, "SELL", timeframe,
+                        _emit_signal(symbol, exit_action, timeframe,
                                      {"close": exit_price, "timestamp": int(k["t"])},
                                      model_name, is_real, reason=reason)
                         continue
@@ -482,26 +489,28 @@ async def run_symbol(
                             raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
                         continue
 
-                    levels = None
-                    if action == "BUY":
-                        if tracker.is_open:
-                            action = None  # ya hay posición: no se reabre ni se cambian sus niveles
-                        else:
-                            levels = strategy_levels(strategy, new_row["close"], new_row)
+                    # El modelo predice subida (BUY) o bajada (SELL): según la posición abierta, la subida compra
+                    # o cubre un corto, y la bajada vende un largo o abre un corto (si la estrategia los permite).
+                    shorts = bool(getattr(strategy, "allow_short", False))
+                    actions = signal_actions(tracker.side, action == "BUY", action == "SELL",
+                                             shorts and action == "SELL", shorts and action == "BUY")
+                    row = None
+                    for act in actions:
+                        levels = None
+                        if act in ("BUY", "SHORT"):
+                            if row is None:
+                                row = await asyncio.to_thread(_indicator_row, df_buffer, strategy)
+                            levels = strategy_levels(strategy, new_row["close"], row, short=act == "SHORT")
                             if levels is None:
-                                logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
-                                               "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
-                                               symbol)
-                                action = None
-                    elif action == "SELL" and not tracker.is_open:
-                        action = None  # nada que vender
-
-                    if action:
+                                logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
+                                               "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
+                                               act, symbol)
+                                continue
                         if levels is not None:
-                            tracker.open(*levels)
+                            tracker.open(*levels, side="short" if act == "SHORT" else "long")
                         else:
                             tracker.close()
-                        _emit_signal(symbol, action, timeframe, new_row, model_name, is_real, levels)
+                        _emit_signal(symbol, act, timeframe, new_row, model_name, is_real, levels)
 
             logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
         except ModelFailure:
