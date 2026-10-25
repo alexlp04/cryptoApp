@@ -253,4 +253,17 @@ class SignalProtocolParserTest {
             assertThat(result.getAction(), is("BUY"));
         }
     }
+
+    @Test
+    @DisplayName("✓ Señal real del motor Python (is_real, source) se parsea y conserva el flag (#53 #54)")
+    void should_parse_signal_emitted_by_python_engine() {
+        String json = "{\"symbol\":\"BTCUSDT\",\"action\":\"BUY\",\"timeframe\":\"1h\","
+                + "\"price\":\"67123.45\",\"timestamp\":1234567890,\"is_real\":true,\"source\":\"AI_XGB\"}";
+
+        SignalDTO signal = parser.parseLineaLog("SIGNAL\t" + json, 1L);
+
+        assertThat(signal, is(notNullValue()));
+        assertThat(signal.isReal(), is(true));
+        assertThat(signal.getPrice(), is(new BigDecimal("67123.45")));
+    }
 }

@@ -2,6 +2,11 @@ package com.bottrading.trading.infrastructure.bridge;
 
 import java.math.BigDecimal;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+// Python añade campos (source…) que Java no usa: no deben invalidar la señal.
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SignalDTO {
 
     private String type; // SIGNAL
@@ -60,6 +65,7 @@ public class SignalDTO {
         return isReal;
     }
 
+    @JsonAlias("is_real")
     public void setReal(boolean isReal) {
         this.isReal = isReal;
     }
