@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -17,9 +17,10 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- Propiedades del BOM de Spring Boot: alinean todos los módulos Jackson / Security en vez de fijar artefactos sueltos -->
-        <jackson-bom.version>2.18.2</jackson-bom.version>
-        <spring-security.version>6.5.0</spring-security.version>
+        <!-- Parches de seguridad por delante del BOM de Spring Boot 3.5.16 (avisos GHSA de Jackson y Log4j).
+             Quitar cada propiedad en cuanto Boot gestione una versión igual o posterior. -->
+        <jackson-bom.version>2.21.8</jackson-bom.version>
+        <log4j2.version>2.26.1</log4j2.version>
         <maven.pmd.version>3.24.0</maven.pmd.version>
         <maven.spotbugs.version>4.8.6.2</maven.spotbugs.version>
         <spotbugs.version>4.8.6</spotbugs.version>

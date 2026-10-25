@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import time
 from functools import lru_cache
@@ -203,6 +204,34 @@ def atomic_save(path: str, save_fn: Any) -> None:
             os.remove(tmp)
 
 
+# =============================================================================
+# VALIDACIÓN DE NOMBRES QUE ACABAN EN RUTAS DE FICHERO
+# =============================================================================
+_SYMBOL_RE = re.compile(r"[A-Z0-9]{2,20}")
+_TIMEFRAME_RE = re.compile(r"[0-9]{1,2}[smhdwM]")
+_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}")
+
+
+def require_symbol(value: Any) -> str:
+    """Símbolo de mercado seguro para usar en nombres de fichero y URLs (frontera del engine)."""
+    if not isinstance(value, str) or not _SYMBOL_RE.fullmatch(value):
+        raise ValueError(f"Símbolo inválido: {value!r} (solo A-Z y 0-9, 2-20 caracteres)")
+    return value
+
+
+def require_timeframe(value: Any) -> str:
+    if not isinstance(value, str) or not _TIMEFRAME_RE.fullmatch(value):
+        raise ValueError(f"Timeframe inválido: {value!r}")
+    return value
+
+
+def require_name(value: Any, label: str) -> str:
+    """Nombre de modelo o estrategia seguro para un nombre de fichero: sin separadores ni '..'."""
+    if not isinstance(value, str) or not _NAME_RE.fullmatch(value) or ".." in value:
+        raise ValueError(f"{label} inválido: {value!r} (letras, números, '_', '.' o '-')")
+    return value
+
+
 class ModelIntegrityError(ValueError):
     """El fichero del modelo no es el que se guardó (manipulado o corrupto) o viene de otras librerías."""
 
@@ -237,14 +266,52 @@ def _installed_versions() -> dict[str, str]:
     return found
 
 
-def save_model(path: str, save_fn: Any) -> None:
-    """atomic_save + manifiesto con el sha256 y las versiones de las librerías (issues #33 y #93).
+def _model_key() -> bytes:
+    """Clave con la que se firman los modelos.
 
-    shortcut: el sha256 detecta ficheros corruptos o cambiados por error, no a quien reescriba
-    también el manifiesto; firmarlo con una clave (HMAC) si los modelos se comparten entre máquinas.
+    Sale de CRYPTOAPP_MODEL_KEY; si no está definida, de ~/.config/cryptoapp/model.key (o el directorio de
+    XDG_CONFIG_HOME), que se crea la primera vez con 32 bytes aleatorios y permisos 0600. Vive FUERA de
+    models/: quien pueda escribir modelos ahí no puede firmarlos.
+    """
+    import secrets
+
+    env = os.environ.get("CRYPTOAPP_MODEL_KEY")
+    if env:
+        return env.encode("utf-8")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    key_dir = os.path.join(base, "cryptoapp")
+    key_path = os.path.join(key_dir, "model.key")
+    if not os.path.exists(key_path):
+        os.makedirs(key_dir, mode=0o700, exist_ok=True)
+        try:
+            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:  # otro engine la creó a la vez
+            pass
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(secrets.token_hex(32))
+    with open(key_path, "rb") as f:
+        return f.read().strip()
+
+
+def _sign(sha256: str, libraries: dict[str, str]) -> str:
+    import hashlib
+    import hmac
+
+    payload = f"{sha256}\n{json.dumps(libraries, sort_keys=True)}".encode()
+    return hmac.new(_model_key(), payload, hashlib.sha256).hexdigest()
+
+
+def save_model(path: str, save_fn: Any) -> None:
+    """atomic_save + manifiesto firmado: sha256, versiones de las librerías y HMAC (issues #33 y #93).
+
+    El HMAC impide que quien solo pueda escribir en models/ cambie el modelo y recalcule el manifiesto,
+    que es lo que haría falta para colar un pickle malicioso en joblib.load.
     """
     atomic_save(path, save_fn)
-    manifest = {"sha256": _sha256_of(path), "libraries": _installed_versions()}
+    libraries = _installed_versions()
+    sha256 = _sha256_of(path)
+    manifest = {"sha256": sha256, "libraries": libraries, "hmac": _sign(sha256, libraries)}
     atomic_save(_manifest_path(path), lambda tmp: _write_json(tmp, manifest))
 
 
@@ -257,28 +324,47 @@ def _major_minor(version: str) -> str:
     return ".".join(version.split(".")[:2])
 
 
+def _unsigned_allowed() -> bool:
+    return os.environ.get("CRYPTOAPP_ALLOW_UNSIGNED_MODELS", "").strip().lower() in {"1", "true", "yes"}
+
+
 def verify_model_manifest(model_path: str) -> None:
-    """Rechaza un modelo cuyo contenido no coincide con su manifiesto o que se guardó con otra
-    versión (mayor.menor) de sklearn/xgboost/lightgbm/tensorflow. Sin manifiesto (modelo anterior
-    a esta comprobación) solo avisa: se carga igual."""
+    """Rechaza un modelo que no esté firmado por esta instalación, cuyo contenido no coincida con su
+    manifiesto o que se guardara con otra versión (mayor.menor) de sklearn/xgboost/lightgbm/tensorflow.
+
+    Un modelo sin manifiesto o sin firma (anterior a esta comprobación o traído de fuera) se rechaza:
+    cargarlo ejecuta código arbitrario. CRYPTOAPP_ALLOW_UNSIGNED_MODELS=1 lo permite con un aviso.
+    """
+    import hmac
+
+    nombre = os.path.basename(model_path)
     manifest_file = _manifest_path(model_path)
-    if not os.path.exists(manifest_file):
-        logging.getLogger(__name__).warning(
-            "El modelo %s no tiene manifiesto: no se puede comprobar su integridad. Reentrénalo.",
-            os.path.basename(model_path))
-        return
-    with open(manifest_file, encoding="utf-8") as f:
-        manifest = json.load(f)
+    manifest: dict[str, Any] = {}
+    if os.path.exists(manifest_file):
+        with open(manifest_file, encoding="utf-8") as f:
+            manifest = json.load(f)
+    if not manifest.get("hmac"):
+        if _unsigned_allowed():
+            logging.getLogger(__name__).warning(
+                "El modelo %s no está firmado y se carga porque CRYPTOAPP_ALLOW_UNSIGNED_MODELS está activo.", nombre)
+            return
+        raise ModelIntegrityError(
+            f"El modelo {nombre} no está firmado: no se carga porque un modelo ejecuta código al abrirse. "
+            "Reentrénalo (o define CRYPTOAPP_ALLOW_UNSIGNED_MODELS=1 si confías en el fichero).")
+    libraries = manifest.get("libraries", {})
+    esperado = _sign(str(manifest.get("sha256")), libraries)
+    if not hmac.compare_digest(esperado, str(manifest["hmac"])):
+        raise ModelIntegrityError(
+            f"La firma del manifiesto de {nombre} no es válida: lo han modificado o se firmó con otra clave.")
     if manifest.get("sha256") != _sha256_of(model_path):
         raise ModelIntegrityError(
-            f"El modelo {os.path.basename(model_path)} no coincide con su manifiesto: "
-            "está corrupto o lo han modificado. Reentrénalo.")
+            f"El modelo {nombre} no coincide con su manifiesto: está corrupto o lo han modificado. Reentrénalo.")
     actuales = _installed_versions()
-    for lib, guardada in manifest.get("libraries", {}).items():
+    for lib, guardada in libraries.items():
         actual = actuales.get(lib)
         if actual is not None and _major_minor(actual) != _major_minor(guardada):
             raise ModelIntegrityError(
-                f"El modelo {os.path.basename(model_path)} se guardó con {lib} {guardada} y ahora "
+                f"El modelo {nombre} se guardó con {lib} {guardada} y ahora "
                 f"está instalada la {actual}: el formato puede haber cambiado. Reentrénalo.")
 
 

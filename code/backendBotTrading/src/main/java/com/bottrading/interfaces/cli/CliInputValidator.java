@@ -69,6 +69,12 @@ public final class CliInputValidator {
             context.println().accept(usage);
             return false;
         }
+        for (String coin : args.getCoins()) {
+            if (!CommandParser.esSimboloValido(coin)) {
+                context.println().accept("Moneda inválida '" + coin + "' (solo letras y números, 2-20 caracteres).");
+                return false;
+            }
+        }
         return timeframeSoportado(args.getTimeframe(), context);
     }
 
