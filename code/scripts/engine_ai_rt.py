@@ -79,45 +79,82 @@ def _load_from_path(path: str) -> tuple[Any, str, list[int] | None]:
     return load_keras_model(path), "deep_learning", _load_label_classes(path)
 
 
-def _candidate_model_paths(models_dir: str, model_name: str, base_filename: str) -> list[str]:
+def _candidate_model_paths(
+    models_dir: str, model_name: str, base_filename: str, strategy_name: str | None = None,
+) -> list[str]:
     """
     Rutas candidatas en orden de precedencia:
-    0) nombre libre (el usuario ha renombrado el modelo),
-    1-2) formato estándar {modelo}_{timeframe}_{symbol},
-    3) variantes con sufijo de estrategia.
+    0) {modelo}_{tf}_{symbol}_{estrategia} exacto (es lo que escribe el entrenamiento),
+    1) nombre libre (el usuario ha renombrado el modelo),
+    2) formato {modelo}_{timeframe}_{symbol} sin sufijo.
+    Las variantes con otro sufijo de estrategia las resuelve load_model (ambigüedad).
     """
-    candidates = [
-        os.path.join(models_dir, f"{name}{ext}")
-        for name in (model_name, base_filename)
-        for ext in MODEL_EXTENSIONS
-    ]
-    candidates.extend(
+    names = [f"{base_filename}_{strategy_name}"] if strategy_name else []
+    names += [model_name, base_filename]
+    return [os.path.join(models_dir, f"{name}{ext}") for name in names for ext in MODEL_EXTENSIONS]
+
+
+def _suffix_variants(models_dir: str, base_filename: str) -> list[str]:
+    """Modelos del mismo modelo/tf/symbol entrenados con alguna estrategia (orden estable)."""
+    return [
         os.path.join(models_dir, fname)
         for fname in sorted(os.listdir(models_dir))
         if fname.startswith(f"{base_filename}_") and fname.endswith(MODEL_EXTENSIONS)
-    )
-    return candidates
+    ]
 
 
-def load_model(model_name: str, timeframe: str, symbol: str) -> tuple[Any, str, list[int] | None]:
+def _trained_strategy(model: Any, path: str) -> str | None:
+    """Estrategia con la que se entrenó el modelo (atributo del .pkl o .metadata.json del .keras)."""
+    declared = getattr(model, "strategy_name", None)
+    if declared:
+        return declared
+    metadata_path = os.path.splitext(path)[0] + ".metadata.json"
+    if os.path.exists(metadata_path):
+        with open(metadata_path, encoding="utf-8") as f:
+            return json.load(f).get("strategy_name")
+    return None
+
+
+def load_model(
+    model_name: str, timeframe: str, symbol: str, strategy_name: str | None = None,
+) -> tuple[Any, str, list[int] | None]:
     """
     Carga dinámicamente diferentes tipos de modelos basados en su extensión y librería.
     Soporta Scikit-Learn, XGBoost, LightGBM (.pkl) y TensorFlow/Keras (.h5 / .keras).
     Devuelve (modelo, tipo, label_classes) donde label_classes es la lista original
     de clases [-1, 0, 1] leída del .metadata.json (o None si no existe).
+
+    Con strategy_name se prefiere el modelo entrenado con esa estrategia y se aborta si el
+    modelo cargado declara otra distinta (sus features no coincidirían).
     """
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     base_filename = f"{model_name}_{timeframe}_{symbol}"
 
-    for path in _candidate_model_paths(models_dir, model_name, base_filename):
-        if os.path.exists(path):
-            return _load_from_path(path)
+    path = next((p for p in _candidate_model_paths(models_dir, model_name, base_filename, strategy_name)
+                 if os.path.exists(p)), None)
+    if path is None:
+        variants = _suffix_variants(models_dir, base_filename)
+        if len(variants) > 1:
+            raise ValueError(
+                f"Modelo ambiguo para '{base_filename}': {[os.path.basename(v) for v in variants]}. "
+                "Indica la estrategia o elimina los que sobren."
+            )
+        path = variants[0] if variants else None
+    if path is None:
+        raise FileNotFoundError(
+            f"No se encontró ningún modelo para '{model_name}' "
+            f"(buscado como {base_filename}[_estrategia], nombre libre y variantes con sufijo). "
+            f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
+        )
 
-    raise FileNotFoundError(
-        f"No se encontró ningún modelo para '{model_name}' "
-        f"(buscado como nombre libre, {base_filename}, y variantes con sufijo de estrategia). "
-        f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
-    )
+    loaded = _load_from_path(path)
+    trained_with = _trained_strategy(loaded[0], path)
+    if strategy_name and trained_with and trained_with != strategy_name:
+        raise ValueError(
+            f"El modelo {os.path.basename(path)} se entrenó con '{trained_with}' "
+            f"pero el motor usa '{strategy_name}': las features no coinciden."
+        )
+    return loaded
 
 # =========================
 # SUBFUNCIONES DE PREDICCIÓN
@@ -325,10 +362,10 @@ def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_
     return None
 
 
-async def _seed_buffer(df_buffer: deque, symbol: str, timeframe: str) -> None:
+async def _seed_buffer(df_buffer: deque, symbol: str, timeframe: str, limit: int) -> None:
     """Rellena el buffer con velas cerradas por REST: sin esperar horas y sin huecos tras reconectar."""
     try:
-        klines = await asyncio.to_thread(fetch_recent_klines, symbol, timeframe, df_buffer.maxlen)
+        klines = await asyncio.to_thread(fetch_recent_klines, symbol, timeframe, limit)
     except Exception:
         logger.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
         return
@@ -353,9 +390,11 @@ async def run_symbol(
 
     logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
-    model, model_type, label_classes = load_model(model_name, timeframe, symbol)
+    model, model_type, label_classes = load_model(
+        model_name, timeframe, symbol, strategy.get_name())
     min_candles = _warmup_candles(strategy)
-    df_buffer: deque = deque(maxlen=max(max_candles, min_candles + BACKFILL_MARGIN))
+    buffer_size = max(max_candles, min_candles + BACKFILL_MARGIN)
+    df_buffer: deque = deque(maxlen=buffer_size)
     last_processed_event_id = 0
     consecutive_failures = 0
     retry_delay = 5
@@ -365,7 +404,7 @@ async def run_symbol(
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                await _seed_buffer(df_buffer, symbol, timeframe)
+                await _seed_buffer(df_buffer, symbol, timeframe, buffer_size)
                 async for msg in ws:
                     data = json.loads(msg)
                     k = data.get("k")

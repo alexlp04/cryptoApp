@@ -37,12 +37,11 @@ def test_buffer_holds_at_least_the_strategy_warmup():
 
 # ── Reconexión y errores de estrategia (#63) ────────────────────────────────
 
-import asyncio  # noqa: E402
-import json  # noqa: E402
+import asyncio
+import json
 
-import pytest  # noqa: E402
-
-import engine_rt  # noqa: E402
+import engine_rt
+import pytest
 
 
 def _kline(ts: int, close: float = 100.0) -> str:

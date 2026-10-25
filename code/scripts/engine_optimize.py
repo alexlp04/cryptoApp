@@ -61,6 +61,7 @@ from optuna.pruners import MedianPruner
 from shared_utils import (
     PROJECT_ROOT,
     apply_strategy_features,
+    atomic_save,
     configure_tensorflow_runtime,
     fit_sklearn_model,
     load_strategy_by_name,
@@ -750,7 +751,7 @@ def _train_neural_final(
     suffix = f"_{strategy_name}" if strategy_name else ""
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
     model_path = os.path.join(models_dir, model_filename)
-    model.save(model_path)
+    atomic_save(model_path, model.save)
 
     metadata_path = model_path.replace(".keras", ".metadata.json")
     with open(metadata_path, "w", encoding="utf-8") as mf:
@@ -807,7 +808,7 @@ def _train_sklearn_final(
     suffix = f"_{strategy_name}" if strategy_name else ""
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
     model_path = os.path.join(models_dir, model_filename)
-    joblib.dump(model, model_path)
+    atomic_save(model_path, lambda tmp: joblib.dump(model, tmp))
     return model, model_filename, y_pred
 
 

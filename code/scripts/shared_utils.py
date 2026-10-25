@@ -108,11 +108,9 @@ def upsert_candle(buffer: Any, candle: dict) -> None:
 
 def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[dict]:
     """Últimas velas CERRADAS por REST (para sembrar el buffer RT y cerrar huecos al reconectar)."""
-    response = requests.get(
-        "https://api.binance.com/api/v3/klines",
-        params={"symbol": symbol.replace("/", "").upper(), "interval": timeframe, "limit": limit},
-        timeout=10,
-    )
+    params: dict[str, str | int] = {
+        "symbol": symbol.replace("/", "").upper(), "interval": timeframe, "limit": limit}
+    response = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
     response.raise_for_status()
     now_ms = time.time() * 1000
     return [
@@ -120,6 +118,18 @@ def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[d
          "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
         for c in response.json() if c[6] < now_ms  # closeTime pasada = vela cerrada
     ]
+
+
+def atomic_save(path: str, save_fn: Any) -> None:
+    """Guarda en un temporal y renombra: un RT que lee el modelo nunca ve un fichero a medias."""
+    base, ext = os.path.splitext(path)
+    tmp = f"{base}.tmp{ext}"  # conserva la extensión: Keras decide el formato por ella
+    try:
+        save_fn(tmp)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def build_signal_line(signal: dict) -> str:

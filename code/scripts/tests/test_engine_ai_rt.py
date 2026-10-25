@@ -72,7 +72,7 @@ def test_prediccion_binaria_aplica_umbrales(prob, esperado):
 
 class _FakeSklearnModel:
     """Modelo entrenado sobre etiquetas codificadas 0,1,2 (originales -1,0,1)."""
-    classes_ = [0, 1, 2]
+    classes_ = (0, 1, 2)
 
     def __init__(self, encoded_pred: int, probs):
         self._pred = encoded_pred
@@ -95,12 +95,12 @@ def test_ml_standard_decodifica_clases_codificadas(encoded, esperado):
 
 # ── Features sin NaN→0, backfill REST y fallos del modelo (#72 #96) ──────────
 
-import asyncio  # noqa: E402
-import json  # noqa: E402
-from collections import deque  # noqa: E402
+import asyncio
+import json
+import pathlib
+from collections import deque
 
-import pandas as pd  # noqa: E402
-import shared_utils  # noqa: E402
+import shared_utils
 
 
 class _FeatStrategy:
@@ -117,6 +117,9 @@ class _FeatStrategy:
 
     def get_warmup_period(self):
         return self._warmup
+
+    def get_name(self):
+        return "FeatStrategy"
 
 
 def _buf(n: int = 3) -> deque:
@@ -214,3 +217,68 @@ def test_el_buffer_se_siembra_con_warmup_mas_margen(monkeypatch):
         _run_symbol(monkeypatch, _FeatStrategy(1.0, warmup=300), [], lambda *a, **k: None, seeded)
 
     assert seeded == [300 + engine_ai_rt.BACKFILL_MARGIN]
+
+
+# ── Carga de modelos sin azar y guardado atómico (#93) ───────────────────────
+
+import types
+
+import joblib
+
+
+def _dump(models_dir, name, strategy):
+    joblib.dump(types.SimpleNamespace(strategy_name=strategy), models_dir / name)
+
+
+@pytest.fixture
+def models_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_ai_rt, "PROJECT_ROOT", str(tmp_path))
+    d = tmp_path / "models"
+    d.mkdir()
+    return d
+
+
+def test_load_model_prefiere_el_modelo_de_la_estrategia_exacta(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+    _dump(models_dir, "xgb_1h_BTCUSDT_B.pkl", "B")
+
+    model, _, _ = engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "B")
+
+    assert model.strategy_name == "B"
+
+
+def test_load_model_ambiguo_sin_estrategia_falla(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+    _dump(models_dir, "xgb_1h_BTCUSDT_B.pkl", "B")
+
+    with pytest.raises(ValueError, match="ambiguo"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT")
+
+
+def test_load_model_aborta_si_el_modelo_es_de_otra_estrategia(models_dir):
+    _dump(models_dir, "xgb_1h_BTCUSDT_A.pkl", "A")
+
+    with pytest.raises(ValueError, match="entrenó con 'A'"):
+        engine_ai_rt.load_model("xgb", "1h", "BTCUSDT", "B")
+
+
+def test_atomic_save_conserva_el_modelo_anterior_si_falla(tmp_path):
+    target = tmp_path / "m.pkl"
+    target.write_text("viejo")
+
+    def boom(tmp):
+        pathlib.Path(tmp).write_text("a medias")
+        raise OSError("disco lleno")
+
+    with pytest.raises(OSError):
+        shared_utils.atomic_save(str(target), boom)
+
+    assert target.read_text() == "viejo"
+    assert [f.name for f in tmp_path.iterdir()] == ["m.pkl"]  # sin temporales
+
+
+def test_atomic_save_reemplaza_el_fichero(tmp_path):
+    target = tmp_path / "m.keras"
+    shared_utils.atomic_save(str(target), lambda tmp: pathlib.Path(tmp).write_text("nuevo"))
+
+    assert target.read_text() == "nuevo"
