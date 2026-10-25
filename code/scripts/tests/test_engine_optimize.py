@@ -134,7 +134,7 @@ class TestOptimizationSearchSpaces:
 def test_encode_labels_descarta_del_test_las_clases_que_train_no_vio():
     from shared_utils import encode_labels
 
-    enc, y_train, y_test, keep = encode_labels(np.array([-1, 0, 1, 0]), np.array([0, 1, 2, -1]))
+    enc, _y_train, y_test, keep = encode_labels(np.array([-1, 0, 1, 0]), np.array([0, 1, 2, -1]))
 
     assert enc.classes_.tolist() == [-1, 0, 1]
     assert keep.tolist() == [True, True, False, True]
@@ -197,3 +197,39 @@ def test_el_objetivo_reporta_por_fold_y_el_pruner_puede_podar(monkeypatch):
     study.optimize(objective, n_trials=2, catch=(Exception,))
 
     assert all(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+
+
+# ── El modelo final se entrena como se puntuó en los trials (#74) ────────────
+
+def test_balanced_class_weight_compensa_la_clase_minoritaria():
+    from engine_optimize import _balanced_class_weight
+
+    pesos = _balanced_class_weight(np.array([0] * 9 + [1]))
+
+    assert pesos[1] > pesos[0]
+    assert pesos[1] == pytest.approx(5.0)
+
+
+def test_el_modelo_sklearn_final_recibe_class_weight(monkeypatch, tmp_path):
+    import engine_optimize as eo
+
+    capturado = {}
+
+    class _Modelo:
+        def predict(self, x):
+            return np.zeros(len(x), dtype=int)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        capturado["class_weight"] = class_weight
+        return _Modelo()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())  # noqa: SIM115
+    y = np.array([0] * 9 + [1])
+
+    eo._train_sklearn_final(
+        "random_forest", {}, np.zeros((10, 2)), y, np.zeros((3, 2)), ["a", "b"],
+        "S", 1, str(tmp_path), "1h", "BTCUSDT", None,
+    )
+
+    assert capturado["class_weight"] == eo._balanced_class_weight(y)

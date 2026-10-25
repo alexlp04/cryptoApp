@@ -486,6 +486,12 @@ def _build_and_eval_neural_network(
 # FUNCIÓN OBJETIVO DE OPTUNA
 # =============================================================================
 
+def _balanced_class_weight(y: np.ndarray) -> dict[int, float]:
+    """Pesos 'balanced' por clase: los mismos con los que se puntúan los trials."""
+    clases = np.unique(y)
+    return dict(zip(clases.tolist(), compute_class_weight("balanced", classes=clases, y=y).tolist(), strict=True))
+
+
 def _contiguous_classes(y: np.ndarray) -> bool:
     """XGBoost exige etiquetas 0..K-1 sin huecos en cada fit; un fold temprano puede carecer de una clase."""
     unicas = np.unique(y)
@@ -728,6 +734,7 @@ def _train_neural_final(
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo neural final. Devuelve (model, filename, y_pred_test)."""
     import tensorflow as tf
+    from tensorflow.keras.callbacks import EarlyStopping
     from tensorflow.keras.layers import Dense, Dropout, Normalization
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.optimizers import Adam
@@ -761,7 +768,13 @@ def _train_neural_final(
 
     model = Sequential(layers)
     model.compile(optimizer=Adam(learning_rate=lr), loss=final_loss, metrics=["accuracy"])
-    model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0, validation_split=0.1)
+    # Mismas condiciones que en los trials: sin class_weight ni EarlyStopping el modelo
+    # guardado no sería el que Optuna evaluó.
+    model.fit(
+        X, y, epochs=epochs, batch_size=batch_size, verbose=0, validation_split=0.1,
+        callbacks=[EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=0)],
+        class_weight=_balanced_class_weight(y),
+    )
 
     y_pred = (
         np.argmax(model.predict(X_test, verbose=0), axis=1)
@@ -816,7 +829,7 @@ def _train_sklearn_final(
             fit_params.get("cache_size"),
         )
 
-    model = fit_sklearn_model(model_type, fit_params, X, y)
+    model = fit_sklearn_model(model_type, fit_params, X, y, class_weight=_balanced_class_weight(y))
     y_pred = model.predict(X_test)
 
     model.feature_cols = feature_cols
