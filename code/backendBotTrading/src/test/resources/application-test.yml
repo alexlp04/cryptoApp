@@ -10,3 +10,9 @@ spring:
       ddl-auto: create-drop
     database-platform: org.hibernate.dialect.H2Dialect
     show-sql: false
+
+  # Los tests unitarios generan el esquema desde las entidades JPA: son rápidos y no
+  # dependen de MySQL. La correspondencia entre entidades y las migraciones reales se
+  # verifica aparte, en el perfil 'schema' (application-schema.yml).
+  flyway:
+    enabled: false

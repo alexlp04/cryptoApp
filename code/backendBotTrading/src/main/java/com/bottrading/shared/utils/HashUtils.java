@@ -1,30 +1,38 @@
 package com.bottrading.shared.utils;
 
+import java.nio.charset.StandardCharsets;
+
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 public class HashUtils {
 
     private static final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
-    private static final int MAX_PASSWORD_LENGTH = 72;
+    /** BCrypt limita la contraseña a 72 BYTES UTF-8 (no caracteres): 30 emojis ya la superan. */
+    private static final int MAX_PASSWORD_BYTES = 72;
 
     private HashUtils() {
         throw new UnsupportedOperationException("Clase de utilidad, no instanciar.");
     }
 
     public static String hashPassword(String password) {
-        // Enforce maximum password length to mitigate CVE-2025-22228
-        if (password == null || password.length() > MAX_PASSWORD_LENGTH) {
-            throw new IllegalArgumentException("Password must be between 1 and " + MAX_PASSWORD_LENGTH + " characters");
+        if (!esPasswordValida(password)) {
+            throw new IllegalArgumentException(
+                    "La contraseña debe tener entre 1 y " + MAX_PASSWORD_BYTES + " bytes (UTF-8).");
         }
         return encoder.encode(password);
     }
 
     public static boolean verificarPassword(String rawPassword, String hashedPassword) {
-        // Enforce maximum password length to mitigate CVE-2025-22228
-        if (rawPassword == null || rawPassword.length() > MAX_PASSWORD_LENGTH) {
-            return false; // Reject oversized passwords
+        // Mitiga CVE-2025-22228 y evita que una contraseña fuera de rango reviente en login
+        if (!esPasswordValida(rawPassword) || hashedPassword == null) {
+            return false;
         }
         return encoder.matches(rawPassword, hashedPassword);
+    }
+
+    private static boolean esPasswordValida(String password) {
+        return password != null && !password.isEmpty()
+                && password.getBytes(StandardCharsets.UTF_8).length <= MAX_PASSWORD_BYTES;
     }
 
 }

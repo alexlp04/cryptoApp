@@ -51,6 +51,9 @@ class AccountingServiceTest {
     @Mock
     private LedgerRepositoryPort ledgerRepo;
 
+    @Mock
+    private com.bottrading.trading.application.port.out.PosicionRepositoryPort posicionRepo;
+
     @InjectMocks
     private AccountingService accountingService;
 
@@ -178,48 +181,6 @@ class AccountingServiceTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // pauseStrategyTemporarily()
-    // ─────────────────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("pauseStrategyTemporarily() — Pausa sin liberar capital")
-    class PauseStrategyTests {
-
-        @Test
-        @DisplayName("✓ Debe cambiar estado a DETENIDA y guardar ledger de evento")
-        void should_set_detenida_and_save_ledger() {
-            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("200"), BigDecimal.ZERO, BigDecimal.ZERO);
-            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
-
-            accountingService.pauseStrategyTemporarily(1L, 10L);
-
-            assertThat(e.getEstado(), is(EstadoEstrategia.DETENIDA));
-            verify(ledgerRepo, times(1)).save(any(LedgerEntry.class));
-            verify(estrategiaRepo, times(1)).save(e);
-        }
-
-        @Test
-        @DisplayName("✓ Debe lanzar ValidationException cuando la estrategia no existe")
-        void should_throw_when_strategy_not_found() {
-            doReturn(Optional.empty()).when(estrategiaRepo).findByIdWithLock(anyLong());
-
-            assertThrows(ValidationException.class,
-                    () -> accountingService.pauseStrategyTemporarily(1L, 99L));
-        }
-
-        @Test
-        @DisplayName("✓ No debe modificar el capital reservado (solo congela)")
-        void should_not_modify_reserved_capital() {
-            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("300"), BigDecimal.ZERO, BigDecimal.ZERO);
-            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
-
-            accountingService.pauseStrategyTemporarily(1L, 10L);
-
-            assertThat(e.getCapitalReservado(), is(new BigDecimal("300")));
-            verify(walletRepo, never()).save(any());
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // closeStrategy()
     // ─────────────────────────────────────────────────────────────────────────
     @Nested
@@ -289,6 +250,26 @@ class AccountingServiceTest {
     @DisplayName("commitCapital() — Mueve capital de Reservado a Comprometido")
     class CommitCapitalTests {
 
+        @org.junit.jupiter.api.BeforeEach
+        void walletDeLaEstrategia() {
+            doReturn(Optional.of(crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("700"))))
+                    .when(walletRepo).findByIdWithLock(1L);
+        }
+
+        @Test
+        @DisplayName("✓ El ledger lleva la referencia y el balanceReal de la wallet (#95)")
+        void ledger_entry_has_reference_and_wallet_balance() {
+            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("500"), BigDecimal.ZERO, BigDecimal.ZERO);
+            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
+
+            accountingService.commitCapital(10L, new BigDecimal("200"), new BigDecimal("0.02"), "posicion:7:open");
+
+            org.mockito.ArgumentCaptor<LedgerEntry> captor = org.mockito.ArgumentCaptor.forClass(LedgerEntry.class);
+            verify(ledgerRepo).save(captor.capture());
+            assertThat(captor.getValue().getReference(), is("posicion:7:open"));
+            assertThat(captor.getValue().getBalanceAfter(), is(new BigDecimal("1000")));
+        }
+
         @Test
         @DisplayName("✓ Debe mover el margen de reservado a comprometido y guardar ledger")
         void should_move_margin_from_reserved_to_committed() {
@@ -296,7 +277,7 @@ class AccountingServiceTest {
                     new BigDecimal("0.05"));
             doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
 
-            accountingService.commitCapital(10L, new BigDecimal("200"), new BigDecimal("0.02"));
+            accountingService.commitCapital(10L, new BigDecimal("200"), new BigDecimal("0.02"), "ref");
 
             assertThat(e.getCapitalReservado(), is(new BigDecimal("300")));
             assertThat(e.getCapitalComprometido(), is(new BigDecimal("300")));
@@ -312,7 +293,7 @@ class AccountingServiceTest {
             doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
 
             assertThrows(ValidationException.class,
-                    () -> accountingService.commitCapital(10L, new BigDecimal("100"), new BigDecimal("0.01")));
+                    () -> accountingService.commitCapital(10L, new BigDecimal("100"), new BigDecimal("0.01"), "ref"));
             verify(ledgerRepo, never()).save(any());
         }
 
@@ -322,7 +303,7 @@ class AccountingServiceTest {
             doReturn(Optional.empty()).when(estrategiaRepo).findByIdWithLock(anyLong());
 
             assertThrows(ValidationException.class,
-                    () -> accountingService.commitCapital(99L, new BigDecimal("100"), new BigDecimal("0.01")));
+                    () -> accountingService.commitCapital(99L, new BigDecimal("100"), new BigDecimal("0.01"), "ref"));
         }
     }
 
@@ -344,7 +325,7 @@ class AccountingServiceTest {
             doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
 
             BigDecimal pnl = new BigDecimal("50");
-            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), pnl, new BigDecimal("0.02"));
+            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), pnl, new BigDecimal("0.02"), "ref");
 
             // capitalComprometido -= margin (200 - 200 = 0)
             assertThat(e.getCapitalComprometido().compareTo(BigDecimal.ZERO), is(0));
@@ -368,7 +349,7 @@ class AccountingServiceTest {
             doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
 
             BigDecimal pnl = new BigDecimal("-30");
-            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), pnl, new BigDecimal("0.02"));
+            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), pnl, new BigDecimal("0.02"), "ref");
 
             // balanceReal -= 30 (1000 - 30 = 970)
             assertThat(w.getBalanceReal(), is(new BigDecimal("970")));
@@ -387,7 +368,7 @@ class AccountingServiceTest {
             doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(10L);
 
             // risk = 0.05 > riesgoAbierto = 0.01 → debería resultar en 0
-            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), BigDecimal.ZERO, new BigDecimal("0.05"));
+            accountingService.closeTrade(1L, 10L, new BigDecimal("200"), BigDecimal.ZERO, new BigDecimal("0.05"), "ref");
 
             assertThat(e.getRiesgoAbierto().compareTo(BigDecimal.ZERO), is(0));
         }
@@ -399,7 +380,7 @@ class AccountingServiceTest {
 
             assertThrows(ValidationException.class,
                     () -> accountingService.closeTrade(99L, 10L,
-                            new BigDecimal("100"), BigDecimal.ZERO, new BigDecimal("0.01")));
+                            new BigDecimal("100"), BigDecimal.ZERO, new BigDecimal("0.01"), "ref"));
         }
 
         @Test
@@ -411,7 +392,7 @@ class AccountingServiceTest {
 
             assertThrows(ValidationException.class,
                     () -> accountingService.closeTrade(1L, 99L,
-                            new BigDecimal("100"), BigDecimal.ZERO, new BigDecimal("0.01")));
+                            new BigDecimal("100"), BigDecimal.ZERO, new BigDecimal("0.01"), "ref"));
         }
     }
 
@@ -442,6 +423,115 @@ class AccountingServiceTest {
 
             assertThrows(ValidationException.class,
                     () -> accountingService.applyFee(99L, new BigDecimal("5")));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Validaciones monetarias (#65) y liquidación al terminar (#64)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Validaciones y liquidación de posiciones abiertas")
+    class ValidacionesYLiquidacionTests {
+
+        private void preparar(Wallet w, InstanciaEstrategia e) {
+            doReturn(Optional.of(w)).when(walletRepo).findByIdWithLock(w.getId());
+            doReturn(Optional.of(e)).when(estrategiaRepo).findByIdWithLock(e.getId());
+        }
+
+        @Test
+        @DisplayName("✓ Un capital negativo no crea saldo disponible")
+        void negative_capital_is_rejected() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("1000"));
+            InstanciaEstrategia e = crearInstanciaTest(10L, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            preparar(w, e);
+
+            assertThrows(ValidationException.class,
+                    () -> accountingService.activateStrategy(1L, 10L, new BigDecimal("-500")));
+            assertThrows(ValidationException.class,
+                    () -> accountingService.activateStrategy(1L, 10L, BigDecimal.ZERO));
+            assertThrows(ValidationException.class,
+                    () -> accountingService.activateStrategy(1L, 10L, null));
+
+            assertThat(w.getBalanceDisponible(), is(new BigDecimal("1000")));
+        }
+
+        @Test
+        @DisplayName("✓ Riesgo fuera de (0, 1] y wallet de otro tipo se rechazan al activar")
+        void invalid_risk_and_wallet_type_are_rejected() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("1000"));
+            InstanciaEstrategia e = crearInstanciaTest(10L, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            preparar(w, e);
+
+            e.setRiskPerTrade(new BigDecimal("1.5"));
+            assertThrows(ValidationException.class,
+                    () -> accountingService.activateStrategy(1L, 10L, new BigDecimal("100")));
+
+            e.setRiskPerTrade(new BigDecimal("0.02"));
+            w.setType(com.bottrading.wallet.domain.WalletType.REAL); // la estrategia es de paper trading
+            assertThrows(ValidationException.class,
+                    () -> accountingService.activateStrategy(1L, 10L, new BigDecimal("100")));
+        }
+
+        @Test
+        @DisplayName("✓ commitCapital rechaza margen no positivo y riesgo negativo")
+        void commit_rejects_invalid_margin_and_risk() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), BigDecimal.ZERO);
+            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("500"), BigDecimal.ZERO, BigDecimal.ZERO);
+            preparar(w, e);
+
+            assertThrows(ValidationException.class,
+                    () -> accountingService.commitCapital(10L, new BigDecimal("-10"), new BigDecimal("0.01"), "ref"));
+            assertThrows(ValidationException.class,
+                    () -> accountingService.commitCapital(10L, new BigDecimal("10"), new BigDecimal("-0.01"), "ref"));
+            assertThat(e.getCapitalReservado(), is(new BigDecimal("500")));
+        }
+
+        @Test
+        @DisplayName("✓ Terminar con posiciones abiertas las cierra a coste y devuelve el margen a la wallet")
+        void closing_strategy_liquidates_open_positions() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("800"));
+            InstanciaEstrategia e = crearInstanciaTest(10L, new BigDecimal("150"), new BigDecimal("50"),
+                    new BigDecimal("0.05"));
+            preparar(w, e);
+            com.bottrading.trading.domain.Posicion pos = new com.bottrading.trading.domain.Posicion();
+            pos.setAbierta(true);
+            pos.setPrecioEntrada(new BigDecimal("0.6234"));
+            pos.setMargenInvertido(new BigDecimal("50"));
+            doReturn(java.util.List.of(pos)).when(posicionRepo).findByInstanciaAndAbiertaTrue(e);
+
+            accountingService.closeStrategy(1L, 10L);
+
+            assertThat(w.getBalanceDisponible().compareTo(new BigDecimal("1000")), is(0)); // 800 + 150 + 50
+            assertThat(e.getCapitalComprometido().compareTo(BigDecimal.ZERO), is(0));
+            assertThat(e.getRiesgoAbierto().compareTo(BigDecimal.ZERO), is(0));
+            assertThat(pos.isAbierta(), is(false));
+            assertThat(pos.getPnl().compareTo(BigDecimal.ZERO), is(0));
+            assertThat(pos.getPrecioSalida(), is(new BigDecimal("0.6234")));
+            verify(posicionRepo).save(pos);
+        }
+
+        @Test
+        @DisplayName("✓ El invariante balanceReal = disponible + repartido se puede verificar (#95)")
+        void invariant_deviation_is_computed() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("800"));
+            doReturn(Optional.of(w)).when(walletRepo).findByIdWithLock(1L);
+            doReturn(new BigDecimal("200")).when(estrategiaRepo).sumCapitalRepartidoByWallet(1L);
+            assertThat(accountingService.desvioDelInvariante(1L).compareTo(BigDecimal.ZERO), is(0));
+
+            doReturn(new BigDecimal("150")).when(estrategiaRepo).sumCapitalRepartidoByWallet(1L);
+            assertThat(accountingService.desvioDelInvariante(1L), is(new BigDecimal("50")));
+        }
+
+        @Test
+        @DisplayName("✓ applyFee descuenta de balanceReal y de balanceDisponible")
+        void fee_reduces_real_and_available() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("200"));
+            doReturn(Optional.of(w)).when(walletRepo).findByIdWithLock(1L);
+
+            accountingService.applyFee(1L, new BigDecimal("5"));
+
+            assertThat(w.getBalanceDisponible(), is(new BigDecimal("195")));
+            assertThrows(ValidationException.class, () -> accountingService.applyFee(1L, new BigDecimal("-1")));
         }
     }
 

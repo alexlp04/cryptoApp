@@ -22,8 +22,7 @@ public final class LoginCommand implements CliCommand {
 
         context.print().accept("Usuario: ");
         String nombre = context.scanner().nextLine().trim();
-        context.print().accept("Password: ");
-        String pass = context.scanner().nextLine().trim();
+        String pass = CliInputValidator.readPassword(context, "Password: ");
 
         if (context.authenticateUseCase().validarCredenciales(nombre, pass)) {
             Usuario usuario = context.getUsuarioUseCase().obtenerPorNombre(nombre);

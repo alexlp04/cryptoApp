@@ -16,6 +16,10 @@ public interface InstanciaEstrategiaRepositoryPort {
 
     List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
 
+    List<InstanciaEstrategia> findByUsuarioId(Long usuarioId);
+
+    List<InstanciaEstrategia> findByUsuarioIdAndEstado(Long usuarioId, EstadoEstrategia estado);
+
     BigDecimal sumCapitalActivoByWallet(Long walletAsociada);
 
     Optional<InstanciaEstrategia> findById(Long id);

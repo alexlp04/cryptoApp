@@ -39,4 +39,16 @@ public record CliCommandContext(
         FetchGapDetector fetchGapDetector,
         Consumer<String> print,
         Consumer<String> println) {
+
+    /**
+     * Devuelve una copia del contexto leyendo de otro Scanner.
+     * Lo usa el comando 'test' para alimentar respuestas pregrabadas.
+     */
+    public CliCommandContext withScanner(Scanner nuevoScanner) {
+        return new CliCommandContext(
+                nuevoScanner, createUsuarioUseCase, getUsuarioUseCase, authenticateUseCase,
+                sessionManager, strategyLifecycleUseCase, queryStrategiesUseCase, strategyCatalogUseCase,
+                executeBacktestUseCase, walletManagementUseCase, aiTrainingService, aiOptimizationService,
+                marketDataService, fetchMarketDataService, fetchGapDetector, print, println);
+    }
 }

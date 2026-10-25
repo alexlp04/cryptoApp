@@ -7,6 +7,7 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
+import com.bottrading.market.domain.Timeframe;
 import com.bottrading.market.domain.VelaRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -74,10 +75,11 @@ public class FetchGapDetector {
             }
         }
 
+        // Solo faltan velas YA CERRADAS: la vela en curso no es un hueco (daba un falso hueco final
+        // en casi cada ejecución).
         long last = timestamps.getLast();
-        if (toEpochMs - last > expectedIntervalMs + TOLERANCE_MS) {
-            addGapIfValid(gaps, symbol, timeframe, last + expectedIntervalMs, toEpochMs);
-        }
+        long lastClosedOpen = (toEpochMs / expectedIntervalMs) * expectedIntervalMs - expectedIntervalMs;
+        addGapIfValid(gaps, symbol, timeframe, last + expectedIntervalMs, lastClosedOpen);
 
         return gaps;
     }
@@ -107,26 +109,6 @@ public class FetchGapDetector {
     }
 
     private long resolveTimeframeMillis(String timeframe) {
-        if (timeframe.length() < 2) {
-            throw new IllegalArgumentException("Unsupported timeframe: " + timeframe);
-        }
-
-        String numericPart = timeframe.substring(0, timeframe.length() - 1);
-        char unit = timeframe.charAt(timeframe.length() - 1);
-
-        int value;
-        try {
-            value = Integer.parseInt(numericPart);
-        } catch (NumberFormatException ex) {
-            throw new IllegalArgumentException("Unsupported timeframe: " + timeframe, ex);
-        }
-
-        return switch (unit) {
-            case 's' -> value * 1_000L;
-            case 'm' -> value * 60_000L;
-            case 'h' -> value * 3_600_000L;
-            case 'd' -> value * 86_400_000L;
-            default -> throw new IllegalArgumentException("Unsupported timeframe: " + timeframe);
-        };
+        return Timeframe.parse(timeframe).millis(); // misma tabla que FetchService; rechaza "0m", "2h"...
     }
 }

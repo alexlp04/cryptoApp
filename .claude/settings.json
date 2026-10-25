@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ruff-check.sh\"",
+            "timeout": 60,
+            "statusMessage": "ruff"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pytest-changed.sh\"",
+            "timeout": 300,
+            "statusMessage": "pytest"
+          }
+        ]
+      }
+    ]
+  }
+}

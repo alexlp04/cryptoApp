@@ -24,7 +24,7 @@ public final class StopCommand implements CliCommand {
         }
 
         if (parts[1].equalsIgnoreCase("-all")) {
-            context.strategyLifecycleUseCase().detenerTodas();
+            context.strategyLifecycleUseCase().detenerTodas(context.sessionManager().getCurrentUser().getId());
             context.println().accept("Todas las estrategias activas han sido pausadas.");
             return;
         }
@@ -34,7 +34,7 @@ public final class StopCommand implements CliCommand {
             return;
         }
 
-        context.strategyLifecycleUseCase().detenerEstrategia(id);
+        context.strategyLifecycleUseCase().detenerEstrategia(id, context.sessionManager().getCurrentUser().getId());
         context.println().accept("Estrategia " + id + " detenida.");
     }
 }

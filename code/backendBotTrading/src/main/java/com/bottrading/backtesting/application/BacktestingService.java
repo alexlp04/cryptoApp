@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -13,9 +14,9 @@ import org.springframework.stereotype.Service;
 import com.bottrading.backtesting.application.port.in.ExecuteBacktestUseCase;
 import com.bottrading.backtesting.application.port.out.BacktestPersistencePort;
 import com.bottrading.backtesting.infrastructure.StatsCsvRepository;
-import com.bottrading.config.ProcessExecutorConfig;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
+import com.bottrading.shared.exceptions.DataFetchException;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
 import com.bottrading.shared.utils.ConsoleLoader;
 import com.bottrading.shared.utils.PathConfig;
@@ -54,20 +55,26 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             BigDecimal capitalAsignado, BigDecimal risk, boolean limpiarBacktestsPrevios,
             boolean guardarTrades) {
 
+        // Primero todo lo que puede fallar sin efectos: nombre de estrategia y datos.
+        // Solo después se borran los resultados previos (si no, un typo o la falta de datos los perdía).
+        String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
+
+        Map<String, List<Vela>> velasPorSimbolo;
+        ConsoleLoader.getInstance().startDots("Cargando datos históricos del portfolio...");
+        try {
+            velasPorSimbolo = cargarDatosHistoricos(coins, tf);
+        } finally {
+            ConsoleLoader.getInstance().stopClear();
+        }
+
+        if (velasPorSimbolo.isEmpty()) {
+            throw new DataFetchException("No hay datos históricos para " + coins + " en " + tf
+                    + ". Ejecuta 'fetch' antes del backtest.");
+        }
+
         if (limpiarBacktestsPrevios) {
             backtestPersistencePort.limpiarResultadosPrevios(nombreEstra);
         }
-
-        ConsoleLoader.getInstance().startDots("Cargando datos históricos del portfolio...");
-        Map<String, List<Vela>> velasPorSimbolo = cargarDatosHistoricos(coins, tf);
-
-        if (velasPorSimbolo.isEmpty()) {
-            log.error("Abortado: No hay datos históricos para procesar.");
-            return;
-        }
-
-        String strategyPath = PathConfig.getValidStrategyPath(nombreEstra);
-        ConsoleLoader.getInstance().stopClear();
 
         String jsonResultado = ejecutarMotorBacktest(strategyPath, nombreEstra, modelName, tf, velasPorSimbolo,
                 capitalAsignado, risk, guardarTrades);
@@ -77,20 +84,21 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             ConsoleLoader.getInstance().stopClear();
             log.info("Resultados guardados en: {}{}{}", PathConfig.RESULTS_DIR, File.separator, nombreEstra);
         } else {
-            log.error("El motor de backtesting no retornó resultados.");
+            throw new StrategyExecutionException("El motor de backtesting no retornó resultados.");
         }
     }
 
     private Map<String, List<Vela>> cargarDatosHistoricos(List<String> coins, String tf) {
-        Map<String, List<Vela>> velasPorSimbolo = new HashMap<>();
+        // LinkedHashMap: conserva el orden de -coins (logs y resultados deterministas)
+        Map<String, List<Vela>> velasPorSimbolo = new LinkedHashMap<>();
 
         for (String symbol : coins) {
             List<Vela> velas = velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc(symbol, tf);
-            velasPorSimbolo.put(symbol, velas);
 
             if (velas.isEmpty()) {
                 log.warn("Aviso: No se encontraron velas para {} / {}", symbol, tf);
             } else {
+                velasPorSimbolo.put(symbol, velas);
                 log.debug("Cargadas {} velas para {}/{}", velas.size(), symbol, tf);
             }
         }
@@ -104,7 +112,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             BigDecimal risk, boolean guardarTrades)
             throws StrategyExecutionException {
         ConsoleLoader.getInstance().startDots("Serializando velas para el motor de backtest...");
-        Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
+        Map<String, Map<String, Object>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
         Map<String, Object> payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
@@ -113,32 +121,47 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         return invocarMotorPythonConRetries(payload);
     }
 
-    private Map<String, List<Map<String, Object>>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
-        Map<String, List<Map<String, Object>>> resultado = new HashMap<>();
-
-        velasPorSimbolo.forEach((symbol, listaVelas) -> {
-            List<Map<String, Object>> listaTransformada = listaVelas.stream()
-                    .map(this::convertirVelaAMapa) // Delegamos la conversión de 1 vela
-                    .toList();
-            resultado.put(symbol, listaTransformada);
-        });
-
+    private Map<String, Map<String, Object>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
+        Map<String, Map<String, Object>> resultado = new LinkedHashMap<>();
+        velasPorSimbolo.forEach((symbol, listaVelas) -> resultado.put(symbol, columnasDeVelas(listaVelas)));
         return resultado;
     }
 
-    private Map<String, Object> convertirVelaAMapa(Vela v) {
-        Map<String, Object> m = new HashMap<>();
-        m.put("timestamp", v.getOpenTime());
-        m.put("open", v.getOpen());
-        m.put("high", v.getHigh());
-        m.put("low", v.getLow());
-        m.put("close", v.getClose());
-        m.put("volume", v.getVolume());
-        return m;
+    /**
+     * Velas en formato columnar (un array por campo) en vez de un mapa por vela: con históricos largos
+     * evita decenas de millones de objetos intermedios, y pandas lo consume directo con DataFrame(dict).
+     * double y no BigDecimal: msgpack-jackson rechaza los BigDecimal que no caben exactos en un double
+     * (p. ej. 1234567890.12345678) y Python usa float64 de todos modos.
+     */
+    Map<String, Object> columnasDeVelas(List<Vela> velas) {
+        int n = velas.size();
+        long[] timestamp = new long[n];
+        double[] open = new double[n];
+        double[] high = new double[n];
+        double[] low = new double[n];
+        double[] close = new double[n];
+        double[] volume = new double[n];
+        for (int i = 0; i < n; i++) {
+            Vela v = velas.get(i);
+            timestamp[i] = v.getOpenTime();
+            open[i] = v.getOpen().doubleValue();
+            high[i] = v.getHigh().doubleValue();
+            low[i] = v.getLow().doubleValue();
+            close[i] = v.getClose().doubleValue();
+            volume[i] = v.getVolume().doubleValue();
+        }
+        Map<String, Object> columnas = new LinkedHashMap<>();
+        columnas.put("timestamp", timestamp);
+        columnas.put("open", open);
+        columnas.put("high", high);
+        columnas.put("low", low);
+        columnas.put("close", close);
+        columnas.put("volume", volume);
+        return columnas;
     }
 
     @SuppressWarnings("java:S107")
-    private Map<String, Object> construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
+    private Map<String, Object> construirPayload(String ruta, String tf, Map<String, Map<String, Object>> velas,
             BigDecimal capitalAsignado, BigDecimal risk, String nombreEstrategia, String modelName,
             boolean guardarTrades) {
         Map<String, Object> payload = new HashMap<>();
@@ -146,8 +169,8 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         payload.put("strategy_name", nombreEstrategia);
         payload.put("timeframe", tf);
         payload.put("velas", velas);
-        payload.put("capital", capitalAsignado);
-        payload.put("risk_per_trade", risk);
+        payload.put("capital", capitalAsignado.doubleValue());
+        payload.put("risk_per_trade", risk.doubleValue());
         payload.put("escribir_trades", guardarTrades);
         if (modelName != null && !modelName.isBlank()) {
             payload.put("model_name", modelName);
@@ -168,8 +191,9 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             PythonBridgeRequest<String> request = PythonBridgeRequest.<String>builder(PathConfig.ENGINE_BACKTEST_PATH)
                     .operationName("backtest")
                     .noTimeout()
-                    .maxRetries(ProcessExecutorConfig.MAX_RETRIES)
-                    .retryDelayMs(ProcessExecutorConfig.RETRY_DELAY_MS)
+                    // Un backtest fallido es determinista (estrategia, modelo, datos): reintentarlo solo
+                    // repite el trabajo y duplicaría los trades que el motor añade al CSV.
+                    .maxRetries(1)
                     .stdinWriter(os -> escribirEnvelopeBacktest(os, payload))
                     .stdoutReader(this::parseResponseWithFallback)
                     .onStderrLine(line -> log.info("PY [backtest]: {}", line))

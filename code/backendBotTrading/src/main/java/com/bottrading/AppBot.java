@@ -13,17 +13,13 @@ import org.springframework.stereotype.Component;
 import com.bottrading.backtesting.application.port.in.ExecuteBacktestUseCase;
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.commands.BacktestCommand;
-import com.bottrading.interfaces.cli.commands.CbiCommand;
 import com.bottrading.interfaces.cli.commands.CliCommand;
 import com.bottrading.interfaces.cli.commands.CreatePaperWalletCommand;
 import com.bottrading.interfaces.cli.commands.FetchCommand;
 import com.bottrading.interfaces.cli.commands.FetchGapDetector;
 import com.bottrading.interfaces.cli.commands.HelpCommand;
-import com.bottrading.interfaces.cli.commands.ListActiveStrategiesCommand;
-import com.bottrading.interfaces.cli.commands.ListStoppedStrategiesCommand;
-import com.bottrading.interfaces.cli.commands.ListStrategiesCommand;
+import com.bottrading.interfaces.cli.commands.ListStrategiesByStateCommand;
 import com.bottrading.interfaces.cli.commands.ListStrategyFilesCommand;
-import com.bottrading.interfaces.cli.commands.ListTerminatedStrategiesCommand;
 import com.bottrading.interfaces.cli.commands.ListWalletsCommand;
 import com.bottrading.interfaces.cli.commands.LoginCommand;
 import com.bottrading.interfaces.cli.commands.LogoutCommand;
@@ -122,12 +118,11 @@ public class AppBot implements CommandLineRunner {
         registerCommand(new CreatePaperWalletCommand());
         registerCommand(new ListWalletsCommand());
         registerCommand(new ListStrategyFilesCommand());
-        registerCommand(new ListStrategiesCommand());
-        registerCommand(new ListActiveStrategiesCommand());
-        registerCommand(new ListStoppedStrategiesCommand());
-        registerCommand(new ListTerminatedStrategiesCommand());
+        registerCommand(ListStrategiesByStateCommand.todas());
+        registerCommand(ListStrategiesByStateCommand.activas());
+        registerCommand(ListStrategiesByStateCommand.detenidas());
+        registerCommand(ListStrategiesByStateCommand.terminadas());
         registerCommand(new ModelsCommand());
-        registerCommand(new CbiCommand());
     }
 
     private void registerCommand(CliCommand command) {
@@ -144,9 +139,31 @@ public class AppBot implements CommandLineRunner {
         boolean ejecutando = true;
         while (ejecutando) {
             uiPrint(buildPrompt());
-            String linea = scanner.nextLine().trim();
-            ejecutando = procesarLinea(linea);
+            if (!scanner.hasNextLine()) {
+                esperarComoServicio();
+                return;
+            }
+            ejecutando = procesarLinea(scanner.nextLine().trim());
         }
+    }
+
+    /**
+     * Sin entrada interactiva (contenedor sin -it, systemd, stdin cerrado) nextLine() lanzaba
+     * NoSuchElementException y la app no arrancaba. Las estrategias corren en sus propios hilos:
+     * basta mantener vivo el proceso hasta que llegue SIGTERM (el shutdown hook cierra el contexto).
+     */
+    void esperarComoServicio() {
+        log.info("Sin entrada interactiva (stdin cerrado): modo servicio, esperando la señal de parada.");
+        try {
+            new java.util.concurrent.CountDownLatch(1).await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Separa por cualquier cantidad de espacios: con split(" ") "trade  -v" producía un token vacío. */
+    static String[] tokenizar(String comando) {
+        return comando.trim().split("\\s+");
     }
 
     private String buildPrompt() {
@@ -194,7 +211,7 @@ public class AppBot implements CommandLineRunner {
      * Resuelve y ejecuta un comando registrado.
      */
     private void procesarComando(String comando) {
-        String[] parts = comando.split(" ");
+        String[] parts = tokenizar(comando);
         String cmd = parts[0].toLowerCase();
 
         try {

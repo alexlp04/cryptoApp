@@ -30,16 +30,20 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "wallet_asociada")
     private Long walletAsociada;
 
+    /** Dueño de la estrategia: solo él puede pararla, reanudarla, liquidarla o verla. */
+    @Column(name = "usuario_id")
+    private Long usuarioId;
+
     private String timeframe;
 
     // Base de riesgo (NO cambia durante la estrategia)
-    @Column(name = "capital_asignado")
+    @Column(name = "capital_asignado", precision = 18, scale = 8)
     private BigDecimal capitalAsignado;
 
-    @Column(name = "risk_per_trade")
+    @Column(name = "risk_per_trade", precision = 18, scale = 8)
     private BigDecimal riskPerTrade;
 
-    @Column(name = "capital_reservado")
+    @Column(name = "capital_reservado", precision = 18, scale = 8)
     private BigDecimal capitalReservado; // RESERVED
 
     // Estados dinámicos con VALORES POR DEFECTO
@@ -61,6 +65,13 @@ public class InstanciaEstrategia extends BaseEntity {
 
     @Column(name = "es_real")
     private boolean esReal;
+
+    /** Cuándo evalúa señales el motor RT: "close", "open" o "both". */
+    @Column(name = "signal_mode", nullable = false, length = 10)
+    private String signalMode = MODO_SENAL_CIERRE;
+
+    public static final String MODO_SENAL_CIERRE = "close";
+    public static final java.util.Set<String> MODOS_SENAL = java.util.Set.of("close", "open", "both");
 
 
     public InstanciaEstrategia() {
@@ -104,6 +115,14 @@ public class InstanciaEstrategia extends BaseEntity {
 
     public void setNombreModelo(String nombreModelo) {
         this.nombreModelo = nombreModelo;
+    }
+
+    public Long getUsuarioId() {
+        return usuarioId;
+    }
+
+    public void setUsuarioId(Long usuarioId) {
+        this.usuarioId = usuarioId;
     }
 
     public Long getWalletAsociada() {
@@ -176,6 +195,17 @@ public class InstanciaEstrategia extends BaseEntity {
 
     public void setSimbolos(List<String> simbolos) {
         this.simbolos = simbolos;
+    }
+
+    public String getSignalMode() {
+        return signalMode;
+    }
+
+    public void setSignalMode(String signalMode) {
+        if (!MODOS_SENAL.contains(signalMode)) {
+            throw new IllegalArgumentException("Modo de señal inválido: " + signalMode + " (usa close, open o both)");
+        }
+        this.signalMode = signalMode;
     }
 
     public boolean isEsReal() {
