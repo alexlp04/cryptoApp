@@ -301,13 +301,15 @@ def _build_and_eval_neural_network(
     label_encoder: Any = None,
     symbol: str = "UNKNOWN",
     optuna_max_samples: int = OPTUNA_NN_MAX_SAMPLES,
+    trial: optuna.Trial | None = None,
 ) -> tuple[float, float, float, float, float, float]:
     """
     Entrena una red neuronal con los parámetros dados y devuelve
     (cv_accuracy_mean, train_accuracy, f1_cv, win_rate_cv, pf_norm_cv, sharpe_norm_cv).
     No usa cross_val_score (Keras no es compatible) → hace k-fold manual.
     Cuando se proporcionan df_enriched, strategy, timestamps y label_encoder,
-    ejecuta un backtest por fold para obtener métricas de trading reales.
+    ejecuta un backtest por fold y promedia las métricas de trading reales.
+    Con `trial` informa del F1 tras cada fold para que el pruner pueda podar.
 
     Para la fase de búsqueda Optuna usa como máximo `optuna_max_samples` filas
     (muestra estratificada de las últimas filas) para reducir el tiempo del trial.
@@ -356,9 +358,7 @@ def _build_and_eval_neural_network(
         and label_encoder is not None
     )
 
-    # Guardamos las predicciones del último fold para ejecutar UN SOLO backtest al final
-    last_y_pred_fold: np.ndarray | None = None
-    last_val_idx_nn: np.ndarray | None = None
+    cv_train_accs: list[float] = []
 
     for fold_idx, (train_idx, val_idx) in enumerate(tss.split(X)):
         x_tr, x_val = X[train_idx], X[val_idx]
@@ -371,37 +371,33 @@ def _build_and_eval_neural_network(
         fold_f1 = float(f1_score(y_val, y_pred_fold, average=metric_average(y_val, y_pred_fold), zero_division=0))
         cv_scores.append(fold_acc)
         cv_f1_scores.append(fold_f1)
-        last_y_pred_fold = y_pred_fold
-        last_val_idx_nn = val_idx
+        cv_train_accs.append(float(accuracy_score(y_tr, _predict_labels(model, x_tr))))
+
+        # Backtest de cada fold: un solo fold daba pocas operaciones y un score ruidoso.
+        if has_backtest_data:
+            y_pred_original = label_encoder.inverse_transform(y_pred_fold)
+            val_timestamps = timestamps[val_idx]  # type: ignore[index]
+            df_val = df_enriched[
+                df_enriched["timestamp"].isin(set(val_timestamps.tolist()))  # type: ignore[index]
+            ].sort_values("timestamp").reset_index(drop=True)
+            sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
+            cv_win_rates.append(sim["win_rate"] / 100.0)
+            cv_pf_norms.append(min(sim["profit_factor"], 5.0) / 5.0)
+            cv_sharpe_norms.append(max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0)))
 
         logger.debug("NN fold %d/%d — val_acc=%.4f f1=%.4f", fold_idx + 1, cv_folds, fold_acc, fold_f1)
         tf.keras.backend.clear_session()
         del x_tr, x_val, y_tr, y_val
         gc.collect()
 
-    # Backtest UNA VEZ sobre el último fold (datos más recientes — respeta causalidad)
-    if has_backtest_data and last_y_pred_fold is not None and last_val_idx_nn is not None:
-        y_pred_original = label_encoder.inverse_transform(last_y_pred_fold)
-        val_timestamps = timestamps[last_val_idx_nn]  # type: ignore[index]
-        df_val = df_enriched[
-            df_enriched["timestamp"].isin(set(val_timestamps.tolist()))  # type: ignore[index]
-        ].sort_values("timestamp").reset_index(drop=True)
-        sim = run_backtest_with_predictions(strategy, df_val, y_pred_original, symbol)
-        cv_win_rates.append(sim["win_rate"] / 100.0)
-        cv_pf_norms.append(min(sim["profit_factor"], 5.0) / 5.0)
-        cv_sharpe_norms.append(max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0)))
-        logger.debug(
-            "  NN backtest (último fold) — win_rate=%.2f%% pf=%.4f sharpe=%.4f",
-            sim["win_rate"], sim["profit_factor"], sim.get("sharpe", 0.0),
-        )
+        # Poda real: sin esto el pruner nunca descartaba una red claramente peor tras el primer fold.
+        if trial is not None:
+            trial.report(float(np.mean(cv_f1_scores)), step=fold_idx)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
 
     cv_mean = float(np.mean(cv_scores))
-
-    # Entrenamiento completo para medir train accuracy
-    model_full = _fit_keras_mlp(X, y, params, n_classes_nn, class_weight_dict)
-    y_train_pred = _predict_labels(model_full, X)
-    train_acc = float(accuracy_score(y, y_train_pred))
-    tf.keras.backend.clear_session()
+    train_acc = float(np.mean(cv_train_accs))
 
     f1_cv_result = float(np.mean(cv_f1_scores)) if cv_f1_scores else cv_mean
     win_rate_cv_result = float(np.mean(cv_win_rates)) if cv_win_rates else 0.5
@@ -527,12 +523,13 @@ def _make_objective(
         compute_class_weight("balanced", classes=clases_search, y=search_y).tolist(),
     ))
 
-    # tss.split() es determinista y search_x no cambia entre trials: el conjunto de
-    # validación del último fold (y por tanto su df_val) es siempre el mismo.
-    ultimo_val_idx = list(tss.split(search_x))[-1][1]
-    df_val_ultimo_fold = df_enriched[
-        df_enriched["timestamp"].isin(set(search_timestamps[ultimo_val_idx].tolist()))
-    ].sort_values("timestamp").reset_index(drop=True)
+    # tss.split() es determinista y search_x no cambia entre trials: los df de validación de cada
+    # fold son siempre los mismos, así que se construyen una sola vez.
+    df_val_por_fold = {
+        i: df_enriched[df_enriched["timestamp"].isin(set(search_timestamps[val_idx].tolist()))]
+        .sort_values("timestamp").reset_index(drop=True)
+        for i, (_, val_idx) in enumerate(tss.split(search_x))
+    }
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_fn(trial)
@@ -564,12 +561,10 @@ def _make_objective(
                     label_encoder=label_encoder,
                     symbol=symbol,
                     optuna_max_samples=optuna_max_samples,
+                    trial=trial,
                 )
             else:
-                # Guardamos predicciones del último fold para backtest único al final
-                last_y_pred_sk: np.ndarray | None = None
-                last_val_idx_sk: np.ndarray | None = None
-
+                cv_train_acc_scores: list[float] = []
                 for fold_idx, (train_idx, val_idx) in enumerate(tss.split(search_x)):
                     x_tr, x_val = search_x[train_idx], search_x[val_idx]
                     y_tr, y_val = search_y[train_idx], search_y[val_idx]
@@ -593,8 +588,15 @@ def _make_objective(
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
-                    last_y_pred_sk = y_pred_val
-                    last_val_idx_sk = val_idx
+                    cv_train_acc_scores.append(float(accuracy_score(y_tr, model_fold.predict(x_tr))))
+
+                    # Backtest de cada fold: un solo fold daba pocas operaciones y un score ruidoso.
+                    sim = run_backtest_with_predictions(
+                        strategy, df_val_por_fold[fold_idx],
+                        label_encoder.inverse_transform(y_pred_val), symbol)
+                    cv_win_rates.append(sim["win_rate"] / 100.0)
+                    cv_pf_norms.append(min(sim["profit_factor"], 5.0) / 5.0)
+                    cv_sharpe_norms.append(max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0)))
 
                     # Poda real: el pruner descarta trials claramente peores que la mediana tras cada fold.
                     trial.report(float(np.mean(cv_f1_scores)), step=fold_idx)
@@ -602,8 +604,8 @@ def _make_objective(
                         raise optuna.TrialPruned()
 
                     logger.debug(
-                        "  fold %d/%d | f1=%.4f acc=%.4f",
-                        fold_idx + 1, cv_folds, fold_f1, fold_acc,
+                        "  fold %d/%d | f1=%.4f acc=%.4f win_rate=%.2f%% pf=%.4f",
+                        fold_idx + 1, cv_folds, fold_f1, fold_acc, sim["win_rate"], sim["profit_factor"],
                     )
                     del x_tr, x_val, y_tr, y_val, model_fold, y_pred_val
                     gc.collect()
@@ -611,33 +613,12 @@ def _make_objective(
                 if not cv_f1_scores:
                     raise ValueError("Ningún fold con las clases necesarias para entrenar")
 
-                # Backtest UNA VEZ sobre el último fold (datos más recientes)
-                if last_y_pred_sk is not None and last_val_idx_sk is not None:
-                    y_pred_original = label_encoder.inverse_transform(last_y_pred_sk)
-                    sim = run_backtest_with_predictions(
-                        strategy, df_val_ultimo_fold, y_pred_original, symbol
-                    )
-
-                    win_rate_frac = sim["win_rate"] / 100.0
-                    pf_norm = min(sim["profit_factor"], 5.0) / 5.0
-                    sharpe_norm = max(0.0, min(sim.get("sharpe", 0.0) / 2.0, 1.0))
-
-                    cv_win_rates.append(win_rate_frac)
-                    cv_pf_norms.append(pf_norm)
-                    cv_sharpe_norms.append(sharpe_norm)
-                    logger.debug(
-                        "  backtest (último fold) | win_rate=%.2f%% pf=%.4f sharpe=%.4f",
-                        sim["win_rate"], sim["profit_factor"], sim.get("sharpe", 0.0),
-                    )
-
                 f1_cv = float(np.mean(cv_f1_scores))
                 cv_acc = float(np.mean(cv_acc_scores))
                 win_rate_cv = float(np.mean(cv_win_rates))
                 pf_norm_cv = float(np.mean(cv_pf_norms))
                 sharpe_norm_cv = float(np.mean(cv_sharpe_norms))
-
-                model_full = fit_sklearn_model(model_type, trial_params, search_x, search_y)
-                train_acc = float(accuracy_score(search_y, model_full.predict(search_x)))
+                train_acc = float(np.mean(cv_train_acc_scores))
 
             overfit_gap = train_acc - cv_acc
             composite = _compute_composite_score(
@@ -777,6 +758,11 @@ def _train_sklearn_final(
             fit_params.get("max_iter"),
             fit_params.get("cache_size"),
         )
+
+    if model_type == "svm" and len(X) > OPTUNA_SVM_MAX_SAMPLES:
+        # Optuna evaluó el SVM con las últimas N filas: entrenar con todas daría un modelo distinto al evaluado.
+        logger.info("SVM final con las mismas %d filas que usó Optuna (de %d)", OPTUNA_SVM_MAX_SAMPLES, len(X))
+        X, y = X[-OPTUNA_SVM_MAX_SAMPLES:], y[-OPTUNA_SVM_MAX_SAMPLES:]
 
     model = fit_sklearn_model(model_type, fit_params, X, y, class_weight=_balanced_class_weight(y))
     y_pred = model.predict(X_test)
@@ -1196,7 +1182,9 @@ def main() -> None:
             raise ValueError(f"Ningún trial completó correctamente. Último error: {ultimo_error}")
 
         best_trial = study.best_trial
-        best_params = best_trial.params
+        # Los params del trial solo traen lo sugerido; rehacer la sugerencia con un FixedTrial devuelve
+        # también los fijos (random_state, eval_metric...) y el modelo final no depende de defaults ajenos.
+        best_params = _SUGGEST_FN[model_type](optuna.trial.FixedTrial(best_trial.params))
         best_log_entry = next((e for e in trial_log if e["trial"] == best_trial.number), {})
         best_cv_acc = float(best_log_entry.get("accuracy_cv") or 0.0)
         best_f1_cv = float(best_log_entry.get("f1_cv") or 0.0)

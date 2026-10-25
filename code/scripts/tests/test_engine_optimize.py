@@ -348,3 +348,73 @@ def test_la_evaluacion_cv_neuronal_devuelve_las_seis_metricas():
     resultado = _build_and_eval_neural_network(x, y, _PARAMS_RAPIDOS, cv_folds=2)
 
     assert len(resultado) == 6 and all(np.isfinite(v) for v in resultado)
+
+
+# ── Score con todos los folds, poda de la red y modelo final = modelo evaluado (#74 #90) ──
+
+def test_el_score_promedia_el_backtest_de_todos_los_folds(monkeypatch):
+    eo, objective, log = _objective_fixture(monkeypatch)
+    llamadas = []
+    monkeypatch.setattr(eo, "run_backtest_with_predictions",
+                        lambda *a, **k: llamadas.append(1) or {"win_rate": 50.0, "profit_factor": 1.0, "sharpe": 0.5})
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=1, catch=(Exception,))
+
+    assert len(llamadas) == 3  # cv_folds=3: antes solo se hacía backtest del último fold
+    assert log[0]["status"] == "COMPLETE"
+
+
+def test_la_red_se_poda_tras_el_primer_fold_si_el_pruner_lo_pide():
+    pytest.importorskip("tensorflow")
+    from engine_optimize import _build_and_eval_neural_network
+
+    class _Trial:
+        def __init__(self):
+            self.reports = []
+
+        def report(self, value, step):
+            self.reports.append(step)
+
+        def should_prune(self):
+            return True
+
+    trial = _Trial()
+    x, y = _datos(3, n=150)
+
+    with pytest.raises(optuna.TrialPruned):
+        _build_and_eval_neural_network(x, y, _PARAMS_RAPIDOS, cv_folds=3, trial=trial)
+
+    assert trial.reports == [0]  # no entrenó los otros folds
+
+
+def test_best_params_incluye_los_parametros_fijos():
+    from engine_optimize import _SUGGEST_FN
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(lambda t: float(_SUGGEST_FN["xgboost"](t)["max_depth"]), n_trials=1)
+
+    completos = _SUGGEST_FN["xgboost"](optuna.trial.FixedTrial(study.best_trial.params))
+
+    assert completos["random_state"] == 42 and completos["eval_metric"] == "logloss"
+    assert "random_state" not in study.best_trial.params
+
+
+def test_el_svm_final_usa_las_mismas_filas_que_optuna(monkeypatch, tmp_path):
+    import engine_optimize as eo
+
+    vistas = {}
+    monkeypatch.setattr(eo, "OPTUNA_SVM_MAX_SAMPLES", 50)
+
+    def fake_fit(model_type, params, x, y, class_weight=None):
+        vistas["n"] = len(x)
+        return type("M", (), {"predict": lambda self, xx: np.zeros(len(xx), dtype=int)})()
+
+    monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())
+    x, y = _datos(2, n=200)
+
+    eo._train_sklearn_final("svm", {"C": 1.0, "kernel": "rbf"}, x, y, x[:5], ["a"], "S", 1,
+                            str(tmp_path), "1h", "BTCUSDT", None)
+
+    assert vistas["n"] == 50
