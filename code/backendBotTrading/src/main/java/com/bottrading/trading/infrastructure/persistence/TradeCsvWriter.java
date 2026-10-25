@@ -75,9 +75,9 @@ public class TradeCsvWriter {
             String side, BigDecimal price, long timestamp, BigDecimal pnl) {
         Map<String, Object> map = Map.of(
                 AppConstants.KEY_SIDE, side,
-                AppConstants.KEY_PRICE, price,
+                AppConstants.KEY_PRICE, price.toPlainString(),
                 AppConstants.KEY_TIMESTAMP, timestamp,
-                AppConstants.KEY_PNL, pnl != null ? String.format("%.8f", pnl) : ""
+                AppConstants.KEY_PNL, pnl != null ? pnl.setScale(8, java.math.RoundingMode.HALF_UP).toPlainString() : ""
         );
         guardarTrade(nombreEstrategia, timeframe, symbol, map, false);
     }

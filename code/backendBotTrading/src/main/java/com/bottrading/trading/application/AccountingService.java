@@ -235,6 +235,18 @@ public class AccountingService implements AccountingUseCase {
         walletRepo.save(w);
     }
 
+    /**
+     * Desvío del invariante balanceReal == balanceDisponible + capital repartido en estrategias
+     * (reservado + comprometido). Debe ser 0; distinto de 0 indica dinero perdido o creado.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal desvioDelInvariante(Long walletId) {
+        Wallet w = walletRepo.findByIdWithLock(walletId)
+                .orElseThrow(() -> new ValidationException("Wallet no encontrada: " + walletId));
+        BigDecimal repartido = estrategiaRepo.sumCapitalRepartidoByWallet(walletId);
+        return w.getBalanceReal().subtract(w.getBalanceDisponible().add(repartido == null ? BigDecimal.ZERO : repartido));
+    }
+
     // MÉTODOS PRIVADOS
 
     private static void exigirPositivo(BigDecimal valor, String nombre) {

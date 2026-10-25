@@ -533,6 +533,18 @@ class AccountingServiceTest {
         }
 
         @Test
+        @DisplayName("✓ El invariante balanceReal = disponible + repartido se puede verificar (#95)")
+        void invariant_deviation_is_computed() {
+            Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("800"));
+            doReturn(Optional.of(w)).when(walletRepo).findByIdWithLock(1L);
+            doReturn(new BigDecimal("200")).when(estrategiaRepo).sumCapitalRepartidoByWallet(1L);
+            assertThat(accountingService.desvioDelInvariante(1L).compareTo(BigDecimal.ZERO), is(0));
+
+            doReturn(new BigDecimal("150")).when(estrategiaRepo).sumCapitalRepartidoByWallet(1L);
+            assertThat(accountingService.desvioDelInvariante(1L), is(new BigDecimal("50")));
+        }
+
+        @Test
         @DisplayName("✓ applyFee descuenta de balanceReal y de balanceDisponible")
         void fee_reduces_real_and_available() {
             Wallet w = crearWalletTest(1L, new BigDecimal("1000"), new BigDecimal("200"));

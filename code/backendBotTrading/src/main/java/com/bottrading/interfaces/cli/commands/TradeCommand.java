@@ -46,7 +46,7 @@ public final class TradeCommand implements CliCommand {
             return;
         }
 
-        BigDecimal risk = CliInputValidator.readBigDecimal(context, "Riesgo por trade (0.01 - 1.0): ", "riesgo");
+        BigDecimal risk = CliInputValidator.readRiskPerTrade(context, "Riesgo por trade (0.01 - 1.0): ");
         if (risk == null) {
             return;
         }
@@ -123,7 +123,7 @@ public final class TradeCommand implements CliCommand {
 
     private BigDecimal leerCapitalAsignado(CliCommandContext context, BigDecimal disponible) {
 
-        BigDecimal capitalAsignado = CliInputValidator.readBigDecimal(context,
+        BigDecimal capitalAsignado = CliInputValidator.readPositiveBigDecimal(context,
             "Capital a asignar a este bot: ", "capital asignado");
         if (capitalAsignado == null) {
             return null;

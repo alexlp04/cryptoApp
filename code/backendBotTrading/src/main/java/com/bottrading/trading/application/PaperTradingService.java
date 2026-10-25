@@ -3,13 +3,15 @@ package com.bottrading.trading.application;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.util.Date;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.bottrading.shared.utils.AppConstants;
 import com.bottrading.shared.utils.SafeParser;
@@ -165,9 +167,9 @@ public class PaperTradingService implements ProcessSignalUseCase {
         pos.setAbierta(true);
         posicionRepo.save(pos);
 
-        // Registro en archivo CSV
-        tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "BUY",
-                signal.getPrice(), signal.getTimestamp(), null);
+        // Registro en archivo CSV (tras el commit: si la TX revierte y se reintenta no queda duplicado)
+        despuesDelCommit(() -> tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(),
+                signal.getSymbol(), "BUY", signal.getPrice(), signal.getTimestamp(), null));
     }
 
     /**
@@ -195,13 +197,36 @@ public class PaperTradingService implements ProcessSignalUseCase {
         pos.setFechaCierre(Instant.now());
         posicionRepo.save(pos);
 
-        // Registro en archivo CSV
-        tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(), "SELL",
-                signal.getPrice(), signal.getTimestamp(), pnlNeto);
+        // CSV de trades y estadísticas agregadas: efectos fuera de la BBDD, solo si la TX se confirma.
+        despuesDelCommit(() -> {
+            tradeResultsPort.guardarTrade(e.getNombreEstrategia(), signal.getTimeframe(), signal.getSymbol(),
+                    "SELL", signal.getPrice(), signal.getTimestamp(), pnlNeto);
+            Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
+            tradeResultsPort.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
+        });
+    }
 
-        // Actualización de estadísticas agregadas
-        Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
-        tradeResultsPort.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
+    /**
+     * Ejecuta el efecto tras el commit de la transacción en curso (o al momento si no hay ninguna).
+     * El CSV y el caché no son transaccionales: dentro de la TX un rollback + reintento los
+     * dejaba escritos dos veces.
+     */
+    private void despuesDelCommit(Runnable efecto) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            efecto.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    efecto.run();
+                } catch (RuntimeException ex) {
+                    // La operación ya está confirmada en BBDD (fuente de verdad); el CSV es derivado.
+                    log.error("No se pudo escribir el CSV de la operación confirmada: {}", ex.getMessage(), ex);
+                }
+            }
+        });
     }
 
     /**
@@ -233,15 +258,17 @@ public class PaperTradingService implements ProcessSignalUseCase {
         int perdidas = SafeParser.toInt(currentStats.get("op_perdidas"), 0);
         BigDecimal retornoTotal = SafeParser.toBigDecimal(currentStats.get("retorno_total"), BigDecimal.ZERO);
 
-        // Actualizar contadores
-        if (pnlActual.compareTo(BigDecimal.ZERO) > 0) {
+        // Actualizar contadores: un cierre con PnL 0 no es una pérdida (cuenta solo en el total,
+        // igual que en backtest_engine.py).
+        int signo = pnlActual.signum();
+        if (signo > 0) {
             ganadas++;
-        } else {
+        } else if (signo < 0) {
             perdidas++;
         }
 
         retornoTotal = retornoTotal.add(pnlActual);
-        int totales = ganadas + perdidas;
+        int totales = SafeParser.toInt(currentStats.get("op_totales"), ganadas + perdidas - (signo == 0 ? 0 : 1)) + 1;
         double winRate = (totales > 0) ? (double) ganadas / totales * 100 : 0;
 
         // Construir mapa actualizado
@@ -252,15 +279,15 @@ public class PaperTradingService implements ProcessSignalUseCase {
         newStats.put("op_perdidas", perdidas);
         newStats.put("op_totales", totales);
         newStats.put("retorno_total", retornoTotal);
-        newStats.put("win_rate", String.format("%.2f%%", winRate));
+        newStats.put("win_rate", String.format(Locale.ROOT, "%.2f%%", winRate));
         newStats.put(AppConstants.KEY_RESULTADO, clasificarResultado(retornoTotal));
-        newStats.put("fecha_fin", new Date().toString());
+        newStats.put("fecha_fin", Instant.now().toString()); // ISO-8601, parseable
 
         // Actualizar en caché (se guardará a disco automáticamente)
         statsCache.updateStats(e.getNombreEstrategia(), e.getTimeframe(), symbol, newStats);
 
         log.debug("Stats actualizadas en caché: {} ganadas, {} perdidas, win_rate: {}%",
-                ganadas, perdidas, String.format("%.2f", winRate));
+                ganadas, perdidas, String.format(Locale.ROOT, "%.2f", winRate));
         return newStats;
     }
 
