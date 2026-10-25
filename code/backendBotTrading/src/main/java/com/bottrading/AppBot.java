@@ -141,9 +141,31 @@ public class AppBot implements CommandLineRunner {
         boolean ejecutando = true;
         while (ejecutando) {
             uiPrint(buildPrompt());
-            String linea = scanner.nextLine().trim();
-            ejecutando = procesarLinea(linea);
+            if (!scanner.hasNextLine()) {
+                esperarComoServicio();
+                return;
+            }
+            ejecutando = procesarLinea(scanner.nextLine().trim());
         }
+    }
+
+    /**
+     * Sin entrada interactiva (contenedor sin -it, systemd, stdin cerrado) nextLine() lanzaba
+     * NoSuchElementException y la app no arrancaba. Las estrategias corren en sus propios hilos:
+     * basta mantener vivo el proceso hasta que llegue SIGTERM (el shutdown hook cierra el contexto).
+     */
+    void esperarComoServicio() {
+        log.info("Sin entrada interactiva (stdin cerrado): modo servicio, esperando la señal de parada.");
+        try {
+            new java.util.concurrent.CountDownLatch(1).await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Separa por cualquier cantidad de espacios: con split(" ") "trade  -v" producía un token vacío. */
+    static String[] tokenizar(String comando) {
+        return comando.trim().split("\\s+");
     }
 
     private String buildPrompt() {
@@ -191,7 +213,7 @@ public class AppBot implements CommandLineRunner {
      * Resuelve y ejecuta un comando registrado.
      */
     private void procesarComando(String comando) {
-        String[] parts = comando.split(" ");
+        String[] parts = tokenizar(comando);
         String cmd = parts[0].toLowerCase();
 
         try {
