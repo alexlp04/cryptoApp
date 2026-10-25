@@ -22,6 +22,7 @@ from shared_utils import (
     emit_heartbeats,
     fetch_recent_klines,
     load_strategy_by_path,
+    seed_buffer,
     setup_engine_logging,
     upsert_candle,
     verify_model_manifest,
@@ -377,18 +378,6 @@ def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_
     return None
 
 
-async def _seed_buffer(df_buffer: deque, symbol: str, timeframe: str, limit: int) -> None:
-    """Rellena el buffer con velas cerradas por REST: sin esperar horas y sin huecos tras reconectar."""
-    try:
-        klines = await asyncio.to_thread(fetch_recent_klines, symbol, timeframe, limit)
-    except Exception:
-        logger.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
-        return
-    df_buffer.clear()
-    df_buffer.extend(klines)
-    logger.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(df_buffer))
-
-
 async def run_symbol(
     symbol: str,
     timeframe: str,
@@ -419,7 +408,7 @@ async def run_symbol(
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                await _seed_buffer(df_buffer, symbol, timeframe, buffer_size)
+                await seed_buffer(df_buffer, symbol, timeframe, buffer_size, fetch_recent_klines)
                 async for msg in ws:
                     data = json.loads(msg)
                     k = data.get("k")

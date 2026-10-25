@@ -12,7 +12,9 @@ from shared_utils import (
     CODE_DIR,
     build_signal_line,
     emit_heartbeats,
+    fetch_recent_klines,
     load_strategy_by_path,
+    seed_buffer,
     setup_engine_logging,
     upsert_candle,
 )
@@ -101,6 +103,9 @@ async def run_symbol(
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
+                # Al conectar y al reconectar: calentamiento al instante y sin las velas perdidas.
+                await seed_buffer(buffer, symbol, timeframe, _buffer_size(max_candles, min_candles),
+                                  fetch_recent_klines)
                 async for msg in ws:
                     k = json.loads(msg).get("k")
                     if not k:
