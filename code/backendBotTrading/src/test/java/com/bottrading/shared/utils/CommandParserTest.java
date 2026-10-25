@@ -111,4 +111,16 @@ class CommandParserTest {
         assertTrue(parse("trade -v -signal nunca -tf 1h -coins BTCUSDT").hasErrorSintaxis());
         assertEquals(null, parse("trade -v -tf 1h -coins BTCUSDT").getSignalMode());
     }
+
+    @Test
+    @DisplayName("Un símbolo con separadores, '..' o caracteres raros se rechaza antes de llegar a un nombre de fichero")
+    void rejects_symbols_that_could_escape_a_file_name() {
+        for (String malo : new String[] {"../../X", "BTC/USDT", "BTC..", "A", "BTC USDT;", "BTC-USDT", "B".repeat(21)}) {
+            assertFalse(CommandParser.esSimboloValido(malo.toUpperCase()), malo);
+        }
+        assertTrue(CommandParser.esSimboloValido("BTCUSDT"));
+        assertTrue(CommandParser.esSimboloValido("1000SATSUSDT"));
+        assertTrue(parse("train -model xgboost -tf 1h -coins ../../etc").hasErrorSintaxis());
+        assertFalse(parse("train -model xgboost -tf 1h -coins btcusdt").hasErrorSintaxis());
+    }
 }

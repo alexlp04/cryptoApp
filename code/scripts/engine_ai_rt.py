@@ -23,6 +23,9 @@ from shared_utils import (
     emit_heartbeats,
     fetch_recent_klines,
     load_strategy_by_path,
+    require_name,
+    require_symbol,
+    require_timeframe,
     seed_buffer,
     setup_engine_logging,
     upsert_candle,
@@ -525,10 +528,10 @@ def main() -> None:
             raise ValueError("El payload de Java no incluye 'model_name'. Imposible arrancar motor IA.")
 
         asyncio.run(run_all(
-            symbols=payload["symbols"],
-            timeframe=payload["timeframe"],
+            symbols=[require_symbol(s) for s in payload["symbols"]],
+            timeframe=require_timeframe(payload["timeframe"]),
             strategy_path=payload["strategy_path"],
-            model_name=model_name,
+            model_name=require_name(model_name, "model_name"),
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),
             is_real=payload.get("is_real", False),

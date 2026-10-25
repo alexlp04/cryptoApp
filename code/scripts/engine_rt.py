@@ -15,6 +15,8 @@ from shared_utils import (
     emit_heartbeats,
     fetch_recent_klines,
     load_strategy_by_path,
+    require_symbol,
+    require_timeframe,
     seed_buffer,
     setup_engine_logging,
     upsert_candle,
@@ -228,8 +230,8 @@ def main() -> None:
         logger.info("Configuracion recibida para %d simbolos", len(payload.get("symbols", [])))
         
         asyncio.run(run_all(
-            symbols=payload["symbols"],
-            timeframe=payload["timeframe"],
+            symbols=[require_symbol(s) for s in payload["symbols"]],
+            timeframe=require_timeframe(payload["timeframe"]),
             strategy_path=payload["strategy_path"],
             capital=payload.get("capital", 1000),
             risk_per_trade=payload.get("risk_per_trade", 0.02),

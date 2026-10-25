@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import time
 from functools import lru_cache
@@ -201,6 +202,34 @@ def atomic_save(path: str, save_fn: Any) -> None:
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+# =============================================================================
+# VALIDACIÓN DE NOMBRES QUE ACABAN EN RUTAS DE FICHERO
+# =============================================================================
+_SYMBOL_RE = re.compile(r"[A-Z0-9]{2,20}")
+_TIMEFRAME_RE = re.compile(r"[0-9]{1,2}[smhdwM]")
+_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}")
+
+
+def require_symbol(value: Any) -> str:
+    """Símbolo de mercado seguro para usar en nombres de fichero y URLs (frontera del engine)."""
+    if not isinstance(value, str) or not _SYMBOL_RE.fullmatch(value):
+        raise ValueError(f"Símbolo inválido: {value!r} (solo A-Z y 0-9, 2-20 caracteres)")
+    return value
+
+
+def require_timeframe(value: Any) -> str:
+    if not isinstance(value, str) or not _TIMEFRAME_RE.fullmatch(value):
+        raise ValueError(f"Timeframe inválido: {value!r}")
+    return value
+
+
+def require_name(value: Any, label: str) -> str:
+    """Nombre de modelo o estrategia seguro para un nombre de fichero: sin separadores ni '..'."""
+    if not isinstance(value, str) or not _NAME_RE.fullmatch(value) or ".." in value:
+        raise ValueError(f"{label} inválido: {value!r} (letras, números, '_', '.' o '-')")
+    return value
 
 
 class ModelIntegrityError(ValueError):
