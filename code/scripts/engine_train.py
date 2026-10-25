@@ -24,12 +24,13 @@ from shared_utils import (
     apply_strategy_features,
     atomic_save,
     build_and_train_neural_network,
+    encode_labels,
     fit_sklearn_model,
     load_strategy_by_name,
+    metric_average,
     setup_engine_logging,
 )
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -110,9 +111,8 @@ def main() -> None:
         timestamps_test = timestamps_all[split_idx:]
 
         # LabelEncoder (P1.3): recodifica {-1,0,1} -> {0,1,2} para XGBoost/LightGBM/NN
-        label_encoder = LabelEncoder()
-        y_train = label_encoder.fit_transform(y_train_raw)
-        y_test = label_encoder.transform(y_test_raw)
+        label_encoder, y_train, y_test, keep_test = encode_labels(y_train_raw, y_test_raw)
+        X_test, timestamps_test = X_test[keep_test], timestamps_test[keep_test]
         n_classes = len(label_encoder.classes_)
 
         label_distribution = {
@@ -197,7 +197,7 @@ def main() -> None:
         training_time = time.monotonic() - start_time
 
         # Metricas de clasificacion
-        avg = "binary" if n_classes <= 2 else "weighted"
+        avg = metric_average(y_test, y_pred)
         acc = float(accuracy_score(y_test, y_pred))
         prec = float(precision_score(y_test, y_pred, average=avg, zero_division=0))
         rec = float(recall_score(y_test, y_pred, average=avg, zero_division=0))

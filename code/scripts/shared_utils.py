@@ -120,6 +120,36 @@ def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[d
     ]
 
 
+def encode_labels(y_train_raw: Any, y_test_raw: Any) -> tuple[Any, Any, Any, Any]:
+    """Codifica labels a 0..K-1 con las clases de train y descarta del test las que no vio.
+
+    Devuelve (encoder, y_train, y_test, keep): keep es la máscara de filas de test conservadas
+    (el llamador debe filtrar con ella X_test y los timestamps). Sin esto, una clase rara que
+    solo aparece en el tramo final aborta la ejecución con 'unseen labels'.
+    """
+    import numpy as np
+    from sklearn.preprocessing import LabelEncoder
+
+    encoder = LabelEncoder()
+    y_train = encoder.fit_transform(y_train_raw)
+    y_test_raw = np.asarray(y_test_raw)
+    keep = np.isin(y_test_raw, encoder.classes_)
+    if not keep.all():
+        logging.getLogger(__name__).warning(
+            "Test: %d filas con clases ausentes en train (%s) descartadas",
+            int((~keep).sum()), sorted(set(y_test_raw[~keep].tolist())),
+        )
+    return encoder, y_train, encoder.transform(y_test_raw[keep]), keep
+
+
+def metric_average(*labels: Any) -> str:
+    """'binary' solo si todas las etiquetas son 0/1 (pos_label=1 existe); si no, 'weighted'."""
+    import numpy as np
+
+    present = set(np.unique(np.concatenate([np.asarray(x).ravel() for x in labels])).tolist())
+    return "binary" if present <= {0, 1} else "weighted"
+
+
 def atomic_save(path: str, save_fn: Any) -> None:
     """Guarda en un temporal y renombra: un RT que lee el modelo nunca ve un fichero a medias."""
     base, ext = os.path.splitext(path)

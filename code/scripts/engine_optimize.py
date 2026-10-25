@@ -63,8 +63,10 @@ from shared_utils import (
     apply_strategy_features,
     atomic_save,
     configure_tensorflow_runtime,
+    encode_labels,
     fit_sklearn_model,
     load_strategy_by_name,
+    metric_average,
     setup_engine_logging,
 )
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -369,8 +371,6 @@ def _build_and_eval_neural_network(
         and timestamps is not None
         and label_encoder is not None
     )
-    n_classes_nn_cur = len(np.unique(y))
-    avg_mode_nn = "binary" if n_classes_nn_cur <= 2 else "weighted"
 
     # Guardamos las predicciones del último fold para ejecutar UN SOLO backtest al final
     last_y_pred_fold: np.ndarray | None = None
@@ -413,7 +413,7 @@ def _build_and_eval_neural_network(
             y_pred_fold = (model.predict(x_val, verbose=0) > 0.5).astype(int).flatten()
 
         fold_acc = float(accuracy_score(y_val, y_pred_fold))
-        fold_f1 = float(f1_score(y_val, y_pred_fold, average=avg_mode_nn, zero_division=0))
+        fold_f1 = float(f1_score(y_val, y_pred_fold, average=metric_average(y_val, y_pred_fold), zero_division=0))
         cv_scores.append(fold_acc)
         cv_f1_scores.append(fold_f1)
         last_y_pred_fold = y_pred_fold
@@ -486,6 +486,12 @@ def _build_and_eval_neural_network(
 # FUNCIÓN OBJETIVO DE OPTUNA
 # =============================================================================
 
+def _contiguous_classes(y: np.ndarray) -> bool:
+    """XGBoost exige etiquetas 0..K-1 sin huecos en cada fit; un fold temprano puede carecer de una clase."""
+    unicas = np.unique(y)
+    return bool(np.array_equal(unicas, np.arange(len(unicas))))
+
+
 def _make_objective(
     model_type: str,
     X: np.ndarray,
@@ -529,7 +535,6 @@ def _make_objective(
     # Invariantes de todo el estudio: no dependen del trial ni del fold, así que se
     # calculan una sola vez en lugar de una por fold y por trial.
     clases_search = np.unique(search_y)
-    avg_mode_search = "binary" if len(clases_search) <= 2 else "weighted"
     cw_search_dict = dict(zip(
         clases_search.tolist(),
         compute_class_weight("balanced", classes=clases_search, y=search_y).tolist(),
@@ -582,6 +587,11 @@ def _make_objective(
                     x_tr, x_val = search_x[train_idx], search_x[val_idx]
                     y_tr, y_val = search_y[train_idx], search_y[val_idx]
 
+                    if model_type == "xgboost" and not _contiguous_classes(y_tr):
+                        logger.warning("Fold %d omitido: faltan clases en train (XGBoost las exige contiguas)",
+                                       fold_idx + 1)
+                        continue
+
                     # class_weight para compensar desbalanceo (problema 1)
                     model_fold = fit_sklearn_model(
                         model_type,
@@ -592,12 +602,17 @@ def _make_objective(
                     )
                     y_pred_val = model_fold.predict(x_val)
 
-                    fold_f1 = float(f1_score(y_val, y_pred_val, average=avg_mode_search, zero_division=0))
+                    fold_f1 = float(f1_score(y_val, y_pred_val, average=metric_average(y_val, y_pred_val), zero_division=0))
                     fold_acc = float(accuracy_score(y_val, y_pred_val))
                     cv_f1_scores.append(fold_f1)
                     cv_acc_scores.append(fold_acc)
                     last_y_pred_sk = y_pred_val
                     last_val_idx_sk = val_idx
+
+                    # Poda real: el pruner descarta trials claramente peores que la mediana tras cada fold.
+                    trial.report(float(np.mean(cv_f1_scores)), step=fold_idx)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned()
 
                     logger.debug(
                         "  fold %d/%d | f1=%.4f acc=%.4f",
@@ -605,6 +620,9 @@ def _make_objective(
                     )
                     del x_tr, x_val, y_tr, y_val, model_fold, y_pred_val
                     gc.collect()
+
+                if not cv_f1_scores:
+                    raise ValueError("Ningún fold con las clases necesarias para entrenar")
 
                 # Backtest UNA VEZ sobre el último fold (datos más recientes)
                 if last_y_pred_sk is not None and last_val_idx_sk is not None:
@@ -666,6 +684,8 @@ def _make_objective(
 
             return composite
 
+        except optuna.TrialPruned:
+            raise
         except Exception as exc:
             logger.warning("Trial %d falló: %s", trial.number, exc)
             trial_log.append({
@@ -680,9 +700,10 @@ def _make_objective(
                 "composite_score": None,
                 "elapsed_s": None,
                 "status": "FAILED",
+                "error": f"{type(exc).__name__}: {exc}",
                 "params": {},
             })
-            raise optuna.exceptions.TrialPruned() from exc
+            raise  # Optuna lo registra como FAIL (no como PRUNED) y el estudio sigue gracias a catch=
 
     return objective
 
@@ -846,8 +867,7 @@ def _train_final_model(
 
     logger.info("Modelo final guardado en: %s/%s", models_dir, model_filename)
 
-    is_binary = len(np.unique(y_test)) <= 2
-    avg = "binary" if is_binary else "weighted"
+    avg = metric_average(y_test, y_pred)
     metrics = {
         "accuracy": round(float(accuracy_score(y_test, y_pred)), 6),
         "precision": round(float(precision_score(y_test, y_pred, average=avg, zero_division=0)), 6),
@@ -999,9 +1019,8 @@ def _preparar_dataset(
         [df_train_enriched, df_test_enriched], ignore_index=True
     ).sort_values("timestamp").reset_index(drop=True)
 
-    label_encoder = LabelEncoder()
-    y_train_full = label_encoder.fit_transform(y_train_full_raw)
-    y_test = label_encoder.transform(y_test_raw)
+    label_encoder, y_train_full, y_test, keep_test = encode_labels(y_train_full_raw, y_test_raw)
+    X_test, timestamps_test = X_test[keep_test], timestamps_test[keep_test]
     logger.info(
         "Labels codificados: %s → índices 0..%d",
         label_encoder.classes_.tolist(),
@@ -1171,12 +1190,14 @@ def main() -> None:
         trial_log: list[dict[str, Any]] = []
         study_name = build_study_name(model_type, symbol, timeframe)
         storage = resolve_optuna_storage()
-        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=1)
+        sampler = optuna.samplers.TPESampler(seed=42)  # reproducible entre ejecuciones
 
         try:
             study = optuna.create_study(
                 direction="maximize",
                 pruner=pruner,
+                sampler=sampler,
                 study_name=study_name,
                 storage=storage,
             )
@@ -1189,6 +1210,7 @@ def main() -> None:
             study = optuna.create_study(
                 direction="maximize",
                 pruner=pruner,
+                sampler=sampler,
                 study_name=study_name,
             )
         study.optimize(
@@ -1201,11 +1223,13 @@ def main() -> None:
             n_trials=n_trials,
             show_progress_bar=False,
             gc_after_trial=True,
+            catch=(Exception,),  # un trial roto es FAIL; el estudio continúa con el resto
         )
 
         completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed_trials:
-            raise ValueError("Ningún trial completó correctamente. Revisa los logs para más detalles.")
+            ultimo_error = next((e["error"] for e in reversed(trial_log) if e.get("error")), "sin detalle")
+            raise ValueError(f"Ningún trial completó correctamente. Último error: {ultimo_error}")
 
         best_trial = study.best_trial
         best_params = best_trial.params
