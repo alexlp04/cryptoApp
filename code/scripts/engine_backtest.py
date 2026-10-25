@@ -11,6 +11,8 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 from backtest_engine import (
+    DEFAULT_FEE_RATE,
+    DEFAULT_SLIPPAGE,
     crear_carpeta_estrategia,
     run_backtest,
     run_backtest_with_predictions,
@@ -91,6 +93,8 @@ def main() -> None:
         risk_per_trade = payload.get("risk_per_trade", 0.02)
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico
+        fee_rate = float(payload.get("fee_rate", DEFAULT_FEE_RATE))
+        slippage = float(payload.get("slippage", DEFAULT_SLIPPAGE))
 
         # Campos obligatorios: si faltan, un None viajaría hasta load_strategy_by_path o
         # crear_carpeta_estrategia y fallaría allí de forma opaca. Mismo criterio que
@@ -143,7 +147,8 @@ def main() -> None:
                 # Backtest con predicciones del modelo IA
                 df_con_indicadores = strategy.populate_indicators(df.copy())
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)
-                stats = run_backtest_with_predictions(strategy, df_con_indicadores, predictions, symbol)
+                stats = run_backtest_with_predictions(
+                    strategy, df_con_indicadores, predictions, symbol, fee_rate=fee_rate, slippage=slippage)
                 trade_count = stats.get("op_totales", 0)
                 logger.info(
                     "Backtest IA para %s: %d ops, win_rate=%.1f%%, pf=%.4f",
@@ -156,6 +161,7 @@ def main() -> None:
                     carpeta_estrategia=carpeta_estrategia,
                     timeframe=timeframe,
                     escribir_trades=escribir_trades,
+                    fee_rate=fee_rate, slippage=slippage,
                 )
                 logger.info("Backtest clásico para %s: %d trades, resultado: %s",
                             symbol, trade_count, stats.get("resultado"))
