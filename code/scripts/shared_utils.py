@@ -194,20 +194,6 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
     return True, gpu_names
 
 
-def _apply_class_weight_if_supported(model: Any, class_weight: dict[int, float] | None) -> None:
-    if class_weight is None or not hasattr(model, "class_weight"):
-        return
-
-    try:
-        model.set_params(class_weight=class_weight)
-    except (TypeError, ValueError):
-        logging.getLogger(__name__).debug(
-            "El modelo %s ignora class_weight=%s",
-            type(model).__name__,
-            class_weight,
-        )
-
-
 def _build_sample_weight(
     y_train: Any,
     class_weight: dict[int, float] | None,
@@ -505,6 +491,8 @@ def build_sklearn_model(
     # Eliminar params propios de redes neuronales que no aplican a sklearn
     nn_keys = {"epochs", "batch_size", "hidden_layers", "neurons",
                "learning_rate", "dropout_rate"}
+    if model_type in ("xgboost", "lightgbm"):
+        nn_keys = nn_keys - {"learning_rate"}  # hiperparámetro propio de los árboles con boosting
     clean = {k: v for k, v in params.items() if k not in nn_keys}
 
     use_gpu = _gpu_backend_allowed(model_type, prefer_gpu)
@@ -562,10 +550,13 @@ def fit_sklearn_model(
     y_train: Any,
     class_weight: dict[int, float] | None = None,
 ) -> Any:
-    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado."""
+    """Entrena un modelo sklearn/XGBoost/LightGBM usando GPU solo donde está soportado.
+
+    El peso de clase se aplica solo vía sample_weight: sklearn y LightGBM multiplican
+    class_weight por sample_weight, así que usar ambos elevaría el peso al cuadrado.
+    """
     model = build_sklearn_model(model_type, params, prefer_gpu=True)
     _log_model_backend_once(model_type, model)
-    _apply_class_weight_if_supported(model, class_weight)
     sample_weight = _build_sample_weight(y_train, class_weight)
     fit_kwargs: dict[str, Any] = {}
     if sample_weight is not None and _fit_supports_sample_weight(model):
@@ -585,7 +576,6 @@ def fit_sklearn_model(
             prefer_gpu=False,
         )
         _log_model_backend_once(model_type, cpu_model)
-        _apply_class_weight_if_supported(cpu_model, class_weight)
         cpu_fit_kwargs: dict[str, Any] = {}
         if sample_weight is not None and _fit_supports_sample_weight(cpu_model):
             cpu_fit_kwargs["sample_weight"] = sample_weight
