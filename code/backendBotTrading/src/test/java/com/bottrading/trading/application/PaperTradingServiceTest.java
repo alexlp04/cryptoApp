@@ -39,11 +39,9 @@ import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
-import com.bottrading.trading.application.port.out.TradeResultsPort;
 import com.bottrading.trading.domain.Posicion;
 import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
-import com.bottrading.trading.infrastructure.cache.StatsCache;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -60,12 +58,6 @@ class PaperTradingServiceTest {
 
     @Mock
     private PosicionRepositoryPort posicionRepo;
-
-    @Mock
-    private TradeResultsPort tradeResultsPort;
-
-    @Mock
-    private StatsCache statsCache;
 
     @Mock
     private ProcessedSignalRegistry signalRegistry;
@@ -123,11 +115,6 @@ class PaperTradingServiceTest {
     @BeforeEach
     void configurarDefaults() {
         when(posicionRepo.save(any(Posicion.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(statsCache.getStats(anyString(), anyString(), anyString())).thenReturn(Map.of());
-        doNothing().when(statsCache).updateStats(anyString(), anyString(), anyString(), any());
-        doNothing().when(tradeResultsPort).guardarTrade(
-                anyString(), anyString(), anyString(), anyString(), any(), anyLong(), any());
-        doNothing().when(tradeResultsPort).guardarStats(anyString(), anyString(), any(), anyBoolean());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -222,7 +209,7 @@ class PaperTradingServiceTest {
         /** Servicio con un registro de idempotencia REAL (no mock) para ejercer el dedup. */
         private PaperTradingService serviceConRegistroReal() {
             return new PaperTradingService(
-                    accountingService, instanciaRepo, posicionRepo, tradeResultsPort, statsCache,
+                    accountingService, instanciaRepo, posicionRepo,
                     new ProcessedSignalRegistry());
         }
 
@@ -298,8 +285,6 @@ class PaperTradingServiceTest {
             verify(accountingService, times(1)).commitCapital(
                     eq(10L), any(BigDecimal.class), any(BigDecimal.class));
             verify(posicionRepo, times(1)).save(any(Posicion.class));
-            verify(tradeResultsPort, times(1)).guardarTrade(
-                    anyString(), anyString(), eq("BTCUSDT"), eq("BUY"), any(), anyLong(), any());
         }
 
         @Test
@@ -364,9 +349,6 @@ class PaperTradingServiceTest {
             verify(accountingService, times(1)).closeTrade(anyLong(), anyLong(), any(), any(), any());
             assertThat(pos.isAbierta(), is(false));
             verify(posicionRepo, times(1)).save(pos);
-            verify(tradeResultsPort, times(1)).guardarTrade(
-                    anyString(), anyString(), eq("BTCUSDT"), eq("SELL"), any(), anyLong(), any());
-            verify(tradeResultsPort, times(1)).guardarStats(anyString(), anyString(), any(), eq(false));
         }
 
         @Test
@@ -499,59 +481,4 @@ class PaperTradingServiceTest {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Efectos fuera de la BBDD tras el commit y contadores de stats (#75)
-    // ─────────────────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("CSV y estadísticas tras el commit")
-    class EfectosTrasCommitTests {
-
-        @org.junit.jupiter.api.AfterEach
-        void limpiarSincronizacion() {
-            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
-            }
-        }
-
-        @Test
-        @DisplayName("✓ Con una transacción activa el CSV no se escribe hasta el commit")
-        void csv_is_written_only_after_commit() {
-            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
-            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
-            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
-            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
-
-            paperTradingService.onSignal(10L, crearSignalBUY());
-
-            verify(tradeResultsPort, never()).guardarTrade(anyString(), anyString(), anyString(), anyString(),
-                    any(), anyLong(), any());
-
-            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
-                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
-
-            verify(tradeResultsPort, times(1)).guardarTrade(anyString(), anyString(), anyString(), eq("BUY"),
-                    any(), anyLong(), any());
-        }
-
-        @Test
-        @DisplayName("✓ Un cierre con PnL 0 cuenta en el total pero no como pérdida")
-        void zero_pnl_is_not_a_loss() {
-            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
-            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
-            com.bottrading.trading.domain.Posicion pos = new com.bottrading.trading.domain.Posicion();
-            pos.setAbierta(true);
-            pos.setPrecioEntrada(new BigDecimal("30000"));
-            pos.setMargenInvertido(new BigDecimal("50"));
-            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(Optional.of(pos));
-            SignalDTO sell = crearSignalSELL();
-            sell.setPrice(new BigDecimal("30000"));
-
-            paperTradingService.onSignal(10L, sell);
-
-            org.mockito.ArgumentCaptor<java.util.Map<String, Object>> stats = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
-            verify(tradeResultsPort).guardarStats(anyString(), anyString(), stats.capture(), eq(false));
-            assertEquals(0, stats.getValue().get("op_perdidas"));
-            assertEquals(1, stats.getValue().get("op_totales"));
-        }
-    }
 }
