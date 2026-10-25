@@ -391,7 +391,7 @@ def fetch(
             f"No se pudo obtener la fecha de listado de {symbol} [{timeframe}]: "
             "símbolo inexistente o Binance no responde.")
 
-    if since_binance is None or since_binance == "None":
+    if since_binance is None:
         since_ms = listing_ms
     else:
         since_ms = max(int(since_binance), listing_ms)

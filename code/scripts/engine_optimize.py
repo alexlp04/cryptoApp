@@ -710,7 +710,7 @@ def _train_neural_final(
 
     y_pred = _predict_labels(model, X_test)
 
-    suffix = f"_{strategy_name}" if strategy_name else ""
+    suffix = f"_{strategy_name}"
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
     model_path = os.path.join(models_dir, model_filename)
     save_model(model_path, model.save)
@@ -775,7 +775,7 @@ def _train_sklearn_final(
     model.fit_params = fit_params
     model.label_encoder = label_encoder
 
-    suffix = f"_{strategy_name}" if strategy_name else ""
+    suffix = f"_{strategy_name}"
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
     model_path = os.path.join(models_dir, model_filename)
     save_model(model_path, lambda tmp: joblib.dump(model, tmp))
@@ -842,7 +842,7 @@ def _save_results_csv(
     results_dir = os.path.join(project_root, "results", RESULTS_SUBDIR)
     os.makedirs(results_dir, exist_ok=True)
 
-    suffix = f"_{strategy_name}" if strategy_name else ""
+    suffix = f"_{strategy_name}"
     csv_filename = f"optimize_{model_type}_{timeframe}_{symbol}{suffix}.csv"
     csv_path = os.path.join(results_dir, csv_filename)
 

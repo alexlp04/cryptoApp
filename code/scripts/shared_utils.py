@@ -326,7 +326,15 @@ def configure_tensorflow_runtime() -> tuple[bool, list[str]]:
 
     visible_gpus = tf.config.list_physical_devices("GPU")
     gpu_names = [gpu.name for gpu in visible_gpus]
-    if not visible_gpus or not gpu_execution_enabled():
+    if not visible_gpus:
+        return False, gpu_names
+    if not gpu_execution_enabled():
+        try:
+            # Sin esto TensorFlow sigue colocando operaciones en la GPU aunque el log diga "CPU".
+            tf.config.set_visible_devices([], "GPU")
+        except RuntimeError:
+            logging.getLogger(__name__).warning(
+                "TensorFlow ya estaba inicializado: no se pudo ocultar la GPU (CRYPTOAPP_ENABLE_GPU=0)")
         return False, gpu_names
 
     for gpu in visible_gpus:
@@ -643,8 +651,6 @@ def build_sklearn_model(
     GPU se usa solo para XGBoost. LightGBM, SVM y
     RandomForest quedan fijados a CPU para evitar rutas inestables o sin ventaja real.
     """
-    import joblib as _jl  # noqa: F401 — importado aquí para no añadir dep al nivel de módulo
-
     try:
         import lightgbm as lgb
         import xgboost as xgb
