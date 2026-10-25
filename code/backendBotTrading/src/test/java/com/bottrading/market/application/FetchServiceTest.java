@@ -549,6 +549,71 @@ class FetchServiceTest {
             verify(spy, times(3)).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
         }
 
+        @SuppressWarnings("unchecked")
+        private java.net.http.HttpResponse<String> respuesta(int status, String retryAfter, String body) {
+            java.net.http.HttpResponse<String> r = mock(java.net.http.HttpResponse.class);
+            doReturn(status).when(r).statusCode();
+            doReturn(body).when(r).body();
+            java.util.Map<String, java.util.List<String>> cabeceras =
+                    retryAfter == null ? java.util.Map.of() : java.util.Map.of("Retry-After", java.util.List.of(retryAfter));
+            doReturn(java.net.http.HttpHeaders.of(cabeceras, (a, b) -> true)).when(r).headers();
+            return r;
+        }
+
+        @Test
+        @DisplayName("✓ Un 429 se reintenta esperando el Retry-After de Binance (#118)")
+        void rate_limit_is_retried_honouring_retry_after() throws Exception {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            org.mockito.Mockito.doNothing().when(spy).pausar(anyLong());
+            java.net.http.HttpClient client = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> limitada = respuesta(429, "7", "");
+            java.net.http.HttpResponse<String> ok = respuesta(200, null, "[]");
+            doReturn(limitada).doReturn(ok).when(client).send(any(), any());
+
+            assertThat(spy.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L).isEmpty(), is(true));
+
+            verify(spy).pausar(7_000L);
+        }
+
+        @Test
+        @DisplayName("✓ Un 5xx persistente falla tras los reintentos y un 400 no se reintenta (#118)")
+        void persistent_server_error_gives_up_and_client_error_is_not_retried() throws Exception {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            org.mockito.Mockito.doNothing().when(spy).pausar(anyLong());
+            java.net.http.HttpClient caido = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> r503 = respuesta(503, null, "");
+            doReturn(r503).when(caido).send(any(), any());
+            java.net.http.HttpClient malo = mock(java.net.http.HttpClient.class);
+            java.net.http.HttpResponse<String> r400 = respuesta(400, null, "");
+            doReturn(r400).when(malo).send(any(), any());
+
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.requestKlines(caido, SYMBOL, INTERVAL, 0L, 1L));
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.requestKlines(malo, SYMBOL, INTERVAL, 0L, 1L));
+
+            verify(caido, times(3)).send(any(), any());
+            verify(malo, times(1)).send(any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Si una página falla, lo ya descargado se guarda y el error dice hasta dónde se llegó (#118)")
+        void failure_keeps_downloaded_candles_and_reports_progress() {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            long t0 = 1_700_000_000_000L - (1_700_000_000_000L % INTERVAL_MILLIS);
+            LocalDateTime from = LocalDateTime.ofEpochSecond(t0 / 1000, 0, java.time.ZoneOffset.UTC);
+            doReturn(velas(t0)).doThrow(new com.bottrading.shared.exceptions.DataFetchException("Binance returned HTTP 503"))
+                    .when(spy).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+            doReturn(new int[] {1}).when(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+
+            com.bottrading.shared.exceptions.DataFetchException e = assertThrows(
+                    com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> spy.fetchRange(SYMBOL, INTERVAL, from, from.plusHours(2_500)));
+
+            assertThat(e.getMessage().contains("1 velas guardadas"), is(true));
+            verify(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+        }
+
         @Test
         @DisplayName("✓ Un IOException de red no deja el hilo marcado como interrumpido (#118)")
         void io_error_does_not_set_the_interrupt_flag() throws Exception {

@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -197,19 +198,28 @@ public class FetchService implements FetchMarketDataUseCase {
         int totalInserted = 0;
 
         long cursor = fromMs;
-        while (cursor <= toMs) {
-            long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
+        try {
+            while (cursor <= toMs) {
+                long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
 
-            JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
-            long next = pageEnd + intervalMs; // página vacía: hueco real de Binance, se sigue con la siguiente
-            if (!klines.isEmpty()) {
-                PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
-                totalInserted += pageResult.inserted();
-                if (pageResult.lastOpenTime() >= cursor) {
-                    next = pageResult.lastOpenTime() + intervalMs;
+                JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
+                long next = pageEnd + intervalMs; // página vacía: hueco real de Binance, se sigue con la siguiente
+                if (!klines.isEmpty()) {
+                    PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
+                    totalInserted += pageResult.inserted();
+                    if (pageResult.lastOpenTime() >= cursor) {
+                        next = pageResult.lastOpenTime() + intervalMs;
+                    }
                 }
+                cursor = next;
             }
-            cursor = next;
+        } catch (DataFetchException e) {
+            // Lo ya descargado no se pierde: se guarda y el error dice hasta dónde se llegó.
+            if (!insertBatch.isEmpty()) {
+                totalInserted += executePlainInsertBatch(insertBatch);
+            }
+            throw new DataFetchException("Relleno de [" + symbol + "][" + timeframe + "] interrumpido en "
+                    + Instant.ofEpochMilli(cursor) + " (" + totalInserted + " velas guardadas): " + e.getMessage(), e);
         }
 
         if (!insertBatch.isEmpty()) {
@@ -544,30 +554,61 @@ public class FetchService implements FetchMarketDataUseCase {
         };
     }
 
+    /** Tope de espera entre reintentos de una página: un 418 (baneo) puede pedir horas y no se espera. */
+    private static final long MAX_ESPERA_REINTENTO_MS = 60_000L;
+
     JsonArray requestKlines(HttpClient client,
             String symbol,
             String timeframe,
             long startTime,
             long endTime) {
-        try {
-            URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
-            HttpRequest request = HttpRequest.newBuilder(uri)
-                    .GET()
-                    .timeout(BINANCE_HTTP_TIMEOUT)
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new DataFetchException("Binance returned HTTP " + response.statusCode());
+        URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
+        HttpRequest request = HttpRequest.newBuilder(uri).GET().timeout(BINANCE_HTTP_TIMEOUT).build();
+        for (int intento = 1; ; intento++) {
+            HttpResponse<String> response = enviar(client, request);
+            int status = response.statusCode();
+            if (status == 200) {
+                return JsonParser.parseString(response.body()).getAsJsonArray();
             }
+            // 429/418 = límite de peticiones, 5xx = fallo transitorio: se reintenta respetando Retry-After.
+            boolean transitorio = status == 429 || status == 418 || status >= 500;
+            long espera = esperaReintentoMs(response, intento);
+            if (!transitorio || intento >= MAX_RETRIES || espera > MAX_ESPERA_REINTENTO_MS) {
+                throw new DataFetchException("Binance returned HTTP " + status);
+            }
+            log.warn("Binance devolvió HTTP {} para {} [{}]: reintento {}/{} en {} ms",
+                    status, symbol, timeframe, intento, MAX_RETRIES, espera);
+            pausar(espera);
+        }
+    }
 
-            return JsonParser.parseString(response.body()).getAsJsonArray();
+    private HttpResponse<String> enviar(HttpClient client, HttpRequest request) {
+        try {
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
             // Un timeout de red no es una interrupción: marcarla rompía las operaciones bloqueantes siguientes.
             throw new DataFetchException("Error requesting klines for range", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new DataFetchException("Interrupted requesting klines for range", e);
+        }
+    }
+
+    /** Retry-After en segundos (si es una fecha HTTP no se interpreta); sin él, 1 s, 2 s, 4 s... */
+    private static long esperaReintentoMs(HttpResponse<String> response, int intento) {
+        return response.headers().firstValue("Retry-After")
+                .map(String::trim)
+                .filter(v -> v.chars().allMatch(Character::isDigit) && !v.isEmpty())
+                .map(v -> Long.parseLong(v) * 1000L)
+                .orElse(1000L << (intento - 1));
+    }
+
+    void pausar(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DataFetchException("Interrupted waiting to retry klines request", e);
         }
     }
 
