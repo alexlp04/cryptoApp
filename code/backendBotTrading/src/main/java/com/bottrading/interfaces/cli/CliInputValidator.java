@@ -120,6 +120,20 @@ public final class CliInputValidator {
         return risk != null && risk.signum() > 0 && risk.compareTo(BigDecimal.ONE) <= 0;
     }
 
+    /**
+     * Lee la contraseña sin eco cuando hay terminal; sin ella (tests, docker sin -it) usa el scanner.
+     * No se hace trim: los espacios son parte de la contraseña.
+     */
+    public static String readPassword(CliCommandContext context, String prompt) {
+        java.io.Console console = System.console();
+        if (console != null) {
+            char[] chars = console.readPassword("%s", prompt);
+            return chars == null ? "" : new String(chars);
+        }
+        context.print().accept(prompt);
+        return context.scanner().nextLine();
+    }
+
     public static boolean readYesNo(CliCommandContext context, String prompt) {
         context.print().accept(prompt);
         return context.scanner().nextLine().trim().toLowerCase().startsWith("s");
