@@ -51,11 +51,31 @@ class PythonEnvironmentValidatorTest {
     @Test
     @DisplayName("Los módulos ausentes se listan todos en el mensaje")
     void missing_modules_are_listed() throws IOException {
-        String py = fakePython("echo '3 12'; echo 'xgboost,tensorflow'");
+        String py = fakePython("echo '3 12'; echo 'xgboost,lightgbm'; echo ''");
 
         EnvironmentConfigException e = assertThrows(EnvironmentConfigException.class,
                 () -> PythonEnvironmentValidator.validate(py, 10));
-        assertTrue(e.getMessage().contains("xgboost, tensorflow"));
+        assertTrue(e.getMessage().contains("xgboost, lightgbm"));
+    }
+
+    @Test
+    @DisplayName("Sin tensorflow (módulo opcional) el entorno sigue siendo válido: solo faltan los modelos Keras")
+    void missing_optional_module_does_not_fail() throws IOException {
+        String py = fakePython("echo '3 11'; echo ''; echo 'tensorflow'");
+
+        assertDoesNotThrow(() -> PythonEnvironmentValidator.validate(py, 10));
+    }
+
+    @Test
+    @DisplayName("El script real imprime versión, ausentes obligatorios y ausentes opcionales, en ese orden")
+    void check_script_prints_version_then_required_then_optional() throws Exception {
+        Process p = new ProcessBuilder("python3", "-c", PythonEnvironmentValidator.CHECK_SCRIPT,
+                "json,modulo_obligatorio_falso", "sys,tensorflow_falso").start();
+        String[] lines = new String(p.getInputStream().readAllBytes()).split("\\R", -1);
+
+        assertTrue(lines[0].matches("3 \\d+"));
+        assertTrue(lines[1].equals("modulo_obligatorio_falso"));
+        assertTrue(lines[2].equals("tensorflow_falso"));
     }
 
     @Test

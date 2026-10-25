@@ -1,0 +1,64 @@
+# CryptoApp en una Raspberry Pi 5 (o cualquier equipo con Docker). Se lanza desde esta carpeta:
+#   cp env-example .env && editar .env       (contraseñas)
+#   mkdir -p secrets data/models data/results data/logs
+#   cp ~/.config/cryptoapp/model.key secrets/model.key && chmod 600 secrets/model.key
+#   docker compose up -d --build
+# Guía completa: deploy/README.md
+name: cryptoapp
+
+services:
+  db:
+    image: mysql:8.0            # multi-arquitectura (incluye linux/arm64)
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: bottradingdb
+      MYSQL_USER: ${DB_USER}                    # usuario propio de la app: solo tiene permisos sobre su base
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: UTC
+    # Memoria acotada para una Pi: el buffer pool por defecto reserva mucho más de lo que esta app necesita.
+    command: ["--innodb-buffer-pool-size=256M", "--max-connections=40", "--character-set-server=utf8mb4",
+              "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00"]
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        TENSORFLOW_SPEC: ${TENSORFLOW_SPEC:-}   # vacío = sin Keras; ver deploy/README.md
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:mysql://db:3306/bottradingdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      TZ: UTC
+    secrets:
+      - model_key
+    volumes:
+      - ./data/models:/app/models
+      - ./data/results:/app/results
+      - ./data/logs:/app/logs
+    # Con terminal abierta la CLI queda disponible: `docker attach cryptoapp-app-1` (salir sin parar: Ctrl-P Ctrl-Q).
+    # Si se quita, la app entra sola en modo servicio.
+    stdin_open: true
+    tty: true
+    # Parar el contenedor pausa las estrategias activas y cierra los motores Python: dale tiempo.
+    stop_grace_period: 60s
+
+secrets:
+  model_key:
+    file: ./secrets/model.key
+
+volumes:
+  dbdata:
