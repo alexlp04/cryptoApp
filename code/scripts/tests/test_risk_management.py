@@ -117,3 +117,41 @@ def test_el_tope_por_posicion_limita_la_perdida_cuando_el_stop_es_muy_estrecho()
 
     assert abs(stats["retorno_total"]) <= 2_500 * 0.001 + 1e-6
     assert np.isfinite(stats["retorno_total"])
+
+
+# ── Cortos ───────────────────────────────────────────────────────────────────
+
+def test_el_stop_de_un_corto_va_por_encima_de_la_entrada():
+    assert valid_stop(100.0, 105.0, short=True)
+    assert not valid_stop(100.0, 95.0, short=True)
+    assert not valid_stop(100.0, 105.0)  # el mismo stop no vale para un largo
+
+
+def test_un_corto_arriesga_la_misma_fraccion_del_equity():
+    units = position_size(10_000, 0.01, 100.0, 105.0, short=True)
+
+    assert risk_amount(units, 100.0, 105.0) == pytest.approx(100.0)
+    assert position_size(10_000, 0.01, 100.0, 95.0, short=True) == 0.0
+
+
+def test_acciones_segun_la_posicion_abierta():
+    from risk_management import signal_actions
+
+    assert signal_actions(None, buy=True, sell=False) == ["BUY"]
+    assert signal_actions(None, buy=False, sell=True, short=True) == ["SHORT"]
+    assert signal_actions(None, buy=False, sell=True) == []  # sin posición no hay nada que vender
+    assert signal_actions("long", buy=True, sell=False) == []  # ya hay posición: no se reabre
+    assert signal_actions("long", buy=False, sell=True, short=True) == ["SELL", "SHORT"]  # giro
+    assert signal_actions("short", buy=True, sell=False, cover=True) == ["COVER", "BUY"]
+    assert signal_actions("short", buy=True, sell=True) == []  # sin cover no se cierra
+
+
+def test_el_tracker_de_un_corto_vigila_stop_arriba_y_objetivo_abajo():
+    from risk_management import PositionTracker
+
+    tracker = PositionTracker({"stop": 105.0, "take_profit": 90.0, "side": "SHORT"})
+
+    assert tracker.side == "short"
+    assert tracker.protective_exit(100.0) is None
+    assert tracker.protective_exit(106.0) == (106.0, "STOP")
+    assert tracker.protective_exit(88.0) == (90.0, "TARGET")

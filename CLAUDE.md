@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (482 tests)
+mvn test          # JUnit + H2 (490 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 306 tests
+pytest code/scripts/tests -q   # 335 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -168,6 +168,12 @@ posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_manageme
   con `reason` `STOP` u `TARGET`. Java le pasa las posiciones abiertas (`open_positions`) al (re)arrancar.
 - Ejecución en backtest: `execution` `market` (por defecto) o `limit` (orden pasiva al cierre, vive una vela, se llena solo si el precio la atraviesa; sin slippage). Medido en BTC/ETH/SOL con tendencia long-only: en 4h la orden límite rinde menos que mercado (se pierden las entradas que se escapan). No hay modo límite en vivo.
 - La señal `BUY` lleva `stop_loss` y `take_profit`; el `SELL`, `reason` (`SIGNAL`, `STOP`, `TARGET`).
+- Cortos (simulados): una estrategia pone `allow_short = True` y define `should_short` / `should_cover` (y, si quiere,
+  `get_short_stop_loss` / `get_short_take_profit`; por defecto simétricos). Señales `SHORT` (lleva stop por encima y
+  objetivo por debajo) y `COVER`; `posicion.lado`. Mismo riesgo y tope del 25 % sobre el nocional, sin apalancamiento,
+  liquidación ni funding; vende a mercado con slippage en contra. Un giro (cerrar un largo y abrir un corto en la
+  misma vela) son dos señales seguidas. No se admiten con `execution="limit"`. En el modo IA, la predicción -1 abre
+  el corto y la 1 lo cubre.
 - No existe modo real: `trade -r` y `iniciarTradeRT(isReal=true)` se rechazan porque no hay adaptador de exchange.
   Una orden «real» sin él sería una simulación con otro nombre. Cuando haya adaptador, va detrás de un puerto de
   ejecución y `PaperTradingService` pasa a ser una de sus implementaciones.

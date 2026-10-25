@@ -11,12 +11,12 @@ public class SignalDTO {
 
     private String type; // SIGNAL
     private String symbol;
-    private String action; // BUY / SELL
+    private String action; // BUY / SELL (largo) o SHORT / COVER (corto)
     private BigDecimal price;
     private String timeframe;
     private long timestamp;
     private boolean isReal;
-    private BigDecimal stopLoss; // solo en BUY: con él se dimensiona la posición
+    private BigDecimal stopLoss; // solo al abrir (BUY / SHORT): con él se dimensiona la posición
     private BigDecimal takeProfit;
     private String reason; // SIGNAL, STOP o TARGET
 

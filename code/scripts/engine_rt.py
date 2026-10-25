@@ -8,7 +8,7 @@ from decimal import Decimal
 import pandas as pd
 import websockets
 from ipc_protocol import read_request_payload
-from risk_management import PositionTracker, strategy_levels
+from risk_management import PositionTracker, signal_actions, strategy_levels
 from shared_utils import (
     CODE_DIR,
     build_signal_line,
@@ -155,12 +155,14 @@ async def run_symbol(
                     protective = tracker.protective_exit(float(raw_close))
                     if protective is not None:
                         exit_price, reason = protective
+                        exit_action = "COVER" if tracker.side == "short" else "SELL"
                         tracker.close()
-                        signal = _build_rt_signal(symbol, "SELL", timeframe, str(exit_price), buffer[-1],
+                        signal = _build_rt_signal(symbol, exit_action, timeframe, str(exit_price), buffer[-1],
                                                   is_real, reason=reason)
-                        last_signal = (int(buffer[-1]["timestamp"]), "SELL")
+                        last_signal = (int(buffer[-1]["timestamp"]), exit_action)
                         print(build_signal_line(signal), flush=True)
-                        logger.info("SEÑAL ENVIADA: SELL (%s) para %s a precio %s", reason, symbol, exit_price)
+                        logger.info("SEÑAL ENVIADA: %s (%s) para %s a precio %s", exit_action, reason, symbol,
+                                    exit_price)
                         continue
 
                     if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
@@ -171,11 +173,12 @@ async def run_symbol(
                         df = strategy.populate_indicators(df)
                         row = df.iloc[-1]
 
-                        action = None
-                        if strategy.should_buy(row):
-                            action = "BUY"
-                        elif strategy.should_sell(row):
-                            action = "SELL"
+                        shorts = bool(getattr(strategy, "allow_short", False))
+                        actions = signal_actions(
+                            tracker.side, bool(strategy.should_buy(row)), bool(strategy.should_sell(row)),
+                            shorts and bool(strategy.should_short(row)),
+                            shorts and bool(strategy.should_cover(row)),
+                        )
                         consecutive_errors = 0
                     except Exception:
                         # Un bug de la estrategia no es una caída de red: reconectar no lo arregla.
@@ -186,25 +189,21 @@ async def run_symbol(
                             raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
                         continue
 
-                    levels = None
-                    if action == "BUY":
-                        if tracker.is_open:
-                            action = None  # ya hay posición: no se reabre ni se cambian sus niveles
-                        else:
-                            levels = strategy_levels(strategy, float(raw_close), row)
+                    for action in actions:
+                        levels = None
+                        if action in ("BUY", "SHORT"):
+                            levels = strategy_levels(strategy, float(raw_close), row, short=action == "SHORT")
                             if levels is None:
-                                logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
-                                               "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
-                                               symbol)
-                                action = None
-                    elif action == "SELL" and not tracker.is_open:
-                        action = None  # nada que vender
-
-                    # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
-                    if action and (int(row["timestamp"]), action) != last_signal:
+                                logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
+                                               "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
+                                               action, symbol)
+                                continue
+                        # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
+                        if (int(row["timestamp"]), action) == last_signal:
+                            continue
                         last_signal = (int(row["timestamp"]), action)
                         if levels is not None:
-                            tracker.open(*levels)
+                            tracker.open(*levels, side="short" if action == "SHORT" else "long")
                         else:
                             tracker.close()
                         signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real, levels)

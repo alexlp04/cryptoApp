@@ -6,7 +6,8 @@ import java.math.RoundingMode;
 /**
  * Costes de ejecución del simulador, iguales a los del backtest (backtest_engine.py): una orden a mercado
  * se llena algo peor que el precio de la señal (slippage) y cada lado paga comisión. Un objetivo es una
- * orden límite: se llena a su precio, sin slippage.
+ * orden límite: se llena a su precio, sin slippage. Un corto es lo mismo al revés: vende a mercado al abrir
+ * y compra al cerrar. No hay funding: se simula sin apalancamiento.
  *
  * <p>shortcut: constantes y no propiedades; pasarlas a configuración cuando haya más de un exchange o
  * tarifas distintas por usuario.
@@ -24,6 +25,14 @@ public final class ExecutionCosts {
     }
 
     public static BigDecimal precioCompra(BigDecimal precio) {
+        return precioCompra(precio, false);
+    }
+
+    /** @param ordenLimite true para el objetivo de un corto (se llena a su precio); false para compra a mercado/stop */
+    public static BigDecimal precioCompra(BigDecimal precio, boolean ordenLimite) {
+        if (ordenLimite) {
+            return precio.setScale(SCALE, RoundingMode.HALF_UP);
+        }
         return precio.multiply(BigDecimal.ONE.add(SLIPPAGE)).setScale(SCALE, RoundingMode.HALF_UP);
     }
 

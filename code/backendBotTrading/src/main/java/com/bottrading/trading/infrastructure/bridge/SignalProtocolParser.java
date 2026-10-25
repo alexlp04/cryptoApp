@@ -86,7 +86,7 @@ public class SignalProtocolParser {
             throw new SignalProcessingException("SignalDTO: falta action");
         }
         String action = signal.getAction().toUpperCase(java.util.Locale.ROOT);
-        if (!"BUY".equals(action) && !"SELL".equals(action)) {
+        if (!java.util.Set.of("BUY", "SELL", "SHORT", "COVER").contains(action)) {
             throw new SignalProcessingException("SignalDTO: action desconocida '" + signal.getAction() + "'");
         }
         signal.setAction(action);
