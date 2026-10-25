@@ -45,12 +45,19 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuarioUseCase, AuthenticateUseCase {
 
+    private static final java.util.regex.Pattern NOMBRE_VALIDO = java.util.regex.Pattern.compile("^[A-Za-z0-9_.-]{3,32}$");
+
     private final UsuarioRepositoryPort usuarioRepositoryPort;
 
     @Override
     @Transactional
     public Usuario create(String nombre, String password) {
         log.info("Creando usuario con nombre: {}", nombre);
+
+        if (nombre == null || !NOMBRE_VALIDO.matcher(nombre).matches()) {
+            throw new ValidationException(
+                    "El nombre de usuario debe tener 3-32 caracteres: letras, números, '_', '.' o '-'");
+        }
 
         // Validar que el usuario no exista
         Optional<Usuario> existing = usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre);
@@ -61,8 +68,13 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
         // Hashing de password en capa de aplicacion para no exponerlo en CLI.
         Usuario usuario = new Usuario(nombre, HashUtils.hashPassword(password));
 
-        // Persistir y retornar
-        return usuarioRepositoryPort.save(usuario);
+        // Persistir y retornar. Dos altas simultáneas del mismo nombre pasan el check anterior y la
+        // restricción única de la BBDD las frena: se traduce a un error de validación legible.
+        try {
+            return usuarioRepositoryPort.save(usuario);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw new ValidationException("El nombre de usuario ya esta en uso", e);
+        }
     }
 
     @Override
