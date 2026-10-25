@@ -96,28 +96,6 @@ public class RealtimeProcessSupervisor {
         }
     }
 
-    /**
-     * Limpia la referencia del proceso registrado.
-     */
-    public void unregisterProcess(Long instanciaId) {
-        activeProcesses.remove(instanciaId);
-    }
-
-    /**
-     * Obtiene el proceso registrado para una estrategia.
-     */
-    public Process getProcess(Long instanciaId) {
-        return activeProcesses.get(instanciaId);
-    }
-
-    /**
-     * Verifica si hay un proceso activo para la estrategia.
-     */
-    public boolean hasActiveProcess(Long instanciaId) {
-        Process p = activeProcesses.get(instanciaId);
-        return p != null && p.isAlive();
-    }
-
 
     private String resolverScriptPath(InstanciaEstrategia instancia) {
         if (instancia.getNombreModelo() != null && !instancia.getNombreModelo().isEmpty()) {
