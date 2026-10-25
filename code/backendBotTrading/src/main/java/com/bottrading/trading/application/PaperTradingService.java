@@ -87,6 +87,10 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return; // Ignorar señales de estrategias pausadas o detenidas
         }
 
+        if (!senalCorrespondeALaInstancia(instancia, signal)) {
+            return;
+        }
+
         if ("BUY".equals(signal.getAction())) {
             handleBuy(instancia, signal);
         } else if ("SELL".equals(signal.getAction())) {
@@ -99,6 +103,37 @@ public class PaperTradingService implements ProcessSignalUseCase {
     }
 
     /**
+     * Descarta con aviso (en vez de en silencio) las señales que no son operables: acción
+     * desconocida, precio no positivo, o símbolo/timeframe que la instancia no tiene configurados.
+     */
+    private boolean senalCorrespondeALaInstancia(InstanciaEstrategia instancia, SignalDTO signal) {
+        String action = signal.getAction();
+        if (!"BUY".equals(action) && !"SELL".equals(action)) {
+            log.warn("[{}] Señal descartada: acción desconocida '{}'", instancia.getId(), action);
+            return false;
+        }
+        if (signal.getPrice() == null || signal.getPrice().signum() <= 0) {
+            log.warn("[{}] Señal {} {} descartada: precio inválido {}",
+                    instancia.getId(), action, signal.getSymbol(), signal.getPrice());
+            return false;
+        }
+        boolean simboloConocido = instancia.getSimbolos() != null && instancia.getSimbolos().stream()
+                .anyMatch(s -> s.equalsIgnoreCase(signal.getSymbol()));
+        if (!simboloConocido) {
+            log.warn("[{}] Señal descartada: símbolo {} no pertenece a la estrategia {}",
+                    instancia.getId(), signal.getSymbol(), instancia.getSimbolos());
+            return false;
+        }
+        if (signal.getTimeframe() != null && instancia.getTimeframe() != null
+                && !signal.getTimeframe().equalsIgnoreCase(instancia.getTimeframe())) {
+            log.warn("[{}] Señal descartada: timeframe {} distinto del configurado {}",
+                    instancia.getId(), signal.getTimeframe(), instancia.getTimeframe());
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Ejecuta la lógica de apertura de una posición Larga (BUY).
      * Verifica fondos, registra la posición y actualiza la contabilidad.
      */
@@ -108,7 +143,8 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return;
         }
 
-        BigDecimal montoAInvertir = e.getCapitalReservado().multiply(e.getRiskPerTrade());
+        BigDecimal montoAInvertir = e.getCapitalReservado().multiply(e.getRiskPerTrade())
+                .setScale(8, RoundingMode.HALF_UP); // la escala de la columna: lo sumado en memoria es lo guardado
 
         // Validaciones básicas de gestión de riesgo
         if (montoAInvertir.compareTo(BigDecimal.ZERO) <= 0 ||
@@ -146,9 +182,7 @@ public class PaperTradingService implements ProcessSignalUseCase {
             return; // No hay nada que vender
 
         BigDecimal precioSalida = signal.getPrice();
-        BigDecimal multiplicador = precioSalida.divide(pos.getPrecioEntrada(), 8, RoundingMode.HALF_UP);
-        BigDecimal montoFinal = pos.getMargenInvertido().multiply(multiplicador);
-        BigDecimal pnlNeto = montoFinal.subtract(pos.getMargenInvertido());
+        BigDecimal pnlNeto = calcularPnl(pos, precioSalida);
 
         // Liquidar contablemente: liberar el mismo riesgo que se comprometió al abrir
         accountingService.closeTrade(e.getWalletAsociada(), e.getId(), pos.getMargenInvertido(), pnlNeto,
@@ -168,6 +202,21 @@ public class PaperTradingService implements ProcessSignalUseCase {
         // Actualización de estadísticas agregadas
         Map<String, Object> statsActualizadas = calcularNuevasStats(e, signal.getSymbol(), pnlNeto);
         tradeResultsPort.guardarStats(e.getNombreEstrategia(), signal.getTimeframe(), statsActualizadas, false);
+    }
+
+    /**
+     * PnL = margen * (salida - entrada) / entrada con una sola división al final (una división
+     * intermedia a 8 decimales arrastraba el error al multiplicar por el margen).
+     */
+    private BigDecimal calcularPnl(Posicion pos, BigDecimal precioSalida) {
+        BigDecimal entrada = pos.getPrecioEntrada();
+        if (entrada == null || entrada.signum() <= 0) {
+            // Posición corrupta heredada: se cierra sin PnL en vez de quedar imposible de cerrar.
+            log.error("Posición {} con precio de entrada inválido ({}): se cierra con PnL 0", pos.getId(), entrada);
+            return BigDecimal.ZERO;
+        }
+        return pos.getMargenInvertido().multiply(precioSalida.subtract(entrada))
+                .divide(entrada, 8, RoundingMode.HALF_UP);
     }
 
     /**

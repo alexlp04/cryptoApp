@@ -15,7 +15,9 @@ import jakarta.persistence.Table;
 @Table(name = "posicion")
 public class Posicion extends BaseEntity {
     private String simbolo;
+    @Column(precision = 18, scale = 8)
     private BigDecimal precioEntrada;
+    @Column(precision = 18, scale = 8)
     private BigDecimal margenInvertido; // USD exactos
     private boolean abierta = true;
 

@@ -33,13 +33,13 @@ public class InstanciaEstrategia extends BaseEntity {
     private String timeframe;
 
     // Base de riesgo (NO cambia durante la estrategia)
-    @Column(name = "capital_asignado")
+    @Column(name = "capital_asignado", precision = 18, scale = 8)
     private BigDecimal capitalAsignado;
 
-    @Column(name = "risk_per_trade")
+    @Column(name = "risk_per_trade", precision = 18, scale = 8)
     private BigDecimal riskPerTrade;
 
-    @Column(name = "capital_reservado")
+    @Column(name = "capital_reservado", precision = 18, scale = 8)
     private BigDecimal capitalReservado; // RESERVED
 
     // Estados dinámicos con VALORES POR DEFECTO

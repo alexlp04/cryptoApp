@@ -4,6 +4,7 @@ package com.bottrading.trading.domain;
 import com.bottrading.shared.domain.BaseEntity;import java.math.BigDecimal;
 import java.time.Instant;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -19,8 +20,10 @@ public class LedgerEntry extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private LedgerType type;
 
+    @Column(precision = 18, scale = 8)
     private BigDecimal amount;
 
+    @Column(precision = 18, scale = 8)
     private BigDecimal balanceAfter;
 
     private String reference; // orderId, tradeId, etc

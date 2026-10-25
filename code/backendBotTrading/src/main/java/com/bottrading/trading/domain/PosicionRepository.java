@@ -1,5 +1,6 @@
 package com.bottrading.trading.domain;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,4 +14,6 @@ public interface PosicionRepository extends JpaRepository<Posicion, Long> {
     Optional<Posicion> findByInstanciaAndSimboloAndAbiertaTrue(InstanciaEstrategia instancia, String simbolo);
 
     boolean existsByInstanciaAndSimboloAndAbiertaTrue(InstanciaEstrategia instancia, String simbolo);
+
+    List<Posicion> findByInstanciaAndAbiertaTrue(InstanciaEstrategia instancia);
 }
