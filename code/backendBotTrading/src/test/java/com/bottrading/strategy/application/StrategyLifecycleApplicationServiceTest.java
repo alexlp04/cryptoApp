@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -49,6 +50,12 @@ class StrategyLifecycleApplicationServiceTest {
 
     @Mock
     private StrategyRuntimeCoordinator runtimeCoordinator;
+
+    /** Template real sobre un gestor de transacciones inerte: ejecuta los callbacks sin BBDD. */
+    @org.mockito.Spy
+    private org.springframework.transaction.support.TransactionTemplate tx =
+            new org.springframework.transaction.support.TransactionTemplate(
+                    org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
     @InjectMocks
     private StrategyLifecycleApplicationService lifecycleService;
@@ -179,7 +186,7 @@ class StrategyLifecycleApplicationServiceTest {
         @DisplayName("✓ Debe cambiar estado a ACTIVA, guardar y lanzar proceso")
         void should_set_activa_save_and_launch_when_detenida() {
             InstanciaEstrategia inst = crearInstanciaTest(10L, EstadoEstrategia.DETENIDA);
-            doReturn(Optional.of(inst)).when(instanciaRepo).findById(10L);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(10L);
 
             lifecycleService.iniciarEstrategiaDetenida(10L);
 
@@ -192,7 +199,7 @@ class StrategyLifecycleApplicationServiceTest {
         @Test
         @DisplayName("✓ No debe hacer nada cuando la instancia no existe")
         void should_do_nothing_when_instance_not_found() {
-            doReturn(Optional.empty()).when(instanciaRepo).findById(anyLong());
+            doReturn(Optional.empty()).when(instanciaRepo).findByIdWithLock(anyLong());
 
             lifecycleService.iniciarEstrategiaDetenida(99L);
 
@@ -203,8 +210,10 @@ class StrategyLifecycleApplicationServiceTest {
         @Test
         @DisplayName("✓ No debe hacer nada cuando la instancia está en estado ACTIVA")
         void should_do_nothing_when_state_is_not_detenida_activa() {
+            // ACTIVA con el runtime vivo: no es huérfana, no hay nada que reanudar
             InstanciaEstrategia inst = crearInstanciaTest(5L, EstadoEstrategia.ACTIVA);
-            doReturn(Optional.of(inst)).when(instanciaRepo).findById(5L);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(5L);
+            doReturn(java.util.Set.of(5L)).when(runtimeCoordinator).getIdsEstrategiasActivas();
 
             lifecycleService.iniciarEstrategiaDetenida(5L);
 
@@ -216,7 +225,7 @@ class StrategyLifecycleApplicationServiceTest {
         @DisplayName("✓ No debe hacer nada cuando la instancia está en estado TERMINADA")
         void should_do_nothing_when_state_is_terminada() {
             InstanciaEstrategia inst = crearInstanciaTest(7L, EstadoEstrategia.TERMINADA);
-            doReturn(Optional.of(inst)).when(instanciaRepo).findById(7L);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(7L);
 
             lifecycleService.iniciarEstrategiaDetenida(7L);
 
@@ -239,8 +248,8 @@ class StrategyLifecycleApplicationServiceTest {
             InstanciaEstrategia inst2 = crearInstanciaTest(2L, EstadoEstrategia.DETENIDA);
             doReturn(List.of(inst1, inst2))
                     .when(instanciaRepo).findByEstado(EstadoEstrategia.DETENIDA);
-            doReturn(Optional.of(inst1)).when(instanciaRepo).findById(1L);
-            doReturn(Optional.of(inst2)).when(instanciaRepo).findById(2L);
+            doReturn(Optional.of(inst1)).when(instanciaRepo).findByIdWithLock(1L);
+            doReturn(Optional.of(inst2)).when(instanciaRepo).findByIdWithLock(2L);
 
             lifecycleService.iniciarTodasDetenidas();
 
@@ -442,6 +451,128 @@ class StrategyLifecycleApplicationServiceTest {
             assertThat(lifecycleService instanceof
                     com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase,
                     is(true));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Operación 24/7: transacciones, huérfanas y reconciliación (#114 #115 #82)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Operación 24/7")
+    class Operacion247Tests {
+
+        @Test
+        @DisplayName("✓ Si la activación contable falla no se lanza el proceso (y la TX revierte la fila CREADA)")
+        void failed_activation_does_not_launch_runtime() {
+            doThrow(new com.bottrading.shared.exceptions.ValidationException("Fondos insuficientes"))
+                    .when(accountingService).activateStrategy(anyLong(), anyLong(), any());
+
+            org.junit.jupiter.api.Assertions.assertThrows(com.bottrading.shared.exceptions.ValidationException.class,
+                    () -> lifecycleService.iniciarTradeRT("S", "m", "1h", List.of("BTCUSDT"), false, 1L,
+                            new BigDecimal("0.01"), new BigDecimal("100")));
+
+            verify(tx).execute(any()); // creación y activación van en una sola transacción
+            verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Una ACTIVA sin runtime vivo (huérfana) se puede reanudar")
+        void orphan_activa_can_be_resumed() {
+            InstanciaEstrategia inst = crearInstanciaTest(10L, EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(10L);
+            doReturn(java.util.Set.of()).when(runtimeCoordinator).getIdsEstrategiasActivas();
+
+            lifecycleService.iniciarEstrategiaDetenida(10L);
+
+            verify(runtimeCoordinator).ejecutarTradeEnTiempoReal(eq(inst), any());
+        }
+
+        @Test
+        @DisplayName("✓ Una ACTIVA con runtime vivo no se lanza dos veces")
+        void live_activa_is_not_launched_twice() {
+            InstanciaEstrategia inst = crearInstanciaTest(10L, EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(10L);
+            doReturn(java.util.Set.of(10L)).when(runtimeCoordinator).getIdsEstrategiasActivas();
+
+            lifecycleService.iniciarEstrategiaDetenida(10L);
+
+            verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
+        }
+
+        @Test
+        @DisplayName("✓ Si el runtime no arranca la estrategia vuelve a DETENIDA")
+        void launch_failure_reverts_to_detenida() {
+            InstanciaEstrategia inst = crearInstanciaTest(10L, EstadoEstrategia.DETENIDA);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(10L);
+            doThrow(new IllegalStateException("sin python")).when(runtimeCoordinator)
+                    .ejecutarTradeEnTiempoReal(any(), any());
+
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                    () -> lifecycleService.iniciarEstrategiaDetenida(10L));
+
+            assertThat(inst.getEstado(), is(EstadoEstrategia.DETENIDA));
+        }
+
+        @Test
+        @DisplayName("✓ detenerTodas también para las ACTIVA que solo existen en la BBDD")
+        void detenerTodas_includes_db_only_active_instances() {
+            InstanciaEstrategia huerfana = crearInstanciaTest(16L, EstadoEstrategia.ACTIVA);
+            doReturn(java.util.Set.of()).when(runtimeCoordinator).getIdsEstrategiasActivas();
+            doReturn(List.of(huerfana)).when(instanciaRepo).findByEstado(EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(huerfana)).when(instanciaRepo).findByIdWithLock(16L);
+
+            lifecycleService.detenerTodas();
+
+            assertThat(huerfana.getEstado(), is(EstadoEstrategia.DETENIDA));
+            verify(runtimeCoordinator).detenerEstrategia(16L);
+        }
+
+        @Test
+        @DisplayName("✓ terminarEstrategia liquida primero y destruye el proceso después")
+        void terminar_closes_accounting_before_destroying_process() {
+            InstanciaEstrategia inst = crearInstanciaTest(10L, EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(inst)).when(instanciaRepo).findByIdWithLock(10L);
+
+            lifecycleService.terminarEstrategia(10L);
+
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(accountingService, runtimeCoordinator);
+            order.verify(accountingService).closeStrategy(1L, 10L);
+            order.verify(runtimeCoordinator).detenerEstrategia(10L);
+        }
+
+        @Test
+        @DisplayName("✓ Al arrancar las ACTIVA sin proceso pasan a DETENIDA y las vivas se respetan")
+        void reconcile_marks_orphans_detenida() {
+            InstanciaEstrategia huerfana = crearInstanciaTest(16L, EstadoEstrategia.ACTIVA);
+            InstanciaEstrategia viva = crearInstanciaTest(17L, EstadoEstrategia.ACTIVA);
+            doReturn(java.util.Set.of(17L)).when(runtimeCoordinator).getIdsEstrategiasActivas();
+            doReturn(List.of(huerfana, viva)).when(instanciaRepo).findByEstado(EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(huerfana)).when(instanciaRepo).findByIdWithLock(16L);
+
+            lifecycleService.reconciliarEstadoConRuntime();
+
+            assertThat(huerfana.getEstado(), is(EstadoEstrategia.DETENIDA));
+            assertThat(viva.getEstado(), is(EstadoEstrategia.ACTIVA));
+        }
+    }
+
+    @Nested
+    @DisplayName("Ganchos de arranque y apagado")
+    class HooksTests {
+
+        @Test
+        @DisplayName("✓ Apagar PAUSA las estrategias (no las liquida) y arrancar reconcilia")
+        void shutdown_pauses_and_startup_reconciles() {
+            com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase useCase =
+                    org.mockito.Mockito.mock(com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase.class);
+            StrategyLifecycleHooks hooks = new StrategyLifecycleHooks(useCase);
+
+            hooks.alArrancar();
+            hooks.alApagar();
+
+            verify(useCase).reconciliarEstadoConRuntime();
+            verify(useCase).detenerTodas();
+            verify(useCase, never()).terminarTodas();
         }
     }
 }

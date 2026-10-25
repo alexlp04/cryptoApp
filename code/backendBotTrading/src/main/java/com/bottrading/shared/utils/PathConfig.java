@@ -200,4 +200,18 @@ public final class PathConfig {
             throw new FileOperationException("Error al crear carpeta de estrategia: " + e.getMessage(), e);
         }
     }
+
+    /**
+     * Ejecutable Python a usar: absoluto si existe, relativo a PROJECT_ROOT si existe ahí, y si no el
+     * nombre tal cual (resolución por PATH). Única fuente de verdad para el validador y el runtime.
+     */
+    public static String resolvePythonExecutable() {
+        String pythonExe = AppConstants.PYTHON_EXECUTABLE;
+        java.io.File pythonFile = new java.io.File(pythonExe);
+        if (pythonFile.isAbsolute() && pythonFile.exists()) {
+            return pythonExe;
+        }
+        java.io.File resolved = Paths.get(PROJECT_ROOT, pythonExe).toFile();
+        return resolved.exists() ? resolved.getAbsolutePath() : pythonExe;
+    }
 }

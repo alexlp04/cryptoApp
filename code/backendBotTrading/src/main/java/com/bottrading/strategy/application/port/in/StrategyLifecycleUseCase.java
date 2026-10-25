@@ -22,4 +22,7 @@ public interface StrategyLifecycleUseCase {
     void terminarEstrategia(Long instanciaId);
 
     void terminarTodas();
+
+    /** Pasa a DETENIDA las ACTIVA sin runtime vivo (tras una caída o al arrancar). */
+    void reconciliarEstadoConRuntime();
 }

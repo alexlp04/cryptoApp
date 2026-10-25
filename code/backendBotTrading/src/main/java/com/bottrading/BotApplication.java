@@ -1,5 +1,4 @@
 package com.bottrading;
-import java.io.File;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -30,7 +29,6 @@ public class BotApplication {
             Dotenv dotenv = EnvironmentValidator.loadAndValidateEnvironment();
             PythonEnvironmentValidator.validatePythonEnvironment();
 
-            limpiarDirectorioLogs();
             configurarPropiedadesSistema(dotenv);
 
             System.setProperty("spring.main.banner-mode", "off");
@@ -69,18 +67,5 @@ public class BotApplication {
         System.setProperty("spring.datasource.url", dotenv.get("DB_URL"));
         System.setProperty("spring.datasource.username", dotenv.get("DB_USER"));
         System.setProperty("spring.datasource.password", dotenv.get("DB_PASSWORD"));
-    }
-
-    /**
-     * Elimina logs previos para iniciar una sesion limpia.
-     */
-    private static void limpiarDirectorioLogs() {
-        File carpetaLogs = new File("logs");
-        if (carpetaLogs.exists() && carpetaLogs.isDirectory()) {
-            File[] archivos = carpetaLogs.listFiles((dir, name) -> name.endsWith(".log"));
-            if (archivos != null) {
-                for (File f : archivos) f.delete();
-            }
-        }
     }
 }
