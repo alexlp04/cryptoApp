@@ -22,9 +22,6 @@ joblib==1.5.3                # Serialización de modelos .pkl
 # --- Deep Learning (con constraint Python 3.11) ---
 tensorflow==2.21.0           # Para AITraderStrategy con Keras
 
-# --- Binance API ---
-python-binance==1.0.37       # Cliente oficial de Binance
-
 # --- Optimización de Hiperparámetros ---
 optuna==4.9.0
 

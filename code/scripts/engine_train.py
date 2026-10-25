@@ -31,6 +31,7 @@ from shared_utils import (
     setup_engine_logging,
 )
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.utils.class_weight import compute_class_weight
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -83,13 +84,12 @@ def main() -> None:
 
         # Enriquecer con indicadores de la estrategia (una sola vez)
         strategy = load_strategy_by_name(strategy_name)
-        import time as _time
         logger.info("Iniciando populate_indicators para estrategia '%s'", strategy_name)
-        t0 = _time.perf_counter()
+        t0 = time.perf_counter()
         df_enriched_full = strategy.populate_indicators(df_raw.copy())
         logger.info(
             "populate_indicators finalizado en %.2fs (filas=%d)",
-            _time.perf_counter() - t0, len(df_enriched_full),
+            time.perf_counter() - t0, len(df_enriched_full),
         )
 
         # Feature engineering (already_enriched=True: no repetir populate_indicators)
@@ -106,8 +106,10 @@ def main() -> None:
 
         # Division 80/20
         split_idx = int(len(x_np) * 0.8)
-        X_train, X_test = x_np[:split_idx], x_np[split_idx:]
-        y_train_raw, y_test_raw = y_np[:split_idx], y_np[split_idx:]
+        # La etiqueta de t mira la vela t+1: la última fila de train usaría la primera de test, así que
+        # se descarta (mismo hueco de una vela que TimeSeriesSplit(gap=1) en la optimización).
+        X_train, X_test = x_np[:split_idx - 1], x_np[split_idx:]
+        y_train_raw, y_test_raw = y_np[:split_idx - 1], y_np[split_idx:]
         timestamps_test = timestamps_all[split_idx:]
         # Último timestamp visto al entrenar: el backtest con este modelo evalúa solo lo posterior.
         train_end_ts = int(timestamps_all[split_idx - 1])
@@ -144,7 +146,6 @@ def main() -> None:
             logger.info(
                 "Seleccionado: Red Neuronal Profunda (Deep Learning) - n_clases=%d", n_classes
             )
-            from sklearn.utils.class_weight import compute_class_weight
             _cw = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
             _cw_dict: dict[int, float] = dict(zip(np.unique(y_train).tolist(), _cw.tolist()))
             logger.info("class_weight (NN train): %s", _cw_dict)
@@ -152,7 +153,7 @@ def main() -> None:
                 X_train, y_train, X_test, hyperparams, n_classes=n_classes,
                 class_weight=_cw_dict,
             )
-            suffix = f"_{strategy_name}" if strategy_name else ""
+            suffix = f"_{strategy_name}"
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
             model_path = os.path.join(models_dir, model_filename)
             save_model(model_path, model.save)
@@ -173,7 +174,6 @@ def main() -> None:
 
         else:
             logger.info("Seleccionado: Modelo ML clasico (%s)", model_type.upper())
-            from sklearn.utils.class_weight import compute_class_weight
             _cw_sk = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
             _cw_sk_dict: dict[int, float] = dict(zip(np.unique(y_train).tolist(), _cw_sk.tolist()))
             logger.info("class_weight (sklearn train): %s", _cw_sk_dict)
@@ -192,7 +192,7 @@ def main() -> None:
             model.train_end_ts = train_end_ts
             model.label_encoder = label_encoder
 
-            suffix = f"_{strategy_name}" if strategy_name else ""
+            suffix = f"_{strategy_name}"
             model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.pkl"
             model_path = os.path.join(models_dir, model_filename)
             save_model(model_path, lambda tmp: joblib.dump(model, tmp))

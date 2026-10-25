@@ -1,3 +1,4 @@
+import os
 import struct
 import sys
 import uuid
@@ -86,9 +87,15 @@ def write_response(message_type: str, payload: Any) -> None:
         "payload": payload,
     }
     body = msgpack.packb(envelope, use_bin_type=True)
-    sys.stdout.buffer.write(struct.pack(">I", len(body)))
-    sys.stdout.buffer.write(body)
-    sys.stdout.buffer.flush()
+    try:
+        sys.stdout.buffer.write(struct.pack(">I", len(body)))
+        sys.stdout.buffer.write(body)
+        sys.stdout.buffer.flush()
+    except BrokenPipeError:
+        # Java cerró el pipe (timeout, cancelación): no hay a quién responder. Se redirige stdout a
+        # /dev/null para que el flush final del intérprete no vuelva a fallar, y se sale limpio.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(0)
 
 
 def write_error(message_type: str, message: str) -> None:

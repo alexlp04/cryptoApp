@@ -305,3 +305,29 @@ class TestWriteError:
         # Then
         envelope = _parse_stdout(buf)
         assert envelope["message_type"] == "BACKTEST_ERROR"
+
+
+def test_write_response_sale_limpio_si_java_cerro_el_pipe(monkeypatch):
+    import os
+    import sys
+    import types
+
+    import ipc_protocol
+    import pytest
+
+    class _PipeRoto:
+        def write(self, _):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+    monkeypatch.setattr(sys, "stdout", types.SimpleNamespace(buffer=_PipeRoto(), fileno=lambda: 1))
+    redirigido = []
+    monkeypatch.setattr(os, "open", lambda *a, **k: 99)
+    monkeypatch.setattr(os, "dup2", lambda src, dst: redirigido.append((src, dst)))
+
+    with pytest.raises(SystemExit) as salida:
+        ipc_protocol.write_response("X", {})
+
+    assert salida.value.code == 0 and redirigido == [(99, 1)]
