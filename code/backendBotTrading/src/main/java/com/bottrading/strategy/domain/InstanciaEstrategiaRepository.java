@@ -28,6 +28,10 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
 
     List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
 
+    List<InstanciaEstrategia> findByUsuarioId(Long usuarioId);
+
+    List<InstanciaEstrategia> findByUsuarioIdAndEstado(Long usuarioId, EstadoEstrategia estado);
+
     List<InstanciaEstrategia> findByWalletAsociadaAndEstado(Long walletAsociada, EstadoEstrategia estado);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

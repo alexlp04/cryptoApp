@@ -35,6 +35,9 @@ class RiskyCommandsConfirmationTest {
     private CliCommandContext context(String input) throws Exception {
         SessionManager session = mock(SessionManager.class);
         when(session.isLoggedIn()).thenReturn(true);
+        com.bottrading.user.domain.Usuario usuario = mock(com.bottrading.user.domain.Usuario.class);
+        when(usuario.getId()).thenReturn(5L);
+        when(session.getCurrentUser()).thenReturn(usuario);
         WalletManagementUseCase wallets = mock(WalletManagementUseCase.class);
         when(wallets.listarWallets()).thenReturn(List.of("principal"));
         when(wallets.obtenerIdPorNombre(anyString())).thenReturn(1L);
@@ -63,7 +66,7 @@ class RiskyCommandsConfirmationTest {
     void term_by_id_needs_confirmation() throws Exception {
         new TermCommand().execute(new String[] {"term", "7"}, context("n\n"));
 
-        verify(lifecycle, never()).terminarEstrategia(anyLong());
+        verify(lifecycle, never()).terminarEstrategia(anyLong(), anyLong());
         assertTrue(out.stream().anyMatch(l -> l.contains("cancelada")));
     }
 
@@ -72,7 +75,7 @@ class RiskyCommandsConfirmationTest {
     void term_by_id_runs_when_confirmed() throws Exception {
         new TermCommand().execute(new String[] {"term", "7"}, context("s\n"));
 
-        verify(lifecycle).terminarEstrategia(7L);
+        verify(lifecycle).terminarEstrategia(7L, 5L);
     }
 
     @Test
@@ -84,7 +87,7 @@ class RiskyCommandsConfirmationTest {
                 context("principal\n100\n0.02\nsi\n"));
 
         verify(lifecycle, never()).iniciarTradeRT(anyString(), any(), anyString(), any(), Mockito.anyBoolean(),
-                any(), any(), any(), anyString());
+                any(), any(), any(), anyString(), any());
         assertTrue(out.stream().anyMatch(l -> l.contains("cancelada")), out.toString());
     }
 
@@ -96,6 +99,6 @@ class RiskyCommandsConfirmationTest {
                 context("principal\n100\n0.02\nREAL\n"));
 
         verify(lifecycle).iniciarTradeRT(anyString(), any(), anyString(), any(), Mockito.eq(true),
-                any(), any(), any(), Mockito.eq("close"));
+                any(), any(), any(), Mockito.eq("close"), any());
     }
 }

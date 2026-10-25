@@ -59,7 +59,8 @@ public final class TradeCommand implements CliCommand {
 
         context.strategyLifecycleUseCase().iniciarTradeRT(args.getEstrategia(), args.getModelo(), args.getTimeframe(),
                 args.getCoins(), args.isReal(), walletSelection.walletId(), risk, capitalAsignado,
-                args.getSignalMode() == null ? "close" : args.getSignalMode());
+                args.getSignalMode() == null ? "close" : args.getSignalMode(),
+                context.sessionManager().getCurrentUser().getId());
         context.println().accept("Bot lanzado en segundo plano con exito.");
     }
 

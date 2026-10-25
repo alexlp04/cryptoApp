@@ -1,7 +1,7 @@
 package com.bottrading.interfaces.cli.commands;
 
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
@@ -15,7 +15,7 @@ import com.bottrading.strategy.application.port.in.QueryStrategiesUseCase;
 public record ListStrategiesByStateCommand(
         String name,
         String header,
-        Function<QueryStrategiesUseCase, List<String>> query) implements CliCommand {
+        BiFunction<QueryStrategiesUseCase, Long, List<String>> query) implements CliCommand {
 
     public static ListStrategiesByStateCommand todas() {
         return new ListStrategiesByStateCommand(
@@ -44,6 +44,6 @@ public record ListStrategiesByStateCommand(
         }
 
         context.println().accept(header);
-        query.apply(context.queryStrategiesUseCase()).forEach(context.println());
+        query.apply(context.queryStrategiesUseCase(), context.sessionManager().getCurrentUser().getId()).forEach(context.println());
     }
 }

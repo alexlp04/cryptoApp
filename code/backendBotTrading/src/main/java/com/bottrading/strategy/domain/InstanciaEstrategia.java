@@ -30,6 +30,10 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "wallet_asociada")
     private Long walletAsociada;
 
+    /** Dueño de la estrategia: solo él puede pararla, reanudarla, liquidarla o verla. */
+    @Column(name = "usuario_id")
+    private Long usuarioId;
+
     private String timeframe;
 
     // Base de riesgo (NO cambia durante la estrategia)
@@ -111,6 +115,14 @@ public class InstanciaEstrategia extends BaseEntity {
 
     public void setNombreModelo(String nombreModelo) {
         this.nombreModelo = nombreModelo;
+    }
+
+    public Long getUsuarioId() {
+        return usuarioId;
+    }
+
+    public void setUsuarioId(Long usuarioId) {
+        this.usuarioId = usuarioId;
     }
 
     public Long getWalletAsociada() {
