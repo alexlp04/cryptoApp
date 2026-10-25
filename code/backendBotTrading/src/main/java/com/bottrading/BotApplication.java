@@ -1,5 +1,9 @@
 package com.bottrading;
 
+import java.io.File;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
@@ -7,10 +11,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 import com.bottrading.shared.exceptions.EnvironmentConfigException;
 import com.bottrading.shared.utils.ConsoleLoader;
-import com.bottrading.shared.utils.EnvironmentValidator;
 import com.bottrading.shared.utils.PythonEnvironmentValidator;
 
-import io.github.cdimascio.dotenv.Dotenv;
 
 /**
  * Entry point de la aplicacion Spring Boot.
@@ -26,28 +28,39 @@ public class BotApplication {
         try {
             ConsoleLoader.getInstance().startDots("Iniciando sistema");
 
-            Dotenv dotenv = EnvironmentValidator.loadAndValidateEnvironment();
             PythonEnvironmentValidator.validatePythonEnvironment();
 
-            configurarPropiedadesSistema(dotenv);
-
-            System.setProperty("spring.main.banner-mode", "off");
-            System.setProperty("logging.level.root", "INFO");
-
-            SpringApplication app = new SpringApplication(BotApplication.class);
-
-            app.setLogStartupInfo(false);
-            
-            app.run(args);
+            // banner, nivel de log y credenciales (./.env) los resuelve application.properties
+            SpringApplication.run(BotApplication.class, args);
 
         } catch (EnvironmentConfigException e) {
             imprimirErrorCritico(e.getMessage());
             System.exit(1);
         } catch (Exception e) {
-            imprimirErrorCritico("ERROR INESPERADO: " + e.getMessage());
-            e.printStackTrace();
+            String variable = variableSinResolver(e);
+            if (variable != null) {
+                imprimirErrorCritico("Falta la variable '" + variable + "'. Defínela en "
+                        + new File(".env").getAbsolutePath() + " (formato KEY=valor, sin comillas) "
+                        + "o como variable de entorno.");
+            } else {
+                imprimirErrorCritico("ERROR INESPERADO: " + e.getMessage());
+                e.printStackTrace();
+            }
             System.exit(1);
         }
+    }
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("Could not resolve placeholder '([^']+)'");
+
+    /** Nombre de la variable ${...} que Spring no pudo resolver, si ese es el motivo del fallo. */
+    static String variableSinResolver(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            Matcher m = t.getMessage() == null ? null : PLACEHOLDER.matcher(t.getMessage());
+            if (m != null && m.find()) {
+                return m.group(1);
+            }
+        }
+        return null;
     }
 
     /**
@@ -58,14 +71,5 @@ public class BotApplication {
         System.err.println(" FALLO EN EL ARRANQUE DEL SISTEMA");
         System.err.println(" " + mensaje);
         System.err.println("!".repeat(80) + "\n");
-    }
-
-    /**
-     * Carga en propiedades de sistema la configuracion minima de datasource.
-     */
-    private static void configurarPropiedadesSistema(Dotenv dotenv) {
-        System.setProperty("spring.datasource.url", dotenv.get("DB_URL"));
-        System.setProperty("spring.datasource.username", dotenv.get("DB_USER"));
-        System.setProperty("spring.datasource.password", dotenv.get("DB_PASSWORD"));
     }
 }
