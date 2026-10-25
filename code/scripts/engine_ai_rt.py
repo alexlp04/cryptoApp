@@ -115,6 +115,18 @@ def _trained_strategy(model: Any, path: str) -> str | None:
     return None
 
 
+def _attach_training_metadata(model: Any, path: str) -> None:
+    """Expone warmup_candles y train_end_ts también en los .keras (viven en su .metadata.json)."""
+    metadata_path = os.path.splitext(path)[0] + ".metadata.json"
+    if not os.path.exists(metadata_path):
+        return
+    with open(metadata_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    for key in ("warmup_candles", "train_end_ts"):
+        if getattr(model, key, None) is None and meta.get(key) is not None:
+            setattr(model, key, meta[key])
+
+
 def load_model(
     model_name: str, timeframe: str, symbol: str, strategy_name: str | None = None,
 ) -> tuple[Any, str, list[int] | None]:
@@ -148,6 +160,7 @@ def load_model(
         )
 
     loaded = _load_from_path(path)
+    _attach_training_metadata(loaded[0], path)
     trained_with = _trained_strategy(loaded[0], path)
     if strategy_name and trained_with and trained_with != strategy_name:
         raise ValueError(

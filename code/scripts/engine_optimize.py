@@ -407,10 +407,7 @@ def _build_and_eval_neural_network(
             class_weight=class_weight_dict,
             verbose=0,
         )
-        if is_multiclass:
-            y_pred_fold = np.argmax(model.predict(x_val, verbose=0), axis=1)
-        else:
-            y_pred_fold = (model.predict(x_val, verbose=0) > 0.5).astype(int).flatten()
+        y_pred_fold = _predict_labels(model, x_val)
 
         fold_acc = float(accuracy_score(y_val, y_pred_fold))
         fold_f1 = float(f1_score(y_val, y_pred_fold, average=metric_average(y_val, y_pred_fold), zero_division=0))
@@ -467,10 +464,7 @@ def _build_and_eval_neural_network(
         class_weight=class_weight_dict,
         verbose=0,
     )
-    if is_multiclass:
-        y_train_pred = np.argmax(model_full.predict(X, verbose=0), axis=1)
-    else:
-        y_train_pred = (model_full.predict(X, verbose=0) > 0.5).astype(int).flatten()
+    y_train_pred = _predict_labels(model_full, X)
     train_acc = float(accuracy_score(y, y_train_pred))
     tf.keras.backend.clear_session()
 
@@ -485,6 +479,17 @@ def _build_and_eval_neural_network(
 # =============================================================================
 # FUNCIÓN OBJETIVO DE OPTUNA
 # =============================================================================
+
+def _predict_labels(model: Any, x: np.ndarray) -> np.ndarray:
+    """Etiquetas codificadas de un modelo Keras: argmax si es softmax, umbral 0,5 si es sigmoid.
+
+    Decide por la forma de la salida, así que no puede usarse la rama binaria con 3 clases.
+    """
+    raw = model.predict(x, verbose=0)
+    if raw.ndim == 2 and raw.shape[1] > 1:
+        return np.argmax(raw, axis=1)
+    return (raw > 0.5).astype(int).flatten()
+
 
 def _balanced_class_weight(y: np.ndarray) -> dict[int, float]:
     """Pesos 'balanced' por clase: los mismos con los que se puntúan los trials."""
@@ -731,6 +736,7 @@ def _train_neural_final(
     timeframe: str,
     symbol: str,
     label_encoder: LabelEncoder | None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo neural final. Devuelve (model, filename, y_pred_test)."""
     import tensorflow as tf
@@ -776,11 +782,7 @@ def _train_neural_final(
         class_weight=_balanced_class_weight(y),
     )
 
-    y_pred = (
-        np.argmax(model.predict(X_test, verbose=0), axis=1)
-        if is_mc
-        else (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
-    )
+    y_pred = _predict_labels(model, X_test)
 
     suffix = f"_{strategy_name}" if strategy_name else ""
     model_filename = f"{model_type}_{timeframe}_{symbol}{suffix}.keras"
@@ -794,6 +796,7 @@ def _train_neural_final(
                 "feature_cols": feature_cols,
                 "strategy_name": strategy_name,
                 "warmup_candles": warmup_candles,
+                "train_end_ts": train_end_ts,
                 "best_params": best_params,
                 "label_classes": label_encoder.classes_.tolist() if label_encoder is not None else None,
             },
@@ -817,6 +820,7 @@ def _train_sklearn_final(
     timeframe: str,
     symbol: str,
     label_encoder: LabelEncoder | None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, np.ndarray]:
     """Entrena y guarda el modelo sklearn final. Devuelve (model, filename, y_pred_test)."""
     fit_params = dict(best_params)
@@ -835,6 +839,7 @@ def _train_sklearn_final(
     model.feature_cols = feature_cols
     model.strategy_name = strategy_name
     model.warmup_candles = warmup_candles
+    model.train_end_ts = train_end_ts
     model.best_params = best_params
     model.fit_params = fit_params
     model.label_encoder = label_encoder
@@ -859,6 +864,7 @@ def _train_final_model(
     symbol: str,
     timeframe: str,
     label_encoder: LabelEncoder | None = None,
+    train_end_ts: int | None = None,
 ) -> tuple[Any, str, dict[str, float]]:
     """Entrena el modelo final con mejores hiperparámetros y guarda en disk."""
     models_dir = os.path.join(project_root, "models")
@@ -869,13 +875,13 @@ def _train_final_model(
         model, model_filename, y_pred = _train_neural_final(
             model_type, best_params, X, y, X_test,
             feature_cols, strategy_name, warmup_candles,
-            models_dir, timeframe, symbol, label_encoder,
+            models_dir, timeframe, symbol, label_encoder, train_end_ts,
         )
     else:
         model, model_filename, y_pred = _train_sklearn_final(
             model_type, best_params, X, y, X_test,
             feature_cols, strategy_name, warmup_candles,
-            models_dir, timeframe, symbol, label_encoder,
+            models_dir, timeframe, symbol, label_encoder, train_end_ts,
         )
 
     logger.info("Modelo final guardado en: %s/%s", models_dir, model_filename)
@@ -1286,12 +1292,13 @@ def main() -> None:
             symbol=symbol,
             timeframe=timeframe,
             label_encoder=label_encoder,
+            train_end_ts=int(timestamps_train[-1]),
         )
 
         logger.info("Ejecutando backtest real sobre el conjunto de TEST (20%%)...")
         is_neural_final = model_type in ("neural_network", "deep_learning", "keras")
         if is_neural_final:
-            y_test_pred_final = (final_model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
+            y_test_pred_final = _predict_labels(final_model, X_test)
         else:
             y_test_pred_final = final_model.predict(X_test)
 

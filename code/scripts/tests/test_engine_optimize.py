@@ -233,3 +233,28 @@ def test_el_modelo_sklearn_final_recibe_class_weight(monkeypatch, tmp_path):
     )
 
     assert capturado["class_weight"] == eo._balanced_class_weight(y)
+
+
+# ── La red neuronal multiclase se puntúa con argmax, no con umbral 0,5 (#61) ─
+
+class _FakeKeras:
+    def __init__(self, raw):
+        self._raw = np.asarray(raw)
+
+    def predict(self, x, verbose=0):
+        return self._raw
+
+
+def test_predict_labels_multiclase_usa_argmax():
+    from engine_optimize import _predict_labels
+
+    # con el umbral 0,5 sobre softmax esto daba [1, 1, 0] aplanado y de forma incorrecta
+    probs = [[0.1, 0.2, 0.7], [0.6, 0.3, 0.1], [0.2, 0.5, 0.3]]
+
+    assert _predict_labels(_FakeKeras(probs), None).tolist() == [2, 0, 1]
+
+
+def test_predict_labels_binario_usa_umbral():
+    from engine_optimize import _predict_labels
+
+    assert _predict_labels(_FakeKeras([[0.9], [0.2]]), None).tolist() == [1, 0]

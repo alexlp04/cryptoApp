@@ -109,6 +109,8 @@ def main() -> None:
         X_train, X_test = x_np[:split_idx], x_np[split_idx:]
         y_train_raw, y_test_raw = y_np[:split_idx], y_np[split_idx:]
         timestamps_test = timestamps_all[split_idx:]
+        # Último timestamp visto al entrenar: el backtest con este modelo evalúa solo lo posterior.
+        train_end_ts = int(timestamps_all[split_idx - 1])
 
         # LabelEncoder (P1.3): recodifica {-1,0,1} -> {0,1,2} para XGBoost/LightGBM/NN
         label_encoder, y_train, y_test, keep_test = encode_labels(y_train_raw, y_test_raw)
@@ -161,6 +163,7 @@ def main() -> None:
                         "feature_cols": feature_cols,
                         "strategy_name": strategy_name,
                         "warmup_candles": warmup_candles,
+                        "train_end_ts": train_end_ts,
                         "label_classes": label_encoder.classes_.tolist(),
                     },
                     mf,
@@ -186,6 +189,7 @@ def main() -> None:
             model.feature_cols = feature_cols
             model.strategy_name = strategy_name
             model.warmup_candles = warmup_candles
+            model.train_end_ts = train_end_ts
             model.label_encoder = label_encoder
 
             suffix = f"_{strategy_name}" if strategy_name else ""
