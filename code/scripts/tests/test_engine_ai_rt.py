@@ -315,9 +315,8 @@ def test_load_model_rechaza_otra_version_de_sklearn(models_dir):
 
 
 def test_rt_usa_las_columnas_guardadas_con_el_modelo():
-    class _Modelo:
-        feature_cols = ["close"]  # la estrategia diría ["rsi"]
+    modelo = types.SimpleNamespace(feature_cols=["close"])  # la estrategia diría ["rsi"]
 
-    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(55.0), "BTCUSDT", "xgb", _Modelo())
+    x = engine_ai_rt._prepare_feature_row(_buf(), _FeatStrategy(55.0), "BTCUSDT", "xgb", modelo)
 
     assert x.shape == (1, 1) and float(x[0, 0]) == 1.0  # close del buffer, no el rsi=55
