@@ -36,6 +36,7 @@ import com.bottrading.backtesting.application.port.out.BacktestPersistencePort;
 import com.bottrading.backtesting.infrastructure.StatsCsvRepository;
 import com.bottrading.market.domain.Vela;
 import com.bottrading.market.domain.VelaRepository;
+import com.bottrading.shared.exceptions.DataFetchException;
 import com.bottrading.shared.exceptions.StrategyExecutionException;
 import com.bottrading.shared.utils.ConsoleLoader;
 import com.bottrading.shared.utils.PathConfig;
@@ -194,18 +195,73 @@ class BacktestingServiceTest {
     class CargaDatosHistoricosTests {
 
         @Test
-        @DisplayName("✓ Debe abortar sin invocar Python cuando la lista de coins está vacía")
+        @DisplayName("✓ Debe abortar con error, sin invocar Python ni borrar resultados, cuando no hay coins")
         void should_abort_without_calling_python_when_coins_is_empty() throws PythonBridgeExecutionException {
             ConsoleLoader consoleMock = mock(ConsoleLoader.class);
-            try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class)) {
+            try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class);
+                 MockedStatic<PathConfig> pathStatic = mockStatic(PathConfig.class)) {
                 consoleStatic.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                pathStatic.when(() -> PathConfig.getValidStrategyPath(ESTRATEGIA)).thenReturn(FAKE_STRATEGY_PATH);
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
-                        Collections.emptyList(), CAPITAL, RISK, false, false);
+                assertThrows(DataFetchException.class, () -> backtestingService.ejecutarBacktest(
+                        ESTRATEGIA, null, TIMEFRAME, Collections.emptyList(), CAPITAL, RISK, true, false));
 
                 verify(pythonBridgeFacade, never()).execute(any());
+                verify(backtestPersistencePort, never()).limpiarResultadosPrevios(anyString());
                 verifyNoInteractions(statsCsvRepository);
             }
+        }
+
+        @Test
+        @DisplayName("✓ Sin velas en ningún símbolo aborta y conserva los resultados previos (#86)")
+        void should_keep_previous_results_when_no_symbol_has_candles() throws PythonBridgeExecutionException {
+            when(velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc(anyString(), anyString()))
+                    .thenReturn(Collections.emptyList());
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class);
+                 MockedStatic<PathConfig> pathStatic = mockStatic(PathConfig.class)) {
+                consoleStatic.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                pathStatic.when(() -> PathConfig.getValidStrategyPath(ESTRATEGIA)).thenReturn(FAKE_STRATEGY_PATH);
+
+                assertThrows(DataFetchException.class, () -> backtestingService.ejecutarBacktest(
+                        ESTRATEGIA, null, TIMEFRAME, List.of("BTCUSDT"), CAPITAL, RISK, true, false));
+
+                verify(backtestPersistencePort, never()).limpiarResultadosPrevios(anyString());
+                verify(pythonBridgeFacade, never()).execute(any());
+            }
+        }
+
+        @Test
+        @DisplayName("✓ Una estrategia inválida falla antes de borrar nada (#86)")
+        void should_validate_strategy_before_cleaning_previous_results() {
+            try (MockedStatic<PathConfig> pathStatic = mockStatic(PathConfig.class)) {
+                pathStatic.when(() -> PathConfig.getValidStrategyPath("..")).thenThrow(new IllegalArgumentException("nombre inválido"));
+
+                assertThrows(IllegalArgumentException.class, () -> backtestingService.ejecutarBacktest(
+                        "..", null, TIMEFRAME, List.of("BTCUSDT"), CAPITAL, RISK, true, false));
+
+                verify(backtestPersistencePort, never()).limpiarResultadosPrevios(anyString());
+            }
+        }
+
+        @Test
+        @DisplayName("✓ Las velas viajan como double: un BigDecimal de 18 cifras no rompe msgpack (#98)")
+        void should_serialize_candles_as_doubles_that_msgpack_accepts() throws Exception {
+            Vela v = new Vela(
+                    "BTCUSDT", TIMEFRAME, 1704067200000L,
+                    new BigDecimal("40000.00"), new BigDecimal("40500.00"),
+                    new BigDecimal("39500.00"), new BigDecimal("1234567890.12345678"),
+                    new BigDecimal("10000000000.00000001"), 1704070800000L,
+                    new BigDecimal("4020000.0"), 150,
+                    new BigDecimal("50.0"), new BigDecimal("2010000.0"));
+
+            java.util.Map<String, Object> mapa = backtestingService.convertirVelaAMapa(v);
+
+            assertThat(mapa.get("close") instanceof Double, is(true));
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec.writeEnvelope(out,
+                    com.bottrading.trading.infrastructure.bridge.protocol.IpcMessageType.BACKTEST_REQUEST, mapa);
+            assertThat(out.size() > 0, is(true));
         }
 
         @Test
@@ -258,10 +314,12 @@ class BacktestingServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe continuar e invocar Python aunque un símbolo no tenga velas")
-        void should_invoke_python_even_when_symbol_has_no_velas() throws PythonBridgeExecutionException {
+        @DisplayName("✓ Debe invocar Python solo con los símbolos que tienen velas (#86)")
+        void should_invoke_python_only_with_symbols_that_have_velas() throws PythonBridgeExecutionException {
             when(velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc("BTCUSDT", TIMEFRAME))
                     .thenReturn(Collections.emptyList());
+            when(velaRepository.findBySymbolAndIntervalOrderByOpenTimeAsc("ETHUSDT", TIMEFRAME))
+                    .thenReturn(List.of(crearVelaTest("ETHUSDT")));
 
             ConsoleLoader consoleMock = mock(ConsoleLoader.class);
             try (MockedStatic<ConsoleLoader> consoleStatic = mockStatic(ConsoleLoader.class);
@@ -272,9 +330,8 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(FAKE_JSON_RESULTADO).when(pythonBridgeFacade).execute(any());
 
-                // El mapa tendrá entrada para BTCUSDT (lista vacía), por lo que no está vacío
                 backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
-                        List.of("BTCUSDT"), CAPITAL, RISK, false, false);
+                        List.of("BTCUSDT", "ETHUSDT"), CAPITAL, RISK, false, false);
 
                 verify(pythonBridgeFacade, times(1)).execute(any());
             }
@@ -370,8 +427,8 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn(null).when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
-                        List.of("BTCUSDT"), CAPITAL, RISK, false, false);
+                assertThrows(StrategyExecutionException.class, () -> backtestingService.ejecutarBacktest(
+                        ESTRATEGIA, null, TIMEFRAME, List.of("BTCUSDT"), CAPITAL, RISK, false, false));
 
                 verify(statsCsvRepository, never())
                         .guardarEstadisticasDelBacktest(anyString(), anyString(), any(), anyString());
@@ -447,8 +504,8 @@ class BacktestingServiceTest {
                         .thenReturn(FAKE_STRATEGY_PATH);
                 doReturn("").when(pythonBridgeFacade).execute(any());
 
-                backtestingService.ejecutarBacktest(ESTRATEGIA, null, TIMEFRAME,
-                        List.of("BTCUSDT"), CAPITAL, RISK, false, false);
+                assertThrows(StrategyExecutionException.class, () -> backtestingService.ejecutarBacktest(
+                        ESTRATEGIA, null, TIMEFRAME, List.of("BTCUSDT"), CAPITAL, RISK, false, false));
 
                 verify(statsCsvRepository, never())
                         .guardarEstadisticasDelBacktest(anyString(), anyString(), any(), anyString());
