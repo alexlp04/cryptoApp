@@ -328,7 +328,7 @@ def test_el_entrenamiento_final_neuronal_guarda_modelo_y_metadatos(tmp_path):
     x, y = _datos(3)
     encoder, y_enc, _, _ = encode_labels(y - 1, y - 1)  # etiquetas originales -1/0/1
 
-    model, filename, y_pred = _train_neural_final(
+    _model, filename, y_pred = _train_neural_final(
         "neural_network", _PARAMS_RAPIDOS, x, y_enc, x[:10], ["a", "b", "c", "d"], "Estrategia", 20,
         str(tmp_path), "1h", "BTCUSDT", encoder, train_end_ts=12345)
 
