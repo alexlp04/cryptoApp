@@ -19,6 +19,7 @@ import io
 import itertools
 import json
 import sys
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -99,7 +100,7 @@ def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int, 
             else:
                 await engine.run_symbol("TESTUSDT", "1h", "x.py", 10_000.0, 0.01, False, max_candles=window)
 
-    patches = [
+    patches: list[Any] = [
         mock.patch.object(engine, "load_strategy_by_path", lambda *a, **k: strategy_rt),
         mock.patch.object(engine, "fetch_recent_klines", lambda *a, **k: list(seed)),
         mock.patch.object(engine.websockets, "connect", lambda url: _ReplayStream(candles, out)),
