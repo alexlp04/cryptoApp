@@ -224,7 +224,7 @@ def test_el_modelo_sklearn_final_recibe_class_weight(monkeypatch, tmp_path):
         return _Modelo()
 
     monkeypatch.setattr(eo, "fit_sklearn_model", fake_fit)
-    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())  # noqa: SIM115
+    monkeypatch.setattr(eo.joblib, "dump", lambda obj, path: open(path, "wb").close())
     y = np.array([0] * 9 + [1])
 
     eo._train_sklearn_final(
