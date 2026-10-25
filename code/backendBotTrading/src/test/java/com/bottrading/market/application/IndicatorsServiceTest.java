@@ -156,8 +156,9 @@ class IndicatorsServiceTest {
             doThrow(new PythonBridgeExecutionException("Fallo en Python"))
                     .when(pythonBridgeFacade).execute(any());
 
-            // No debe lanzar excepción al exterior — el loop captura Exception
-            indicatorsService.calculateBasicIndicators(SYMBOL, velas, false);
+            // El lote fallido no corta el resto, pero el llamador se entera al final (antes se tragaba el error)
+            org.junit.jupiter.api.Assertions.assertThrows(com.bottrading.shared.exceptions.PythonProcessException.class,
+                    () -> indicatorsService.calculateBasicIndicators(SYMBOL, velas, false));
 
             verify(pythonBridgeFacade, times(1)).execute(any(PythonBridgeRequest.class));
         }

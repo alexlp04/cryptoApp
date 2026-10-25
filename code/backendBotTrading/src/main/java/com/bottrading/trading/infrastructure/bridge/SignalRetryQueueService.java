@@ -89,11 +89,9 @@ public class SignalRetryQueueService {
      * Retorna true si se ha alcanzado el límite máximo.
      */
     public boolean incrementAndCheckFailureLimit(Long instanciaId) {
-        int failCount = consecutiveFailures.getOrDefault(instanciaId, 0) + 1;
-        consecutiveFailures.put(instanciaId, failCount);
-        
+        int failCount = consecutiveFailures.merge(instanciaId, 1, Integer::sum); // atómico        
         if (failCount >= MAX_CONSECUTIVE_FAILURES) {
-            log.error("❌ {} fallos consecutivos en estrategia {}. Límite alcanzado.", 
+            log.error("{} fallos consecutivos en estrategia {}. Límite alcanzado.", 
                      MAX_CONSECUTIVE_FAILURES, instanciaId);
             return true;
         }
@@ -131,7 +129,7 @@ public class SignalRetryQueueService {
                 paperTradingService.onSignal(instanciaId, signal);
                 failedSignalStore.markProcessed(instanciaId, signal);
                 resetFailureCount(instanciaId);
-                log.info("✅ Señal de reintento procesada: {} {}", signal.getAction(), signal.getSymbol());
+                log.info("Señal de reintento procesada: {} {}", signal.getAction(), signal.getSymbol());
             } catch (Exception e) {
                 log.warn("⚠️ Reintento fallido, volviendo a encolar: {} - Error: {}", 
                         signal.getSymbol(), e.getMessage());
