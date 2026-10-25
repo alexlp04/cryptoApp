@@ -457,9 +457,10 @@ class FetchServiceTest {
         }
 
         @Test
-        @DisplayName("✓ Debe retornar 60000 (fallback) para intervalo desconocido")
-        void should_return_60000_for_unknown_interval() {
-            assertThat(FetchService.getIntervalMillis("unknown"), is(60_000L));
+        @DisplayName("✓ Un intervalo desconocido falla en vez de caer a 1 minuto (#84)")
+        void should_throw_for_unknown_interval() {
+            assertThrows(IllegalArgumentException.class, () -> FetchService.getIntervalMillis("unknown"));
+            assertThrows(IllegalArgumentException.class, () -> FetchService.getIntervalMillis("30m"));
         }
     }
 
@@ -498,5 +499,90 @@ class FetchServiceTest {
                     com.bottrading.market.application.port.in.FetchMarketDataUseCase,
                     is(true));
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Huecos reales, rangos con páginas vacías e interrupciones (#116 #118)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Convergencia de huecos y fetchRange")
+    class HuecosYRangosTests {
+
+        private com.google.gson.JsonArray velas(long... openTimes) {
+            com.google.gson.JsonArray array = new com.google.gson.JsonArray();
+            for (long t : openTimes) {
+                array.add(com.google.gson.JsonParser.parseString("[" + t + ",\"1\",\"2\",\"0.5\",\"1.5\",\"10\","
+                        + (t + 3_599_999) + ",\"100\",5,\"3\",\"4\"]"));
+            }
+            return array;
+        }
+
+        @Test
+        @DisplayName("✓ Un hueco ya pedido a Binance no se vuelve a descargar en la misma ejecución (#116)")
+        void already_requested_gap_is_not_downloaded_again() throws PythonBridgeExecutionException {
+            long now = System.currentTimeMillis();
+            int dias = 30;
+            long windowStart = now - dias * 24L * 60 * 60 * 1000L;
+            long lastTimestamp = now - (INTERVAL_MILLIS / 2); // al día: sin cola nueva que descargar
+            // el par es más joven que la ventana: la primera vela está lejos de windowStart
+            long primera = windowStart + 10 * INTERVAL_MILLIS;
+
+            ConsoleLoader consoleMock = mock(ConsoleLoader.class);
+            try (MockedStatic<ConsoleLoader> cs = mockStatic(ConsoleLoader.class)) {
+                cs.when(ConsoleLoader::getInstance).thenReturn(consoleMock);
+                doReturn(lastTimestamp).when(velaRepo).findMaxOpenTimeBySymbolAndInterval(SYMBOL, INTERVAL);
+                doReturn(primera).when(velaRepo).findMinOpenTimeBySymbolAndIntervalAndOpenTimeBetween(
+                        anyString(), anyString(), anyLong(), anyLong());
+                doReturn(null).when(velaRepo).findFirstInternalGapOpenTime(
+                        anyString(), anyString(), anyLong(), anyLong(), anyLong());
+                doReturn(30).when(pythonBridgeFacade).execute(any());
+
+                fetchService.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+                fetchService.fetchIncremental(SYMBOL, INTERVAL, dias, now);
+
+                verify(pythonBridgeFacade, times(1)).execute(any(PythonBridgeRequest.class));
+            }
+        }
+
+        @Test
+        @DisplayName("✓ fetchRange sigue con la página siguiente cuando una está vacía (#118)")
+        void fetch_range_continues_after_an_empty_page() {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            long t0 = 1_700_000_000_000L - (1_700_000_000_000L % INTERVAL_MILLIS);
+            LocalDateTime from = LocalDateTime.ofEpochSecond(t0 / 1000, 0, java.time.ZoneOffset.UTC);
+            LocalDateTime to = from.plusHours(2_500);
+            doReturn(velas()).doReturn(velas(t0 + 1_500 * INTERVAL_MILLIS)).doReturn(velas())
+                    .when(spy).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+            doReturn(new int[] {1}).when(jdbcTemplate).batchUpdate(anyString(), org.mockito.ArgumentMatchers.anyList());
+
+            int inserted = spy.fetchRange(SYMBOL, INTERVAL, from, to);
+
+            assertThat(inserted, is(1));
+            verify(spy, times(3)).requestKlines(any(), anyString(), anyString(), anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("✓ Un IOException de red no deja el hilo marcado como interrumpido (#118)")
+        void io_error_does_not_set_the_interrupt_flag() throws Exception {
+            java.net.http.HttpClient client = mock(java.net.http.HttpClient.class);
+            doThrow(new java.io.IOException("timeout")).when(client).send(any(), any());
+
+            assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                    () -> fetchService.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L));
+
+            assertThat(Thread.currentThread().isInterrupted(), is(false));
+        }
+    }
+
+    @Test
+    @DisplayName("✓ Un frame ERROR de Python lanza DataFetchException con su mensaje (#81)")
+    void python_error_frame_is_a_fetch_failure() {
+        java.util.Map<String, Object> envelope = java.util.Map.of(
+                "message_type", "ERROR", "payload", java.util.Map.of("status", "error", "message", "símbolo inválido"));
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
+                        () -> FetchService.lanzarSiEsError(envelope)).getMessage().contains("símbolo inválido"));
+        FetchService.lanzarSiEsError(java.util.Map.of("message_type", "FETCH_CHUNK", "payload", java.util.Map.of()));
     }
 }

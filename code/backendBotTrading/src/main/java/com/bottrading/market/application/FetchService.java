@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -201,21 +202,19 @@ public class FetchService implements FetchMarketDataUseCase {
         int totalInserted = 0;
 
         long cursor = fromMs;
-        boolean hasMore = true;
-        while (cursor <= toMs && hasMore) {
+        while (cursor <= toMs) {
             long pageEnd = Math.min(toMs, cursor + (BINANCE_PAGE_LIMIT - 1L) * intervalMs);
 
             JsonArray klines = requestKlines(client, symbol, timeframe, cursor, pageEnd);
-            hasMore = !klines.isEmpty();
-            if (hasMore) {
+            long next = pageEnd + intervalMs; // página vacía: hueco real de Binance, se sigue con la siguiente
+            if (!klines.isEmpty()) {
                 PageProcessResult pageResult = processPage(klines, symbol, timeframe, fromMs, toMs, insertBatch);
                 totalInserted += pageResult.inserted();
-
-                hasMore = pageResult.lastOpenTime() >= cursor;
-                if (hasMore) {
-                    cursor = pageResult.lastOpenTime() + intervalMs;
+                if (pageResult.lastOpenTime() >= cursor) {
+                    next = pageResult.lastOpenTime() + intervalMs;
                 }
             }
+            cursor = next;
         }
 
         if (!insertBatch.isEmpty()) {
@@ -332,12 +331,32 @@ public class FetchService implements FetchMarketDataUseCase {
             return windowStart;
         }
 
-        if (firstExisting > windowStart + intervalMillis) {
+        // Un hueco ya pedido con éxito a Binance en esta ejecución es un hueco real del exchange (par
+        // más joven que la ventana, mantenimientos): volver a pedirlo no lo rellena y repetía la
+        // descarga completa en cada llamada.
+        if (firstExisting > windowStart + intervalMillis && !yaCubierto(symbol, interval, windowStart)) {
             return windowStart;
         }
 
-        return velaRepo.findFirstInternalGapOpenTime(
+        Long gap = velaRepo.findFirstInternalGapOpenTime(
                 symbol, interval, firstExisting, lastTimestamp, intervalMillis);
+        return gap != null && yaCubierto(symbol, interval, gap) ? null : gap;
+    }
+
+    /**
+     * Menor instante desde el que se ha descargado con éxito por (símbolo, timeframe).
+     * shortcut: solo en memoria (se pierde al reiniciar y cuesta una descarga por ejecución de la app);
+     * subir a una tabla de cobertura si el coste de esa primera descarga molesta.
+     */
+    private final Map<String, Long> cubiertoDesde = new ConcurrentHashMap<>();
+
+    private static String clave(String symbol, String interval) {
+        return symbol + "|" + interval;
+    }
+
+    private boolean yaCubierto(String symbol, String interval, long desde) {
+        Long cubierto = cubiertoDesde.get(clave(symbol, interval));
+        return cubierto != null && desde >= cubierto;
     }
 
     /**
@@ -347,6 +366,8 @@ public class FetchService implements FetchMarketDataUseCase {
     private void callPythonAndSave(String symbol, String interval, Long fromTimestamp) {
         try {
             ejecutarIntentoFetch(symbol, interval, fromTimestamp);
+            // null = descarga completa desde el listado
+            cubiertoDesde.merge(clave(symbol, interval), fromTimestamp == null ? 0L : fromTimestamp, Math::min);
         } catch (Exception e) {
             throw new DataFetchException("Data synchronization failed", e);
         }
@@ -397,6 +418,7 @@ public class FetchService implements FetchMarketDataUseCase {
         Optional<Map<String, Object>> maybeEnvelope;
         while ((maybeEnvelope = IpcMessagePackCodec.readEnvelopeOrEmpty(in)).isPresent()) {
             Map<String, Object> envelope = maybeEnvelope.get();
+            lanzarSiEsError(envelope);
             List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
             if (!velasChunk.isEmpty()) {
                 totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
@@ -461,6 +483,15 @@ public class FetchService implements FetchMarketDataUseCase {
         return insertadasEnChunk;
     }
 
+    /** Un frame ERROR de Python es un fallo de la descarga, no "0 velas". */
+    static void lanzarSiEsError(Map<String, Object> envelope) {
+        if ("ERROR".equals(envelope.get("message_type"))) {
+            Object payload = envelope.get("payload");
+            Object message = payload instanceof Map<?, ?> m ? m.get("message") : null;
+            throw new DataFetchException("Fetch fallido en Python: " + message);
+        }
+    }
+
     private List<VelaDTO> extraerVelasChunk(Map<String, Object> envelope) {
         Object payloadObj = envelope.get("payload");
         if (!(payloadObj instanceof Map<?, ?> payloadMap)) {
@@ -518,7 +549,7 @@ public class FetchService implements FetchMarketDataUseCase {
         };
     }
 
-    private JsonArray requestKlines(HttpClient client,
+    JsonArray requestKlines(HttpClient client,
             String symbol,
             String timeframe,
             long startTime,
@@ -536,9 +567,12 @@ public class FetchService implements FetchMarketDataUseCase {
             }
 
             return JsonParser.parseString(response.body()).getAsJsonArray();
-        } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            // Un timeout de red no es una interrupción: marcarla rompía las operaciones bloqueantes siguientes.
             throw new DataFetchException("Error requesting klines for range", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DataFetchException("Interrupted requesting klines for range", e);
         }
     }
 
@@ -558,8 +592,9 @@ public class FetchService implements FetchMarketDataUseCase {
                 .millis();
     }
 
+    /** Un timeframe no soportado falla: antes caía a 1 min y la detección de huecos re-descargaba todo cada vez. */
     public static long getIntervalMillis(String interval) {
-        return Timeframe.millisOrDefault(interval, Timeframe.M1.millis());
+        return Timeframe.parse(interval).millis();
     }
 
     @PreDestroy

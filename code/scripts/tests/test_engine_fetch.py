@@ -80,3 +80,106 @@ def test_returns_none_on_client_error(monkeypatch):
     data = engine_fetch._request_with_backoff({"symbol": "NOPE"}, max_retries=2)
 
     assert data is None
+
+
+# ── Robustez de la descarga (#80 #81 #83 #87) ───────────────────────────────
+
+import pytest
+
+
+class _BadJsonResp(_FakeResp):
+    def json(self):
+        raise ValueError("no es JSON")
+
+
+def test_retry_after_con_fecha_http_no_rompe_y_usa_el_valor_por_defecto():
+    resp = _FakeResp(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+
+    assert engine_fetch._retry_after(resp, 60) == 60
+
+
+def test_retry_after_numerico_se_acota_al_maximo():
+    assert engine_fetch._retry_after(_FakeResp(429, headers={"Retry-After": "99999"}), 60) == engine_fetch.MAX_BACKOFF_SEC
+
+
+def test_no_duerme_tras_el_ultimo_intento(monkeypatch):
+    sleeps: list = []
+    monkeypatch.setattr(engine_fetch.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: _FakeResp(429))
+
+    assert engine_fetch._request_with_backoff({"symbol": "X"}, max_retries=3) is None
+
+    assert len(sleeps) == 2  # entre intentos, no después del tercero
+
+
+def test_error_http_con_cuerpo_html_devuelve_none_sin_excepcion(monkeypatch):
+    monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: _BadJsonResp(403))
+
+    assert engine_fetch._request_with_backoff({"symbol": "X"}) is None
+
+
+def test_excepciones_de_requests_distintas_de_timeout_se_reintentan(monkeypatch):
+    monkeypatch.setattr(engine_fetch.time, "sleep", lambda *a, **k: None)
+    calls = {"n": 0}
+
+    def fake_get(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.exceptions.ChunkedEncodingError("cortado")
+        return _FakeResp(200, [[1]])
+
+    monkeypatch.setattr(engine_fetch._SESSION, "get", fake_get)
+
+    assert engine_fetch._request_with_backoff({"symbol": "X"}) == [[1]]
+
+
+def test_un_chunk_fallido_no_se_confunde_con_uno_vacio(monkeypatch):
+    monkeypatch.setattr(engine_fetch, "_request_with_backoff", lambda params: None)
+    with pytest.raises(engine_fetch.ChunkFailedError):
+        engine_fetch._fetch_chunk(0, 0, 1000, "BTCUSDT", "1m")
+
+    monkeypatch.setattr(engine_fetch, "_request_with_backoff", lambda params: [])
+    assert engine_fetch._fetch_chunk(0, 0, 1000, "BTCUSDT", "1m") == (0, [])
+
+
+def test_un_chunk_fallido_aborta_la_descarga_en_vez_de_dejar_huecos(monkeypatch):
+    monkeypatch.setattr(engine_fetch, "_request_with_backoff", lambda params: None)
+
+    with pytest.raises(engine_fetch.ChunkFailedError):
+        engine_fetch._descargar_chunks_paralelo([(0, 1), (2, 3)], "BTCUSDT", "1m", workers=2)
+
+
+def test_la_vela_en_curso_no_se_emite(monkeypatch):
+    ahora = int(engine_fetch.datetime.now(engine_fetch.UTC).timestamp() * 1000)
+    cerrada = {"openTime": ahora - 120_000, "closeTime": ahora - 60_001}
+    abierta = {"openTime": ahora - 30_000, "closeTime": ahora + 29_999}
+    emitidas: list = []
+    monkeypatch.setattr(engine_fetch, "_descargar_chunks_paralelo", lambda *a, **k: [cerrada, abierta])
+    monkeypatch.setattr(engine_fetch, "_emitir_velas_ipc", lambda velas: emitidas.extend(velas) or len(velas))
+
+    total = engine_fetch.obtener_datos_binance("BTCUSDT", "1m", ahora - 600_000)
+
+    assert emitidas == [cerrada] and total == 1
+
+
+def test_fetch_falla_rapido_si_el_simbolo_no_tiene_fecha_de_listado(monkeypatch):
+    monkeypatch.setattr(engine_fetch, "obtener_fecha_listado", lambda s, t: None)
+    llamado = []
+    monkeypatch.setattr(engine_fetch, "obtener_datos_binance", lambda *a, **k: llamado.append(a) or 0)
+
+    with pytest.raises(ValueError, match="fecha de listado"):
+        engine_fetch.fetch("NOEXISTE", "1m")
+
+    assert llamado == []  # no se lanzaron miles de chunks con el default de 2017
+
+
+def test_since_anterior_al_listado_se_recorta_al_listado(monkeypatch):
+    monkeypatch.setattr(engine_fetch, "obtener_fecha_listado", lambda s, t: 5_000)
+    desde: list = []
+    monkeypatch.setattr(engine_fetch, "obtener_datos_binance", lambda s, t, since: desde.append(since) or 1)
+
+    engine_fetch.fetch("BTCUSDT", "1m", "1000")
+    engine_fetch.fetch("BTCUSDT", "1m", "9000")
+    engine_fetch.fetch("BTCUSDT", "1m", None)
+
+    assert desde == [5_000, 9_000, 5_000]
