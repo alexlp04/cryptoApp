@@ -4,6 +4,7 @@
 ALTER TABLE instancia_estrategia ADD COLUMN usuario_id BIGINT NULL;
 
 UPDATE instancia_estrategia
-SET usuario_id = (SELECT w.usuario_id FROM wallet w WHERE w.id = instancia_estrategia.wallet_asociada);
+SET usuario_id = (SELECT w.usuario_id FROM wallet w WHERE w.id = instancia_estrategia.wallet_asociada)
+WHERE usuario_id IS NULL;
 
 CREATE INDEX idx_instancia_usuario ON instancia_estrategia (usuario_id);
