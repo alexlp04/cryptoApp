@@ -43,7 +43,6 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -97,11 +96,19 @@ public class FetchService implements FetchMarketDataUseCase {
     @Override
     public void fetch(String symbol, String interval) {
         log.info("Comprobando datos para: {} [{}]", symbol, interval);
+        Long lastTimestamp;
+        Long minTimestamp = null;
         ConsoleLoader.getInstance().startDots("Verificando historial de " + symbol + " [" + interval + "]");
+        try {
+            lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+            if (lastTimestamp != null) {
+                minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
+            }
+        } finally {
+            ConsoleLoader.getInstance().stopClear(); // también si el repositorio lanza: el spinner no queda girando
+        }
 
-        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
         if (lastTimestamp == null) {
-            ConsoleLoader.getInstance().stopClear();
             log.info("No hay datos previos. Iniciando descarga completa...");
             callPythonAndSave(symbol, interval, null);
             return;
@@ -109,8 +116,6 @@ public class FetchService implements FetchMarketDataUseCase {
 
         long intervalMillis = getIntervalMillis(interval);
         long now = System.currentTimeMillis();
-        Long minTimestamp = velaRepo.findMinOpenTimeBySymbolAndInterval(symbol, interval);
-        ConsoleLoader.getInstance().stopClear();
 
         if (minTimestamp != null) {
             Long firstMissing = findFirstMissingPoint(symbol, interval, minTimestamp, lastTimestamp, intervalMillis);
@@ -290,8 +295,12 @@ public class FetchService implements FetchMarketDataUseCase {
         long intervalMillis = getIntervalMillis(interval);
 
         ConsoleLoader.getInstance().startDots("Analizando datos para " + symbol + " [" + interval + "]");
-        Long lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
-        ConsoleLoader.getInstance().stopClear();
+        Long lastTimestamp;
+        try {
+            lastTimestamp = velaRepo.findMaxOpenTimeBySymbolAndInterval(symbol, interval);
+        } finally {
+            ConsoleLoader.getInstance().stopClear();
+        }
 
         // Caso 1: Sin datos o historial insuficiente — descarga desde el inicio de la ventana
         if (lastTimestamp == null || lastTimestamp < windowStart) {
@@ -653,10 +662,5 @@ public class FetchService implements FetchMarketDataUseCase {
     /** Un timeframe no soportado falla: antes caía a 1 min y la detección de huecos re-descargaba todo cada vez. */
     public static long getIntervalMillis(String interval) {
         return Timeframe.parse(interval).millis();
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        log.info("FetchService shutdown completo");
     }
 }
