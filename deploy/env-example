@@ -1,0 +1,4 @@
+# Copia este fichero a deploy/.env (no se versiona). Contraseñas largas y distintas entre sí.
+DB_USER=cryptoapp
+DB_PASSWORD=cambia-esta-contrasena
+MYSQL_ROOT_PASSWORD=cambia-esta-otra
