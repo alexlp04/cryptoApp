@@ -1,0 +1,7 @@
+# Copia este fichero a deploy/.env (no se versiona). Contraseñas largas y distintas entre sí.
+DB_USER=cryptoapp
+DB_PASSWORD=cambia-esta-contrasena
+MYSQL_ROOT_PASSWORD=cambia-esta-otra
+# Keras en la Pi: la rueda de tensorflow 2.21.0 no existe para arm64; usa la misma versión que en el PC donde entrenas
+# (p. ej. tensorflow==2.20.0) y reentrena los modelos Keras con ella. Vacío = solo scikit-learn, XGBoost y LightGBM.
+TENSORFLOW_SPEC=

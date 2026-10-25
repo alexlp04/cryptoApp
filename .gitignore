@@ -89,3 +89,10 @@ results/
 .env
 .code-graph/
 .claude/settings.local.json
+
+# ------------------------------------------------------------------------------
+# Despliegue (deploy/): contraseñas, clave de firma de modelos y datos del contenedor
+# ------------------------------------------------------------------------------
+deploy/.env
+deploy/secrets/
+deploy/data/

@@ -76,6 +76,16 @@ El intérprete se resuelve según el SO (`AppConstants.resolveDefaultPythonExecu
 `.venv/Scripts/python.exe` en Windows, `.venv/bin/python3` en POSIX. Override:
 `CRYPTOAPP_PYTHON`.
 
+## Despliegue (Docker, Raspberry Pi 5)
+
+`deploy/` tiene la imagen única (Java + motores Python), el `docker-compose.yml` con MySQL 8 y la guía
+(`deploy/README.md`). Decisiones que no deben deshacerse: ningún puerto publicado; la app usa un usuario de MySQL con
+permisos solo sobre `bottradingdb`; la clave de firma de modelos entra como secreto de Docker; los modelos son un
+volumen (se entrenan en el PC) y las estrategias van dentro de la imagen; TensorFlow es opcional
+(`PythonEnvironmentValidator` solo avisa si falta) porque no hay rueda de la versión fijada para arm64. Probado en x86
+con la pila completa (Flyway V13, registro, login, `fetch` por el motor Python, parada y reinicio con datos);
+arm64 no se ha podido ejecutar todavía.
+
 ## Esquema de base de datos
 
 Lo versiona **Flyway**, no `ddl-auto=update`. La baseline vive en

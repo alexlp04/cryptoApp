@@ -24,16 +24,23 @@ public class PythonEnvironmentValidator {
 
     /** Módulos que DEBEN estar instalados (nombre de import). */
     private static final List<String> REQUIRED_MODULES = List.of(
-            "pandas", "numpy", "sklearn", "xgboost", "lightgbm", "joblib", "tensorflow", "optuna");
+            "pandas", "numpy", "sklearn", "xgboost", "lightgbm", "joblib", "optuna");
+
+    /**
+     * Módulos que pueden faltar: tensorflow solo lo necesitan los modelos Keras, y en una Raspberry Pi (arm64) puede no
+     * haber rueda de la versión fijada. Sin él arranca todo salvo cargar modelos Keras.
+     */
+    private static final List<String> OPTIONAL_MODULES = List.of("tensorflow");
 
     /**
      * Un único proceso que comprueba versión y módulos con find_spec, sin importarlos
-     * (importar tensorflow cuesta varios segundos). Imprime "major minor" y la lista de ausentes.
+     * (importar tensorflow cuesta varios segundos). Imprime "major minor", los ausentes obligatorios y los ausentes
+     * opcionales (una línea cada uno, argumentos separados por comas).
      */
-    private static final String CHECK_SCRIPT =
+    static final String CHECK_SCRIPT =
             "import importlib.util as u,sys;"
             + "print(sys.version_info[0],sys.version_info[1]);"
-            + "print(','.join(m for m in sys.argv[1:] if u.find_spec(m) is None))";
+            + "[print(','.join(m for m in g.split(',') if u.find_spec(m) is None)) for g in sys.argv[1:3]]";
 
     private PythonEnvironmentValidator() {
     }
@@ -68,7 +75,12 @@ public class PythonEnvironmentValidator {
                     "Python " + major + "." + minor + " no es compatible. Se requiere Python 3.11 o superior");
         }
 
-        String missing = lines.length > 1 ? lines[lines.length - 1].trim() : "";
+        String missing = lines.length > 1 ? lines[1].trim() : "";
+        String missingOptional = lines.length > 2 ? lines[2].trim() : "";
+        if (!missingOptional.isEmpty()) {
+            log.warn("Faltan módulos Python opcionales: {}. No se podrán cargar los modelos que los necesiten (Keras).",
+                    missingOptional.replace(",", ", "));
+        }
         if (!missing.isEmpty()) {
             throw new EnvironmentConfigException(
                     "Faltan módulos Python críticos: " + missing.replace(",", ", ") + "\n"
@@ -80,7 +92,8 @@ public class PythonEnvironmentValidator {
 
     private static String runPython(String pythonExe, int timeoutSeconds) {
         List<String> command = new java.util.ArrayList<>(List.of(pythonExe, "-c", CHECK_SCRIPT));
-        command.addAll(REQUIRED_MODULES);
+        command.add(String.join(",", REQUIRED_MODULES));
+        command.add(String.join(",", OPTIONAL_MODULES));
 
         Process process;
         try {
