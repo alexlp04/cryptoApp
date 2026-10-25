@@ -380,6 +380,12 @@ def _warmup_candles(strategy) -> int:
     return max(strategy.get_warmup_period(), MIN_WARMUP_CANDLES)
 
 
+def _indicator_row(df_buffer: deque, strategy):
+    """Última fila con los indicadores de la estrategia: sus stops (p. ej. por ATR) los necesitan.
+    Trabajo de CPU: se ejecuta fuera del event loop."""
+    return strategy.populate_indicators(pd.DataFrame(list(df_buffer)).copy()).iloc[-1]
+
+
 def _decide_action(df_buffer: deque, strategy, symbol, model, model_type, model_name, label_classes):
     """Features + predicción (trabajo de CPU, se ejecuta fuera del event loop)."""
     x_pred = _prepare_feature_row(df_buffer, strategy, symbol, model_name, model)
@@ -487,7 +493,8 @@ async def run_symbol(
                         if tracker.is_open:
                             action = None  # ya hay posición: no se reabre ni se cambian sus niveles
                         else:
-                            levels = strategy_levels(strategy, new_row["close"], new_row)
+                            row = await asyncio.to_thread(_indicator_row, df_buffer, strategy)
+                            levels = strategy_levels(strategy, new_row["close"], row)
                             if levels is None:
                                 logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
                                                "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
