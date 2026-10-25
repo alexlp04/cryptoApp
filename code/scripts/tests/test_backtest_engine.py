@@ -497,3 +497,79 @@ def test_sharpe_es_cero_sin_variacion_y_finito_con_ella():
 
     assert plano["sharpe"] == 0.0
     assert np.isfinite(movido["sharpe"]) and movido["sharpe"] != 0.0
+
+
+# ─── Ejecución con órdenes límite ─────────────────────────────────────────────
+
+def _ohlc_df(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    """Velas (open, high, low, close) cada hora."""
+    o, h, low, c = zip(*rows, strict=True)
+    return pd.DataFrame({
+        "timestamp": np.arange(len(rows), dtype=np.int64) * 3_600_000 + 1_700_000_000_000,
+        "open": o, "high": h, "low": low, "close": c, "volume": [1.0] * len(rows),
+    })
+
+
+def test_la_compra_limite_no_se_llena_si_el_precio_no_la_atraviesa():
+    # señal en la vela 0 (close 100); la 1 solo toca 100, no lo cruza; la 2 ya no tiene orden viva
+    df = _ohlc_df([(100, 100, 100, 100), (101, 102, 100, 101), (101, 102, 100, 102)])
+
+    n, stats = run_backtest(_ScriptedStrategy(buy_at=100), df, "X", fee_rate=0, slippage=0, execution="limit")
+
+    assert n == 0 and stats["op_totales"] == 0
+
+
+def test_la_compra_limite_se_llena_a_su_precio_sin_slippage():
+    df = _ohlc_df([(100, 100, 100, 100), (100, 101, 99, 100), (100, 111, 100, 110)])
+    # tope del 25 % del equity (2500): market entra a 101 y limit a 100; los dos salen a 110 - 1 %
+    mercado = run_backtest(_ScriptedStrategy(buy_at=100), df, "X", fee_rate=0, slippage=0.01)[1]
+    limite = run_backtest(_ScriptedStrategy(buy_at=100), df, "X", fee_rate=0, slippage=0.01, execution="limit")[1]
+
+    assert mercado["retorno_total"] == pytest.approx(2500 / 101 * (108.9 - 101))
+    assert limite["retorno_total"] == pytest.approx(25 * (108.9 - 100))
+
+
+def test_un_hueco_a_la_baja_llena_la_compra_limite_a_la_apertura():
+    df = _ohlc_df([(100, 100, 100, 100), (95, 96, 94, 95), (95, 106, 95, 105)])
+    stats = run_backtest(_ScriptedStrategy(buy_at=100), df, "X", fee_rate=0, slippage=0, execution="limit")[1]
+
+    assert stats["retorno_total"] == pytest.approx(2500 / 95 * (105 - 95))  # entró a 95, no a 100
+
+
+def test_la_vela_del_relleno_no_evalua_la_salida_por_senal():
+    df = _ohlc_df([(100, 100, 100, 100), (100, 101, 99, 99), (99, 99, 99, 99)])
+    estrategia = _ScriptedStrategy(buy_at=100, close_below=100)  # cierra en cuanto el close baja de 100
+
+    n, _ = run_backtest(estrategia, df, "X", fee_rate=0, slippage=0, execution="limit")
+
+    assert n == 2  # BUY en la vela 1 y SELL en la 2 (no en la del relleno)
+
+
+def test_la_venta_limite_caduca_si_el_precio_no_sube_y_sale_en_la_siguiente():
+    df = _ohlc_df([
+        (100, 100, 100, 100),   # señal de compra
+        (100, 101, 99, 100),    # se llena a 100
+        (100, 100, 98, 98),     # should_close: orden de venta a 98
+        (98, 98, 97, 97),       # no sube de 98: la orden caduca; la estrategia vuelve a querer salir (97)
+        (97, 99, 97, 98),       # el máximo (99) supera 97: se vende a 97
+    ])
+    estrategia = _ScriptedStrategy(buy_at=100, close_below=99)
+
+    n, stats = run_backtest(estrategia, df, "X", fee_rate=0, slippage=0, execution="limit")
+
+    assert n == 2 and stats["retorno_total"] == pytest.approx(25 * (97 - 100))
+
+
+def test_el_modo_de_ejecucion_invalido_se_rechaza():
+    with pytest.raises(ValueError, match="execution"):
+        run_backtest(_ScriptedStrategy(), _flat_df([100.0, 101.0]), "X", execution="iceberg")
+
+
+def test_si_la_vela_del_relleno_toca_el_stop_se_asume_que_salta():
+    # se llena a 100 (mínimo 40 < 100) y la misma vela baja del stop (50): pesimista, salta el stop
+    df = _ohlc_df([(100, 100, 100, 100), (100, 101, 40, 90), (90, 90, 90, 90)])
+
+    n, stats = run_backtest(_ScriptedStrategy(buy_at=100), df, "X", fee_rate=0, slippage=0, execution="limit")
+
+    assert n == 2 and stats["op_perdidas"] == 1
+    assert stats["retorno_total"] == pytest.approx(25 * (50 - 100))

@@ -20,6 +20,7 @@ if CODE_DIR not in sys.path:
 from backtest_engine import (
     DEFAULT_FEE_RATE,
     DEFAULT_SLIPPAGE,
+    EXECUTION_MODES,
     crear_carpeta_estrategia,
     run_backtest,
     run_backtest_with_predictions,
@@ -131,6 +132,9 @@ def main() -> None:
         include_train = bool(payload.get("include_train", False))  # incluir el tramo con el que se entrenó el modelo
         fee_rate = float(payload.get("fee_rate", DEFAULT_FEE_RATE))
         slippage = float(payload.get("slippage", DEFAULT_SLIPPAGE))
+        execution = payload.get("execution", "market")
+        if execution not in EXECUTION_MODES:
+            raise ValueError(f"'execution' debe ser uno de {EXECUTION_MODES}, no {execution!r}.")
 
         # Campos obligatorios: si faltan, un None viajaría hasta load_strategy_by_path o
         # crear_carpeta_estrategia y fallaría allí de forma opaca. Mismo criterio que
@@ -199,7 +203,8 @@ def main() -> None:
                     continue
                 predictions = _generar_predicciones(model, model_type, strategy, df_con_indicadores, label_classes)
                 stats = run_backtest_with_predictions(
-                    strategy, df_con_indicadores, predictions, symbol, fee_rate=fee_rate, slippage=slippage)
+                    strategy, df_con_indicadores, predictions, symbol,
+                    fee_rate=fee_rate, slippage=slippage, execution=execution)
                 trade_count = stats.get("op_totales", 0)
                 logger.info(
                     "Backtest IA para %s: %d ops, win_rate=%.1f%%, pf=%.4f",
@@ -212,7 +217,7 @@ def main() -> None:
                     carpeta_estrategia=carpeta_estrategia,
                     timeframe=timeframe,
                     escribir_trades=escribir_trades,
-                    fee_rate=fee_rate, slippage=slippage,
+                    fee_rate=fee_rate, slippage=slippage, execution=execution,
                 )
                 logger.info("Backtest clásico para %s: %d trades, resultado: %s",
                             symbol, trade_count, stats.get("resultado"))
