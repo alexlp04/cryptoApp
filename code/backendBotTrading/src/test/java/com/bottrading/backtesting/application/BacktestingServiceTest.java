@@ -255,9 +255,10 @@ class BacktestingServiceTest {
                     new BigDecimal("4020000.0"), 150,
                     new BigDecimal("50.0"), new BigDecimal("2010000.0"));
 
-            java.util.Map<String, Object> mapa = backtestingService.convertirVelaAMapa(v);
+            java.util.Map<String, Object> mapa = backtestingService.columnasDeVelas(List.of(v, v));
 
-            assertThat(mapa.get("close") instanceof Double, is(true));
+            assertThat(((double[]) mapa.get("close")).length, is(2));
+            assertThat(((long[]) mapa.get("timestamp"))[0], is(1704067200000L));
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec.writeEnvelope(out,
                     com.bottrading.trading.infrastructure.bridge.protocol.IpcMessageType.BACKTEST_REQUEST, mapa);

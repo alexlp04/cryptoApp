@@ -112,7 +112,7 @@ public class BacktestingService implements ExecuteBacktestUseCase {
             BigDecimal risk, boolean guardarTrades)
             throws StrategyExecutionException {
         ConsoleLoader.getInstance().startDots("Serializando velas para el motor de backtest...");
-        Map<String, List<Map<String, Object>>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
+        Map<String, Map<String, Object>> velasMapeadas = transformarVelasParaPython(velasPorSimbolo);
         ConsoleLoader.getInstance().stopClear();
 
         Map<String, Object> payload = construirPayload(rutaEstrategia, timeframe, velasMapeadas, capitalAsignado, risk,
@@ -121,34 +121,47 @@ public class BacktestingService implements ExecuteBacktestUseCase {
         return invocarMotorPythonConRetries(payload);
     }
 
-    private Map<String, List<Map<String, Object>>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
-        Map<String, List<Map<String, Object>>> resultado = new LinkedHashMap<>();
-
-        velasPorSimbolo.forEach((symbol, listaVelas) -> {
-            List<Map<String, Object>> listaTransformada = listaVelas.stream()
-                    .map(this::convertirVelaAMapa) // Delegamos la conversión de 1 vela
-                    .toList();
-            resultado.put(symbol, listaTransformada);
-        });
-
+    private Map<String, Map<String, Object>> transformarVelasParaPython(Map<String, List<Vela>> velasPorSimbolo) {
+        Map<String, Map<String, Object>> resultado = new LinkedHashMap<>();
+        velasPorSimbolo.forEach((symbol, listaVelas) -> resultado.put(symbol, columnasDeVelas(listaVelas)));
         return resultado;
     }
 
-    Map<String, Object> convertirVelaAMapa(Vela v) {
-        // double y no BigDecimal: msgpack-jackson rechaza los BigDecimal que no caben exactos en un
-        // double (p. ej. 1234567890.12345678) y Python usa float64 de todos modos.
-        Map<String, Object> m = new HashMap<>();
-        m.put("timestamp", v.getOpenTime());
-        m.put("open", v.getOpen().doubleValue());
-        m.put("high", v.getHigh().doubleValue());
-        m.put("low", v.getLow().doubleValue());
-        m.put("close", v.getClose().doubleValue());
-        m.put("volume", v.getVolume().doubleValue());
-        return m;
+    /**
+     * Velas en formato columnar (un array por campo) en vez de un mapa por vela: con históricos largos
+     * evita decenas de millones de objetos intermedios, y pandas lo consume directo con DataFrame(dict).
+     * double y no BigDecimal: msgpack-jackson rechaza los BigDecimal que no caben exactos en un double
+     * (p. ej. 1234567890.12345678) y Python usa float64 de todos modos.
+     */
+    Map<String, Object> columnasDeVelas(List<Vela> velas) {
+        int n = velas.size();
+        long[] timestamp = new long[n];
+        double[] open = new double[n];
+        double[] high = new double[n];
+        double[] low = new double[n];
+        double[] close = new double[n];
+        double[] volume = new double[n];
+        for (int i = 0; i < n; i++) {
+            Vela v = velas.get(i);
+            timestamp[i] = v.getOpenTime();
+            open[i] = v.getOpen().doubleValue();
+            high[i] = v.getHigh().doubleValue();
+            low[i] = v.getLow().doubleValue();
+            close[i] = v.getClose().doubleValue();
+            volume[i] = v.getVolume().doubleValue();
+        }
+        Map<String, Object> columnas = new LinkedHashMap<>();
+        columnas.put("timestamp", timestamp);
+        columnas.put("open", open);
+        columnas.put("high", high);
+        columnas.put("low", low);
+        columnas.put("close", close);
+        columnas.put("volume", volume);
+        return columnas;
     }
 
     @SuppressWarnings("java:S107")
-    private Map<String, Object> construirPayload(String ruta, String tf, Map<String, List<Map<String, Object>>> velas,
+    private Map<String, Object> construirPayload(String ruta, String tf, Map<String, Map<String, Object>> velas,
             BigDecimal capitalAsignado, BigDecimal risk, String nombreEstrategia, String modelName,
             boolean guardarTrades) {
         Map<String, Object> payload = new HashMap<>();
