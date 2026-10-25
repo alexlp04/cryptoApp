@@ -147,8 +147,27 @@ def _tick(open_time: int, closed: bool, price: float = 100.0) -> str:
 
 
 class _BuyAlways(_Strategy):
+    """Alterna compra y venta en cada evaluación: cada evaluación emite una señal."""
+
+    def __init__(self):
+        super().__init__()
+        self.evaluaciones = 0
+
+    def populate_indicators(self, df):
+        self.evaluaciones += 1
+        return df
+
     def should_buy(self, row):
-        return True
+        return self.evaluaciones % 2 == 1
+
+    def should_sell(self, row):
+        return self.evaluaciones % 2 == 0
+
+    def get_stop_loss(self, entry_price, row):
+        return entry_price * 0.5
+
+    def get_take_profit(self, entry_price, row):
+        return entry_price * 2
 
 
 def _signals_for(monkeypatch, capsys, mode, messages):
@@ -182,7 +201,8 @@ def test_modo_open_evalua_la_primera_lectura_de_cada_vela_nueva(monkeypatch, cap
 
 
 def test_modo_both_evalua_cierre_y_apertura(monkeypatch, capsys):
-    assert _signals_for(monkeypatch, capsys, "both", _STREAM) == [1000, 2000, 3000]
+    # apertura de 2000 (SELL) y cierre de 2000 (BUY) son dos señales distintas de la misma vela
+    assert _signals_for(monkeypatch, capsys, "both", _STREAM) == [1000, 2000, 2000, 3000]
 
 
 def test_un_modo_desconocido_es_un_error():
@@ -219,3 +239,81 @@ def test_si_el_rest_falla_se_sigue_con_el_stream(monkeypatch):
         _run(monkeypatch, [_kline(1)], strategy, sleeps)
 
     assert strategy.calls == 3  # el stream se procesó igual en cada conexión
+
+
+# ── Stop y objetivo protegen la posición (gestión de riesgo) ────────────────
+
+def _signals(monkeypatch, capsys, strategy, messages, open_position=None):
+    monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: strategy)
+    monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
+
+    async def fake_sleep(delay):
+        raise _Stop
+
+    monkeypatch.setattr(engine_rt.asyncio, "sleep", fake_sleep)
+    with pytest.raises(_Stop):
+        asyncio.run(engine_rt.run_symbol("BTCUSDT", "1m", "x.py", 1000.0, 0.02, False,
+                                         open_position=open_position))
+    return [json.loads(ln.split("\t", 1)[1]) for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("SIGNAL")]
+
+
+class _SoloCompra(_Strategy):
+    def __init__(self, stop=95.0, tp=110.0):
+        super().__init__()
+        self._levels = (stop, tp)
+
+    def should_buy(self, row):
+        return True
+
+    def get_stop_loss(self, entry_price, row):
+        return self._levels[0]
+
+    def get_take_profit(self, entry_price, row):
+        return self._levels[1]
+
+
+def test_el_buy_lleva_stop_y_objetivo(monkeypatch, capsys):
+    senales = _signals(monkeypatch, capsys, _SoloCompra(), [_tick(1000, True, 100.0)])
+
+    assert senales[0]["action"] == "BUY"
+    assert senales[0]["stop_loss"] == "95.0" and senales[0]["take_profit"] == "110.0"
+
+
+def test_sin_stop_valido_no_se_compra(monkeypatch, capsys):
+    senales = _signals(monkeypatch, capsys, _SoloCompra(stop=120.0), [_tick(1000, True, 100.0)])
+
+    assert senales == []
+
+
+def test_si_el_precio_toca_el_stop_sale_aunque_la_vela_no_haya_cerrado(monkeypatch, capsys):
+    mensajes = [_tick(1000, True, 100.0), _tick(2000, False, 94.0)]
+
+    senales = _signals(monkeypatch, capsys, _SoloCompra(), mensajes)
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("BUY", "SIGNAL"), ("SELL", "STOP")]
+    assert senales[1]["price"] == "94.0"
+
+
+def test_el_objetivo_sale_a_su_precio(monkeypatch, capsys):
+    mensajes = [_tick(1000, True, 100.0), _tick(2000, False, 112.0)]
+
+    senales = _signals(monkeypatch, capsys, _SoloCompra(), mensajes)
+
+    assert (senales[1]["action"], senales[1]["reason"], senales[1]["price"]) == ("SELL", "TARGET", "110.0")
+
+
+def test_con_posicion_abierta_no_se_vuelve_a_comprar(monkeypatch, capsys):
+    mensajes = [_tick(1000, True, 100.0), _tick(2000, True, 101.0)]
+
+    senales = _signals(monkeypatch, capsys, _SoloCompra(), mensajes)
+
+    assert [s["action"] for s in senales] == ["BUY"]
+
+
+def test_una_posicion_abierta_al_arrancar_tambien_esta_protegida(monkeypatch, capsys):
+    posicion = {"stop": 95.0, "take_profit": 110.0}
+
+    senales = _signals(monkeypatch, capsys, _Strategy(), [_tick(1000, False, 90.0)], open_position=posicion)
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("SELL", "STOP")]

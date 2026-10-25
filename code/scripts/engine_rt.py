@@ -8,6 +8,7 @@ from decimal import Decimal
 import pandas as pd
 import websockets
 from ipc_protocol import read_request_payload
+from risk_management import PositionTracker, strategy_levels
 from shared_utils import (
     CODE_DIR,
     build_signal_line,
@@ -60,16 +61,26 @@ def _buffer_size(max_candles: int, warmup: int) -> int:
 def _build_rt_signal(
     symbol: str, action: str, timeframe: str,
     raw_close: str, row: "pd.Series", is_real: bool,
+    levels: tuple[float, float] | None = None, reason: str = "SIGNAL",
 ) -> dict:
-    """Construye el diccionario de señal para enviar a Java por stdout."""
-    return {
+    """Construye el diccionario de señal para enviar a Java por stdout.
+
+    Un BUY lleva el stop y el objetivo con los que Java dimensiona la posición; un SELL, el motivo
+    (SIGNAL de la estrategia, STOP u TARGET si saltó una orden protectora).
+    """
+    signal = {
         "symbol": symbol,
         "action": action,
         "timeframe": timeframe,
         "price": str(Decimal(raw_close)),
         "timestamp": int(row["timestamp"]),
         "is_real": is_real,
+        "reason": reason,
     }
+    if levels is not None:
+        signal["stop_loss"] = str(Decimal(str(levels[0])))
+        signal["take_profit"] = str(Decimal(str(levels[1])))
+    return signal
 
 
 async def run_symbol(
@@ -81,8 +92,13 @@ async def run_symbol(
     is_real: bool,
     max_candles: int = 100,
     signal_mode: str = "close",
+    open_position: dict | None = None,
 ) -> None:
-    """Procesa stream kline de un simbolo y emite senales al runtime Java."""
+    """Procesa stream kline de un simbolo y emite senales al runtime Java.
+
+    open_position: stop y objetivo de la posición que Java ya tiene abierta en este símbolo (al
+    reanudar tras un reinicio), para no dejarla sin protección.
+    """
     _validate_signal_mode(signal_mode)
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
@@ -98,6 +114,7 @@ async def run_symbol(
     max_retry_delay = 300
 
     consecutive_errors = 0
+    tracker = PositionTracker(open_position)
 
     while True:
         try:
@@ -132,6 +149,18 @@ async def run_symbol(
                         "volume": float(k["v"]),
                     })
 
+                    # Stop y objetivo se vigilan en cada mensaje, no solo al evaluar la estrategia.
+                    protective = tracker.protective_exit(float(raw_close))
+                    if protective is not None:
+                        exit_price, reason = protective
+                        tracker.close()
+                        signal = _build_rt_signal(symbol, "SELL", timeframe, str(exit_price), buffer[-1],
+                                                  is_real, reason=reason)
+                        last_signal = (int(buffer[-1]["timestamp"]), "SELL")
+                        print(build_signal_line(signal), flush=True)
+                        logger.info("SEÑAL ENVIADA: SELL (%s) para %s a precio %s", reason, symbol, exit_price)
+                        continue
+
                     if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
                         continue
 
@@ -155,10 +184,28 @@ async def run_symbol(
                             raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
                         continue
 
+                    levels = None
+                    if action == "BUY":
+                        if tracker.is_open:
+                            action = None  # ya hay posición: no se reabre ni se cambian sus niveles
+                        else:
+                            levels = strategy_levels(strategy, float(raw_close), row)
+                            if levels is None:
+                                logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
+                                               "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
+                                               symbol)
+                                action = None
+                    elif action == "SELL" and not tracker.is_open:
+                        action = None  # nada que vender
+
                     # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
                     if action and (int(row["timestamp"]), action) != last_signal:
                         last_signal = (int(row["timestamp"]), action)
-                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
+                        if levels is not None:
+                            tracker.open(*levels)
+                        else:
+                            tracker.close()
+                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real, levels)
                         print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
@@ -188,6 +235,7 @@ def main() -> None:
             risk_per_trade=payload.get("risk_per_trade", 0.02),
             is_real=payload.get("is_real", False),
             signal_mode=payload.get("signal_mode", "close"),
+            open_positions=payload.get("open_positions") or {},
         ))
     except Exception as e:
         logger.critical("Fallo catastrofico en el motor: %s", str(e), exc_info=True)
@@ -201,6 +249,7 @@ async def run_all(
     risk_per_trade: float,
     is_real: bool,
     signal_mode: str = "close",
+    open_positions: dict | None = None,
 ) -> None:
     """Lanza un task por simbolo y mantiene el proceso vivo mientras haya streams."""
     tasks = [
@@ -212,6 +261,7 @@ async def run_all(
             risk_per_trade,
             is_real,
             signal_mode=signal_mode,
+            open_position=(open_positions or {}).get(sym),
         )
         for sym in symbols
     ]

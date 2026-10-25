@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import websockets
 from ipc_protocol import read_request_payload
+from risk_management import PositionTracker, strategy_levels
 from shared_utils import (
     CODE_DIR,
     PROJECT_ROOT,
@@ -336,8 +337,12 @@ def _predict_deep_learning(
 def _emit_signal(
     symbol: str, action: str, timeframe: str, new_row: dict,
     model_name: str, is_real: bool,
+    levels: tuple[float, float] | None = None, reason: str = "SIGNAL",
 ) -> None:
-    """Formatea y emite la señal de trading por stdout para que Java la consuma."""
+    """Formatea y emite la señal de trading por stdout para que Java la consuma.
+
+    Un BUY lleva stop y objetivo (con ellos dimensiona Java); un SELL, el motivo (SIGNAL, STOP, TARGET).
+    """
     signal = {
         "symbol": symbol,
         "action": action,
@@ -346,7 +351,11 @@ def _emit_signal(
         "timestamp": int(new_row["timestamp"]),
         "is_real": is_real,
         "source": f"AI_{model_name.upper()}",
+        "reason": reason,
     }
+    if levels is not None:
+        signal["stop_loss"] = levels[0]
+        signal["take_profit"] = levels[1]
     print(build_signal_line(signal), flush=True)
     logger.info("SEÑAL %s ENVIADA: %s para %s a %s", model_name.upper(), action, symbol, signal["price"])
 
@@ -390,6 +399,7 @@ async def run_symbol(
     is_real: bool,
     max_candles: int = 100,
     high_activity_test_mode: bool = False,
+    open_position: dict | None = None,
 ) -> None:
     clean_symbol = symbol.lower().replace("/", "")
     url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
@@ -405,6 +415,7 @@ async def run_symbol(
     consecutive_failures = 0
     retry_delay = 5
     max_retry_delay = 300
+    tracker = PositionTracker(open_position)
 
     while True:
         try:
@@ -418,6 +429,16 @@ async def run_symbol(
                         continue  # mensajes que no son kline
                     retry_delay = 5  # el backoff solo se reinicia con datos válidos
                     is_candle_closed = k["x"]
+
+                    # Stop y objetivo se vigilan en cada mensaje, también con la vela sin cerrar.
+                    protective = tracker.protective_exit(float(k["c"]))
+                    if protective is not None:
+                        exit_price, reason = protective
+                        tracker.close()
+                        _emit_signal(symbol, "SELL", timeframe,
+                                     {"close": exit_price, "timestamp": int(k["t"])},
+                                     model_name, is_real, reason=reason)
+                        continue
 
                     if not is_candle_closed and not high_activity_test_mode:
                         continue
@@ -458,8 +479,26 @@ async def run_symbol(
                             raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
                         continue
 
+                    levels = None
+                    if action == "BUY":
+                        if tracker.is_open:
+                            action = None  # ya hay posición: no se reabre ni se cambian sus niveles
+                        else:
+                            levels = strategy_levels(strategy, new_row["close"], new_row)
+                            if levels is None:
+                                logger.warning("BUY de %s descartado: la estrategia no dio un stop válido "
+                                               "(por debajo de la entrada); sin stop no se puede acotar el riesgo",
+                                               symbol)
+                                action = None
+                    elif action == "SELL" and not tracker.is_open:
+                        action = None  # nada que vender
+
                     if action:
-                        _emit_signal(symbol, action, timeframe, new_row, model_name, is_real)
+                        if levels is not None:
+                            tracker.open(*levels)
+                        else:
+                            tracker.close()
+                        _emit_signal(symbol, action, timeframe, new_row, model_name, is_real, levels)
 
             logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
         except ModelFailure:
@@ -494,6 +533,7 @@ def main() -> None:
             risk_per_trade=payload.get("risk_per_trade", 0.02),
             is_real=payload.get("is_real", False),
             high_activity_test_mode=high_activity_test_mode,
+            open_positions=payload.get("open_positions") or {},
         ))
     except Exception as e:
         logger.critical("Fallo catastrofico en el motor IA: %s", str(e), exc_info=True)
@@ -508,10 +548,12 @@ async def run_all(
     risk_per_trade: float,
     is_real: bool,
     high_activity_test_mode: bool = False,
+    open_positions: dict | None = None,
 ) -> None:
     tasks = [
         run_symbol(sym, timeframe, strategy_path, model_name, capital, risk_per_trade, is_real,
-                   high_activity_test_mode=high_activity_test_mode)
+                   high_activity_test_mode=high_activity_test_mode,
+                   open_position=(open_positions or {}).get(sym))
         for sym in symbols
     ]
     # Heartbeat de liveness: mantiene vivo el canal RT aunque no haya señales.

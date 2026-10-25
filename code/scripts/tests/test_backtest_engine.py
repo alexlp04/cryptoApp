@@ -10,7 +10,6 @@ from backtest_engine import (
     _calculate_backtest_stats,
     _close_long,
     _generate_empty_stats,
-    _open_long,
     crear_carpeta_estrategia,
     guardar_trade_a_csv,
     run_backtest,
@@ -37,6 +36,12 @@ class _NeverTradeStrategy:
     def should_close(self, row: dict, entry_price: float) -> bool:
         return False
 
+    def get_stop_loss(self, entry_price: float, row: dict) -> float:
+        return entry_price * 0.5
+
+    def get_take_profit(self, entry_price: float, row: dict) -> float:
+        return entry_price * 10
+
 
 class _BuyOnceStrategy:
     """Stub: compra en la primera vela y vende en la segunda."""
@@ -61,6 +66,12 @@ class _BuyOnceStrategy:
     def should_close(self, row: dict, entry_price: float) -> bool:
         return False
 
+    def get_stop_loss(self, entry_price: float, row: dict) -> float:
+        return entry_price * 0.5
+
+    def get_take_profit(self, entry_price: float, row: dict) -> float:
+        return entry_price * 10
+
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -80,37 +91,6 @@ def _df_mock(n: int = 50) -> pd.DataFrame:
         "close":  close,
         "volume": rng.uniform(100, 500, n),
     })
-
-
-# ─── Tests: _open_long ───────────────────────────────────────────────────────
-
-class TestOpenLong:
-
-    def test_should_calculate_position_size_correctly(self):
-        # Given: 10 000 capital, 2 % riesgo, precio 50 000
-        # When
-        size = _open_long(10_000.0, 0.02, 50_000.0)
-        # Then: 10000 * 0.02 / 50000 = 0.004
-        assert abs(size - 0.004) < 1e-9
-
-    def test_should_scale_linearly_with_capital(self):
-        # Given
-        size_small = _open_long(1_000.0, 0.02, 1_000.0)
-        size_large = _open_long(10_000.0, 0.02, 1_000.0)
-        # Then
-        assert abs(size_large - size_small * 10) < 1e-9
-
-    def test_should_scale_inversely_with_price(self):
-        # Given: mismo capital y riesgo, precios distintos
-        size_cheap = _open_long(1_000.0, 0.02, 100.0)
-        size_expensive = _open_long(1_000.0, 0.02, 1_000.0)
-        # Then
-        assert size_cheap > size_expensive
-
-    def test_should_scale_linearly_with_risk(self):
-        size_low = _open_long(10_000.0, 0.01, 1_000.0)
-        size_high = _open_long(10_000.0, 0.02, 1_000.0)
-        assert abs(size_high - size_low * 2) < 1e-9
 
 
 # ─── Tests: _close_long ──────────────────────────────────────────────────────
@@ -479,9 +459,9 @@ def test_el_drawdown_incluye_la_perdida_no_realizada():
 
     assert stats["retorno_total"] > 0
     assert stats["max_drawdown"] > 0
-    # tamaño 0.5 (5000 * 1 % / 100): pico 5010 en el 120, valle 4998 en el 96 → 12 / 5010
-    assert stats["max_drawdown"] == pytest.approx(12.0)
-    assert stats["max_drawdown_pct"] == pytest.approx(12 / 5010 * 100)
+    # tamaño 1 (arriesga 5000 * 1 % = 50 con el stop a 50 de distancia): pico 5020 en el 120, valle 4996 en el 96
+    assert stats["max_drawdown"] == pytest.approx(24.0)
+    assert stats["max_drawdown_pct"] == pytest.approx(24 / 5020 * 100)
 
 
 def test_profit_factor_sin_perdidas_usa_el_tope_y_no_la_ganancia_absoluta():
@@ -495,8 +475,8 @@ def test_abs_drawdown_es_capital_inicial_menos_el_minimo():
     df = _flat_df([100.0, 50.0, 100.0])
     stats = run_backtest_with_predictions(_NeverTradeStrategy(), df, np.array([1, 1, 0]), "X", fee_rate=0, slippage=0)
 
-    # 5000 * 0.01 de riesgo = tamaño de 0.5; caída de 50 → -25 sobre 5000 de capital
-    assert stats["abs_drawdown"] == pytest.approx(25.0)
+    # salta el stop (50) y se pierde exactamente lo arriesgado: 1 % de 5000
+    assert stats["abs_drawdown"] == pytest.approx(50.0)
 
 
 def test_las_columnas_con_nombre_no_valido_llegan_intactas_a_la_estrategia():
