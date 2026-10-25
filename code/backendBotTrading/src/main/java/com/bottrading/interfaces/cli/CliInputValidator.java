@@ -47,6 +47,23 @@ public final class CliInputValidator {
         return true;
     }
 
+    /** train y optimize trabajan con una sola moneda: más de una se rechaza en vez de ignorar el resto. */
+    public static boolean requireSingleCoin(CommandParser args, String comando, CliCommandContext context) {
+        String error = errorMonedaUnica(args.getCoins(), comando);
+        if (error != null) {
+            context.println().accept(error);
+        }
+        return error == null;
+    }
+
+    static String errorMonedaUnica(java.util.List<String> coins, String comando) {
+        if (coins.size() <= 1) {
+            return null;
+        }
+        return comando + " trabaja con una sola moneda y has indicado " + coins.size() + " (" + String.join(", ", coins)
+                + "). Lánzalo una vez por moneda.";
+    }
+
     public static boolean requireTimeframeAndCoins(CommandParser args, String usage, CliCommandContext context) {
         if (args.getTimeframe() == null || args.getCoins().isEmpty()) {
             context.println().accept(usage);
