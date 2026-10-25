@@ -1,6 +1,6 @@
 name: CI
 
-# El proyecto tiene 347 tests Java y 184 Python, más PMD, SpotBugs, ruff y mypy.
+# El proyecto tiene 481 tests Java y 285 Python, más PMD, SpotBugs, ruff y mypy.
 # Hasta ahora nada de eso se ejecutaba automáticamente: Java pasaba sus puertas solo
 # porque Maven las obliga en `verify`, y Python acumulaba deuda precisamente porque
 # nadie la obligaba. Este workflow cierra esa asimetría.
@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
   pull_request:
+
+# Mínimo privilegio: ningún job necesita escribir en el repositorio.
+permissions:
+  contents: read
 
 # Un push nuevo sobre la misma rama cancela el run anterior: no tiene sentido gastar
 # minutos validando un commit ya superado.
