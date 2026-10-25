@@ -143,3 +143,22 @@ class TestCalcularIndicadores:
         result_small = calcular_indicadores(_df_close(40))
         result_large = calcular_indicadores(_df_close(80))
         assert len(result_large) > len(result_small)
+
+
+def test_un_calentamiento_de_400_velas_converge_en_la_frontera_de_lote():
+    # Java procesa lotes con solape (IndicatorsService.OVERLAP): EMA/MACD/RSI son recursivos y con
+    # 50 velas el MACD_signal diferia ~4 % de la serie completa (#89). Con 400 converge.
+    rng = np.random.default_rng(3)
+    close = 100 + np.cumsum(rng.normal(0, 1, 5_000))
+    full = compute_basic_indicators(pd.DataFrame({"close": close}))
+    inicio_lote = 3_000
+
+    def error_relativo(overlap: int) -> float:
+        lote = compute_basic_indicators(pd.DataFrame({"close": close[inicio_lote - overlap:]}))
+        guardado = lote.iloc[overlap:].reset_index(drop=True)
+        referencia = full.iloc[inicio_lote:].reset_index(drop=True)
+        return float(((guardado["MACD_signal"] - referencia["MACD_signal"]).abs()
+                      / referencia["MACD_signal"].abs().clip(lower=1e-9)).iloc[0])
+
+    assert error_relativo(400) < 1e-6
+    assert error_relativo(400) < error_relativo(50)

@@ -50,7 +50,9 @@ public class IndicatorsService implements CalculateIndicatorsUseCase {
     private final PythonBridgeFacade pythonBridgeFacade;
 
     private static final int BATCH_SIZE = 100000;
-    private static final int OVERLAP = 50;
+    // Calentamiento de cada lote: EMA, MACD y RSI son recursivos y 50 velas no convergían (error ~4 % en
+    // MACD_signal en la frontera). 400 >= 10 x (26 + 9), la ventana recursiva mayor (MACD lento + señal).
+    static final int OVERLAP = 400;
     private static final int MAX_RETRIES = 3;
     private static final int JDBC_INSERT_BATCH_SIZE = 5000;
 

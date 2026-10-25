@@ -3,6 +3,8 @@ package com.bottrading.interfaces.cli;
 import com.bottrading.market.domain.Timeframe;
 import com.bottrading.shared.utils.CommandParser;
 import java.math.BigDecimal;
+import java.util.stream.Collectors;
+import java.util.Arrays;
 
 /**
  * Shared validation helpers for CLI commands.
@@ -50,12 +52,25 @@ public final class CliInputValidator {
             context.println().accept(usage);
             return false;
         }
+        return timeframeSoportado(args.getTimeframe(), context);
+    }
+
+    /** Rechaza en la frontera un timeframe que Java no sabe medir (Python acepta más: 30m, 2h, 1w...). */
+    static boolean timeframeSoportado(String timeframe, CliCommandContext context) {
+        if (Timeframe.buscar(timeframe).isEmpty()) {
+            context.println().accept("Timeframe no soportado: '" + timeframe + "'. Usa uno de: "
+                    + Arrays.stream(Timeframe.values()).map(Timeframe::codigo).collect(Collectors.joining(", ")));
+            return false;
+        }
         return true;
     }
 
     public static boolean requireStrategyTimeframeAndCoins(CommandParser args, String usage, CliCommandContext context) {
         if (args.getEstrategia() == null || args.getTimeframe() == null || args.getCoins().isEmpty()) {
             context.println().accept(usage);
+            return false;
+        }
+        if (!timeframeSoportado(args.getTimeframe(), context)) {
             return false;
         }
         return true;
