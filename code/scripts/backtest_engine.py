@@ -423,6 +423,8 @@ def run_backtest_with_predictions(
     fee_rate: float = DEFAULT_FEE_RATE,
     slippage: float = DEFAULT_SLIPPAGE,
     execution: str = "market",
+    hold_on_neutral: bool = False,
+    on_trade: Callable[[str, float, int, float | None, float | None], None] | None = None,
 ) -> dict[str, Any]:
     """
     Simula trades usando predicciones de un modelo ML sobre un DataFrame ya
@@ -433,6 +435,8 @@ def run_backtest_with_predictions(
       - NO escribe trades a CSV.
       - Usa predictions[i] == 1 (etiqueta original) como señal de compra.
       - Cierra posición si predictions[i] != 1 O si strategy.should_close() es True.
+        Con hold_on_neutral (modelos de 3 clases) la predicción neutral no cierra: solo -1, como en el motor RT
+        con IA (engine_ai_rt: BUY con 1, SELL con -1, sin acción con 0). Los cortos son el espejo.
 
     Parámetros
     ----------
@@ -465,12 +469,14 @@ def run_backtest_with_predictions(
         df = df.iloc[:min_len].copy()
 
     preds = np.asarray(predictions).astype(int)
+    long_exit = (lambda i: preds[i] == -1) if hold_on_neutral else (lambda i: preds[i] != 1)
+    short_exit = (lambda i: preds[i] == 1) if hold_on_neutral else (lambda i: preds[i] != -1)
     _, stats = _simulate(
         strategy, df, symbol,
         entry_signal=lambda i, row: preds[i] == 1,
-        exit_signal=lambda i, row, entry: bool(preds[i] != 1 or strategy.should_close(row(), entry)),
-        fee_rate=fee_rate, slippage=slippage, execution=execution,
-        **_short_signals(strategy, lambda i, row: preds[i] == -1, lambda i, row, entry: bool(preds[i] != -1)),
+        exit_signal=lambda i, row, entry: bool(long_exit(i) or strategy.should_close(row(), entry)),
+        fee_rate=fee_rate, slippage=slippage, execution=execution, on_trade=on_trade,
+        **_short_signals(strategy, lambda i, row: preds[i] == -1, lambda i, row, entry: bool(short_exit(i))),
     )
     return stats
 
