@@ -27,6 +27,19 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 
+def _buffer_size(max_candles: int, warmup: int) -> int:
+    """Tamaño del buffer: nunca menor que el calentamiento que exige la estrategia."""
+    return max(max_candles, warmup)
+
+
+def _upsert_candle(buffer: deque, candle: dict) -> None:
+    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden."""
+    if buffer and buffer[-1]["timestamp"] == candle["timestamp"]:
+        buffer[-1] = candle
+    else:
+        buffer.append(candle)
+
+
 def _build_rt_signal(
     symbol: str, action: str, timeframe: str,
     raw_close: str, row: "pd.Series", is_real: bool,
@@ -58,7 +71,9 @@ async def run_symbol(
 
     logger.info("Iniciando stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
-    buffer: deque = deque(maxlen=max_candles)
+    min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
+    buffer: deque = deque(maxlen=_buffer_size(max_candles, min_candles))
+    last_signal: tuple[int, str] | None = None
 
     retry_delay = 5
     max_retry_delay = 300
@@ -82,7 +97,7 @@ async def run_symbol(
                     # con precisión total (Decimal) sin depender del redondeo de float64.
                     raw_close: str = k["c"]
 
-                    buffer.append({
+                    _upsert_candle(buffer, {
                         "timestamp": int(k["t"]),
                         "open": float(k["o"]),
                         "high": float(k["h"]),
@@ -91,7 +106,6 @@ async def run_symbol(
                         "volume": float(k["v"]),
                     })
 
-                    min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
                     if len(buffer) < min_candles:
                         continue
 
@@ -105,7 +119,9 @@ async def run_symbol(
                     elif strategy.should_sell(row):
                         action = "SELL"
 
-                    if action:
+                    # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
+                    if action and (int(row["timestamp"]), action) != last_signal:
+                        last_signal = (int(row["timestamp"]), action)
                         signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real)
                         print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
