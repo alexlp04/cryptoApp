@@ -13,6 +13,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -55,35 +56,55 @@ _GPU_RUNTIME_DISABLED_MODELS: set[str] = set()
 # SETUP DE LOGGING UNIFICADO
 # =============================================================================
 
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUPS = 3
+_HANDLER_TAG = "_cryptoapp_engine_handler"
+
+
 def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
     """
     Configura logging dual (archivo + stream) para un engine y devuelve su logger.
-    Escribe siempre a logs/{engine_name}.log.
+    Escribe a logs/{engine_name}.log con rotación (5 MB x 3).
+
+    Idempotente: una segunda llamada en el mismo proceso (p. ej. engine_backtest importa
+    engine_ai_rt) sustituye los handlers anteriores en vez de acumularlos, así que cada línea
+    sale una sola vez. Si logs/ no es escribible se degrada a solo stream en lugar de morir
+    al importar el módulo.
     """
     if stream is None:
         stream = sys.stderr
 
-    log_dir = os.path.join(PROJECT_ROOT, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    fmt_file = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    # %(process)d: varios procesos del mismo engine (una instancia de estrategia cada uno) comparten fichero
+    fmt_file = logging.Formatter("%(asctime)s [%(levelname)s] [pid %(process)d] %(message)s")
     fmt_stream = logging.Formatter("[%(levelname)s] %(message)s")
 
-    file_handler = logging.FileHandler(
-        os.path.join(log_dir, f"{engine_name}.log"), encoding="utf-8"
-    )
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(fmt_file)
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if getattr(h, _HANDLER_TAG, False)]:
+        root.removeHandler(handler)
+        handler.close()
+    root.setLevel(logging.INFO)  # siempre: si una librería hizo basicConfig el nivel quedaba en WARNING
+
+    handlers: list[logging.Handler] = []
+    try:
+        log_dir = os.path.join(PROJECT_ROOT, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir, f"{engine_name}.log"),
+            maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8",
+        )
+        file_handler.setFormatter(fmt_file)
+        handlers.append(file_handler)
+    except OSError as exc:
+        print(f"[WARNING] Sin log en fichero ({exc}); solo stderr", file=sys.stderr)
 
     stream_handler = logging.StreamHandler(stream)
-    stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(fmt_stream)
+    handlers.append(stream_handler)
 
-    root = logging.getLogger()
-    if not root.handlers:
-        root.setLevel(logging.INFO)
-    root.addHandler(file_handler)
-    root.addHandler(stream_handler)
+    for handler in handlers:
+        handler.setLevel(logging.INFO)
+        setattr(handler, _HANDLER_TAG, True)
+        root.addHandler(handler)
 
     return logging.getLogger(engine_name)
 
@@ -381,20 +402,35 @@ def load_strategy_by_path(
     except Exception as exc:
         raise ValueError(f"No se pudo importar BaseStrategy: {exc}") from exc
 
-    spec = importlib.util.spec_from_file_location("user_strategy", path)
+    module_name = f"user_strategy_{os.path.splitext(os.path.basename(path))[0]}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"No se pudo cargar el fichero de estrategia: {path}")
 
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Registrado antes de ejecutarlo: pickle, dataclasses y typing resuelven la clase por su módulo.
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
 
-    for obj in module.__dict__.values():
-        if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-            return obj(capital=capital, risk_per_trade=risk_per_trade)
-
-    raise ValueError(
-        f"No se encontró ninguna clase válida (subclase de BaseStrategy) en: {path}"
-    )
+    # Solo clases DEFINIDAS en el fichero y concretas: la primera subclase del módulo podía ser una
+    # estrategia importada, una base intermedia o una clase abstracta.
+    candidates = [
+        obj for obj in module.__dict__.values()
+        if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy
+        and obj.__module__ == module.__name__ and not inspect.isabstract(obj)
+    ]
+    if len(candidates) > 1:
+        names = ", ".join(c.__name__ for c in candidates)
+        raise ValueError(f"Hay varias estrategias concretas en {path}: {names}. Deja una por fichero.")
+    if not candidates:
+        raise ValueError(
+            f"No se encontró ninguna clase válida (subclase concreta de BaseStrategy) en: {path}"
+        )
+    return candidates[0](capital=capital, risk_per_trade=risk_per_trade)
 
 
 # =============================================================================
