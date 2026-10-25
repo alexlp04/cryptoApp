@@ -27,6 +27,13 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 
+MAX_STRATEGY_ERRORS = 5
+
+
+class StrategyFailure(RuntimeError):
+    """La estrategia falla de forma persistente: no tiene sentido seguir reconectando."""
+
+
 def _buffer_size(max_candles: int, warmup: int) -> int:
     """Tamaño del buffer: nunca menor que el calentamiento que exige la estrategia."""
     return max(max_candles, warmup)
@@ -78,14 +85,17 @@ async def run_symbol(
     retry_delay = 5
     max_retry_delay = 300
 
+    consecutive_errors = 0
+
     while True:
         try:
             async with websockets.connect(url) as ws:
                 logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                retry_delay = 5  # reset on successful connection
                 async for msg in ws:
-                    data = json.loads(msg)
-                    k = data["k"]
+                    k = json.loads(msg).get("k")
+                    if not k:
+                        continue  # mensajes que no son kline (errores, pings de aplicación)
+                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
 
                     # En runtime suele interesar reaccionar antes del cierre de vela.
                     # Si se desea comportamiento clásico de cierre, activar only_closed_candles.
@@ -109,15 +119,25 @@ async def run_symbol(
                     if len(buffer) < min_candles:
                         continue
 
-                    df = pd.DataFrame(list(buffer))
-                    df = strategy.populate_indicators(df)
-                    row = df.iloc[-1]
+                    try:
+                        df = pd.DataFrame(list(buffer))
+                        df = strategy.populate_indicators(df)
+                        row = df.iloc[-1]
 
-                    action = None
-                    if strategy.should_buy(row):
-                        action = "BUY"
-                    elif strategy.should_sell(row):
-                        action = "SELL"
+                        action = None
+                        if strategy.should_buy(row):
+                            action = "BUY"
+                        elif strategy.should_sell(row):
+                            action = "SELL"
+                        consecutive_errors = 0
+                    except Exception:
+                        # Un bug de la estrategia no es una caída de red: reconectar no lo arregla.
+                        consecutive_errors += 1
+                        logger.exception("Error de estrategia en %s (%d/%d)",
+                                         symbol, consecutive_errors, MAX_STRATEGY_ERRORS)
+                        if consecutive_errors >= MAX_STRATEGY_ERRORS:
+                            raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
+                        continue
 
                     # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
                     if action and (int(row["timestamp"]), action) != last_signal:
@@ -126,10 +146,16 @@ async def run_symbol(
                         print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 
+            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+        except StrategyFailure:
+            raise  # el proceso debe terminar con código != 0 para que Java lo supervise
         except Exception:
             logger.exception("Error en loop de %s", symbol)
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
+
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
+
+
 
 def main() -> None:
     """Punto de entrada: recibe configuracion IPC y arranca tareas async."""
