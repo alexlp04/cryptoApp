@@ -115,7 +115,7 @@ class StrategyLifecycleApplicationServiceTest {
 
             InstanciaEstrategia result = lifecycleService.crearYActivarEstrategia(
                     "RSISMAStrategy", "modelo", "1h", List.of("BTCUSDT"),
-                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"));
+                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"), 5L);
 
             verify(instanciaRepo, times(1)).save(any(InstanciaEstrategia.class));
             verify(accountingService, times(1)).activateStrategy(eq(1L), eq(42L), any(BigDecimal.class));
@@ -130,7 +130,7 @@ class StrategyLifecycleApplicationServiceTest {
 
             InstanciaEstrategia result = lifecycleService.crearYActivarEstrategia(
                     "RSISMAStrategy", "modelo", "1h", List.of("BTCUSDT"),
-                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"));
+                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"), 5L);
 
             assertThat(result.getId(), is(42L));
         }
@@ -151,7 +151,7 @@ class StrategyLifecycleApplicationServiceTest {
 
             lifecycleService.iniciarTradeRT(
                     "RSISMAStrategy", "modelo", "1h", List.of("BTCUSDT"),
-                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"));
+                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"), 5L);
 
             verify(instanciaRepo, times(1)).save(any(InstanciaEstrategia.class));
             verify(accountingService, times(1)).activateStrategy(anyLong(), anyLong(), any());
@@ -168,7 +168,7 @@ class StrategyLifecycleApplicationServiceTest {
 
             lifecycleService.iniciarTradeRT(
                     "RSISMAStrategy", "modelo", "1h", coins,
-                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"));
+                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"), 5L);
 
             verify(runtimeCoordinator, times(1)).ejecutarTradeEnTiempoReal(
                     any(InstanciaEstrategia.class), eq(coins));
@@ -469,7 +469,7 @@ class StrategyLifecycleApplicationServiceTest {
 
             org.junit.jupiter.api.Assertions.assertThrows(com.bottrading.shared.exceptions.ValidationException.class,
                     () -> lifecycleService.iniciarTradeRT("S", "m", "1h", List.of("BTCUSDT"), false, 1L,
-                            new BigDecimal("0.01"), new BigDecimal("100")));
+                            new BigDecimal("0.01"), new BigDecimal("100"), 5L));
 
             verify(tx).execute(any()); // creación y activación van en una sola transacción
             verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
@@ -585,7 +585,7 @@ class StrategyLifecycleApplicationServiceTest {
         void invalid_signal_mode_is_rejected_before_anything_happens() {
             org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                     () -> lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), false, 1L,
-                            new BigDecimal("0.01"), new BigDecimal("100"), "nunca"));
+                            new BigDecimal("0.01"), new BigDecimal("100"), "nunca", 5L));
 
             verify(instanciaRepo, never()).save(any());
             verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
@@ -598,11 +598,90 @@ class StrategyLifecycleApplicationServiceTest {
                     .when(accountingService).activateStrategy(anyLong(), anyLong(), any());
 
             lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), false, 1L,
-                    new BigDecimal("0.01"), new BigDecimal("100"), "open");
+                    new BigDecimal("0.01"), new BigDecimal("100"), "open", 5L);
 
             org.mockito.ArgumentCaptor<InstanciaEstrategia> captor = org.mockito.ArgumentCaptor.forClass(InstanciaEstrategia.class);
             verify(runtimeCoordinator).ejecutarTradeEnTiempoReal(captor.capture(), any());
             org.junit.jupiter.api.Assertions.assertEquals("open", captor.getValue().getSignalMode());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DUEÑO DE LA ESTRATEGIA (#112)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("Dueño de la estrategia (#112)")
+    class DuenoTests {
+
+        private InstanciaEstrategia deUsuario(Long id, Long usuarioId) {
+            InstanciaEstrategia i = crearInstanciaTest(id, EstadoEstrategia.ACTIVA);
+            i.setUsuarioId(usuarioId);
+            return i;
+        }
+
+        @Test
+        @DisplayName("✓ La estrategia nueva queda a nombre del usuario que la crea")
+        void new_strategy_belongs_to_creator() {
+            doReturn(crearInstanciaTest(42L, EstadoEstrategia.CREADA))
+                    .when(accountingService).activateStrategy(anyLong(), anyLong(), any());
+
+            lifecycleService.iniciarTradeRT("S", null, "1h", List.of("BTCUSDT"), false, 1L,
+                    new BigDecimal("0.01"), new BigDecimal("100"), 5L);
+
+            org.mockito.ArgumentCaptor<InstanciaEstrategia> captor =
+                    org.mockito.ArgumentCaptor.forClass(InstanciaEstrategia.class);
+            verify(runtimeCoordinator).ejecutarTradeEnTiempoReal(captor.capture(), any());
+            org.junit.jupiter.api.Assertions.assertEquals(5L, captor.getValue().getUsuarioId());
+        }
+
+        @Test
+        @DisplayName("✓ Otro usuario no puede parar, reanudar ni liquidar la estrategia")
+        void other_user_cannot_touch_it() {
+            doReturn(Optional.of(deUsuario(7L, 5L))).when(instanciaRepo).findById(7L);
+
+            for (org.junit.jupiter.api.function.Executable op : new org.junit.jupiter.api.function.Executable[] {
+                    () -> lifecycleService.detenerEstrategia(7L, 6L),
+                    () -> lifecycleService.iniciarEstrategiaDetenida(7L, 6L),
+                    () -> lifecycleService.terminarEstrategia(7L, 6L)}) {
+                org.junit.jupiter.api.Assertions.assertThrows(
+                        com.bottrading.shared.exceptions.ValidationException.class, op);
+            }
+            verify(accountingService, never()).closeStrategy(anyLong(), anyLong());
+            verify(runtimeCoordinator, never()).detenerEstrategia(anyLong());
+        }
+
+        @Test
+        @DisplayName("✓ Una estrategia que no existe da el mismo error que una ajena")
+        void missing_strategy_looks_like_foreign_one() {
+            doReturn(Optional.empty()).when(instanciaRepo).findById(99L);
+
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    com.bottrading.shared.exceptions.ValidationException.class,
+                    () -> lifecycleService.terminarEstrategia(99L, 5L));
+        }
+
+        @Test
+        @DisplayName("✓ El dueño sí puede pararla")
+        void owner_can_stop_it() {
+            doReturn(Optional.of(deUsuario(7L, 5L))).when(instanciaRepo).findById(7L);
+            doReturn(Optional.of(deUsuario(7L, 5L))).when(instanciaRepo).findByIdWithLock(7L);
+
+            lifecycleService.detenerEstrategia(7L, 5L);
+
+            verify(runtimeCoordinator).detenerEstrategia(7L);
+        }
+
+        @Test
+        @DisplayName("✓ stop -all solo para las estrategias activas del usuario")
+        void stop_all_only_touches_own_strategies() {
+            doReturn(List.of(deUsuario(7L, 5L)))
+                    .when(instanciaRepo).findByUsuarioIdAndEstado(5L, EstadoEstrategia.ACTIVA);
+            doReturn(Optional.of(deUsuario(7L, 5L))).when(instanciaRepo).findByIdWithLock(7L);
+
+            lifecycleService.detenerTodas(5L);
+
+            verify(runtimeCoordinator).detenerEstrategia(7L);
+            verify(runtimeCoordinator, never()).detenerEstrategia(8L);
         }
     }
 }

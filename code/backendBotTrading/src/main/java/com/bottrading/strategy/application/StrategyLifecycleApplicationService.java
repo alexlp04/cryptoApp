@@ -14,6 +14,7 @@ import com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase;
 import com.bottrading.strategy.application.port.out.InstanciaEstrategiaRepositoryPort;
 import com.bottrading.strategy.domain.EstadoEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategia;
+import com.bottrading.shared.exceptions.ValidationException;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.infrastructure.bridge.StrategyRuntimeCoordinator;
 
@@ -59,18 +60,20 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
     @SuppressWarnings("java:S107")
     public InstanciaEstrategia crearYActivarEstrategia(
             String nombreEstra, String nombreModelo, String tf, List<String> coins,
-            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, Long usuarioId) {
         return crearYActivarEstrategia(nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital,
-                InstanciaEstrategia.MODO_SENAL_CIERRE);
+                InstanciaEstrategia.MODO_SENAL_CIERRE, usuarioId);
     }
 
     @SuppressWarnings("java:S107")
     public InstanciaEstrategia crearYActivarEstrategia(
             String nombreEstra, String nombreModelo, String tf, List<String> coins,
-            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode) {
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode,
+            Long usuarioId) {
 
         InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
+        instancia.setUsuarioId(usuarioId);
         instancia.setSignalMode(signalMode); // valida el valor antes de persistir nada
 
         instancia = instanciaRepo.save(Objects.requireNonNull(instancia, "Instancia no puede ser null"));
@@ -88,10 +91,11 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
     @SuppressWarnings("java:S107")
     @Override
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
-            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode) {
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode,
+            Long usuarioId) {
 
         InstanciaEstrategia instancia = tx.execute(status -> crearYActivarEstrategia(
-                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital, signalMode));
+                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital, signalMode, usuarioId));
 
         lanzarRuntime(Objects.requireNonNull(instancia), coins);
     }
@@ -244,6 +248,64 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
                 log.warn("Estrategia {} estaba ACTIVA sin proceso: pasa a DETENIDA", i.getId());
             }
         }
+    }
+
+    @Override
+    public void iniciarEstrategiaDetenida(Long instanciaId, Long usuarioId) {
+        exigirDueno(instanciaId, usuarioId);
+        iniciarEstrategiaDetenida(instanciaId);
+    }
+
+    @Override
+    public void iniciarTodasDetenidas(Long usuarioId) {
+        List<InstanciaEstrategia> detenidas =
+                instanciaRepo.findByUsuarioIdAndEstado(usuarioId, EstadoEstrategia.DETENIDA);
+        if (detenidas.isEmpty()) {
+            log.info("No hay estrategias detenidas.");
+            return;
+        }
+        detenidas.forEach(inst -> iniciarEstrategiaDetenida(inst.getId()));
+    }
+
+    @Override
+    public void detenerEstrategia(Long instanciaId, Long usuarioId) {
+        exigirDueno(instanciaId, usuarioId);
+        detenerEstrategia(instanciaId);
+    }
+
+    @Override
+    public void detenerTodas(Long usuarioId) {
+        idsActivosDe(usuarioId).forEach(this::detenerEstrategia);
+    }
+
+    @Override
+    public void terminarEstrategia(Long instanciaId, Long usuarioId) {
+        exigirDueno(instanciaId, usuarioId);
+        terminarEstrategia(instanciaId);
+    }
+
+    @Override
+    public void terminarTodas(Long usuarioId) {
+        idsActivosDe(usuarioId).forEach(this::terminarEstrategia);
+    }
+
+    private void exigirDueno(Long instanciaId, Long usuarioId) {
+        Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG);
+        boolean esSuya = instanciaRepo.findById(instanciaId)
+                .map(e -> Objects.equals(e.getUsuarioId(), usuarioId))
+                .orElse(false);
+        if (!esSuya) {
+            // El mismo mensaje para "no existe" y "es de otro": no revela qué ids existen.
+            throw new ValidationException("Estrategia no encontrada: " + instanciaId);
+        }
+    }
+
+    /** Ids de las activas del usuario: las ACTIVA en BBDD (fuente de verdad) y las que tienen runtime. */
+    private Set<Long> idsActivosDe(Long usuarioId) {
+        Set<Long> propias = new LinkedHashSet<>();
+        instanciaRepo.findByUsuarioIdAndEstado(usuarioId, EstadoEstrategia.ACTIVA)
+                .forEach(i -> propias.add(i.getId()));
+        return propias;
     }
 
     private Set<Long> idsActivos() {
