@@ -84,9 +84,16 @@ public class StrategyRuntimeCoordinator {
      * Lanza la ejecución en tiempo real de una estrategia en un Virtual Thread.
      */
     public void ejecutarTradeEnTiempoReal(InstanciaEstrategia instancia, List<String> symbols) {
-        Future<?> future = executor.submit(() -> runEngineRT(instancia, symbols));
-        runtimeThreads.put(instancia.getId(), future);
-        log.info("Hilo de ejecución lanzado para estrategia {}", instancia.getId());
+        // compute es atómico por clave: no se lanzan dos procesos para la misma instancia ni puede
+        // gestionarCierre (remove) adelantarse al registro del hilo si este termina enseguida.
+        runtimeThreads.compute(instancia.getId(), (id, actual) -> {
+            if (actual != null && !actual.isDone()) {
+                log.warn("La estrategia {} ya tiene un runtime en marcha: no se lanza otro", id);
+                return actual;
+            }
+            log.info("Hilo de ejecución lanzado para estrategia {}", id);
+            return executor.submit(() -> runEngineRT(instancia, symbols));
+        });
     }
 
     /**
