@@ -60,9 +60,18 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
     public InstanciaEstrategia crearYActivarEstrategia(
             String nombreEstra, String nombreModelo, String tf, List<String> coins,
             boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
+        return crearYActivarEstrategia(nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital,
+                InstanciaEstrategia.MODO_SENAL_CIERRE);
+    }
+
+    @SuppressWarnings("java:S107")
+    public InstanciaEstrategia crearYActivarEstrategia(
+            String nombreEstra, String nombreModelo, String tf, List<String> coins,
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode) {
 
         InstanciaEstrategia instancia = InstanciaEstrategia.inicializar(
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
+        instancia.setSignalMode(signalMode); // valida el valor antes de persistir nada
 
         instancia = instanciaRepo.save(Objects.requireNonNull(instancia, "Instancia no puede ser null"));
         log.info("Estrategia {} creada con ID {}", nombreEstra, instancia.getId());
@@ -79,10 +88,10 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
     @SuppressWarnings("java:S107")
     @Override
     public void iniciarTradeRT(String nombreEstra, String nombreModelo, String tf, List<String> coins,
-            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital) {
+            boolean isReal, Long walletId, BigDecimal risk, BigDecimal capital, String signalMode) {
 
         InstanciaEstrategia instancia = tx.execute(status -> crearYActivarEstrategia(
-                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital));
+                nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital, signalMode));
 
         lanzarRuntime(Objects.requireNonNull(instancia), coins);
     }

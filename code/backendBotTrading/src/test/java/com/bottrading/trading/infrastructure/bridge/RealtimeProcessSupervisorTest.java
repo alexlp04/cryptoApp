@@ -44,4 +44,16 @@ class RealtimeProcessSupervisorTest {
         assertFalse(payload.containsKey("risk_per_trade"));
         assertTrue(payload.containsKey("capital"));
     }
+
+    @Test
+    @DisplayName("El payload RT lleva el modo de señal de la instancia (#85)")
+    void should_send_signal_mode() {
+        InstanciaEstrategia i = instancia(false, new BigDecimal("0.02"));
+        i.setSignalMode("both");
+
+        Map<String, Object> payload = supervisor.construirPayload(i, List.of("BTCUSDT"));
+
+        assertEquals("both", payload.get("signal_mode"));
+        assertEquals("close", supervisor.construirPayload(instancia(false, null), List.of("BTCUSDT")).get("signal_mode"));
+    }
 }

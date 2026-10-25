@@ -62,6 +62,13 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "es_real")
     private boolean esReal;
 
+    /** Cuándo evalúa señales el motor RT: "close", "open" o "both". */
+    @Column(name = "signal_mode", nullable = false, length = 10)
+    private String signalMode = MODO_SENAL_CIERRE;
+
+    public static final String MODO_SENAL_CIERRE = "close";
+    public static final java.util.Set<String> MODOS_SENAL = java.util.Set.of("close", "open", "both");
+
 
     public InstanciaEstrategia() {
         super();
@@ -176,6 +183,17 @@ public class InstanciaEstrategia extends BaseEntity {
 
     public void setSimbolos(List<String> simbolos) {
         this.simbolos = simbolos;
+    }
+
+    public String getSignalMode() {
+        return signalMode;
+    }
+
+    public void setSignalMode(String signalMode) {
+        if (!MODOS_SENAL.contains(signalMode)) {
+            throw new IllegalArgumentException("Modo de señal inválido: " + signalMode + " (usa close, open o both)");
+        }
+        this.signalMode = signalMode;
     }
 
     public boolean isEsReal() {

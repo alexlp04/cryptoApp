@@ -98,4 +98,17 @@ class CommandParserTest {
         assertTrue(parse("optimize -mc 0").hasErrorSintaxis());
         assertTrue(parse("optimize -mc 101").getMensajeError().contains("máximo 100"));
     }
+
+    @Test
+    @DisplayName("-signal acepta close, open y both y rechaza cualquier otro valor (#85)")
+    void signal_mode_flag() {
+        for (String mode : new String[] {"close", "open", "both"}) {
+            CommandParser p = parse("trade -v -strategy Rsi -tf 1h -coins BTCUSDT -signal " + mode);
+            assertFalse(p.hasErrorSintaxis(), mode);
+            assertEquals(mode, p.getSignalMode());
+        }
+        assertEquals("open", parse("trade -v -sg OPEN -tf 1h -coins BTCUSDT").getSignalMode());
+        assertTrue(parse("trade -v -signal nunca -tf 1h -coins BTCUSDT").hasErrorSintaxis());
+        assertEquals(null, parse("trade -v -tf 1h -coins BTCUSDT").getSignalMode());
+    }
 }

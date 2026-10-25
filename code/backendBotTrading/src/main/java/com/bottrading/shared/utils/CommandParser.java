@@ -30,6 +30,7 @@ public class CommandParser {
     private Double minComposite = null;
     private Integer nTrials = null;
     private Integer cvFolds = null;
+    private String signalMode = null;
 
     // Variables de control de errores
     // El accesor se llama hasErrorSintaxis(), no isErrorSintaxis(): se mantiene a mano.
@@ -75,6 +76,14 @@ public class CommandParser {
                 case "-days", "--days", "-d" -> {
                     days = parseEntero(requireValue(parts, index), "-days", ".",
                             1, Integer.MAX_VALUE, "-days debe ser un entero positivo.");
+                    index += 2;
+                }
+                case "-signal", "-sg" -> {
+                    String mode = requireValue(parts, index).toLowerCase();
+                    if (!errorSintaxis && !java.util.Set.of("close", "open", "both").contains(mode)) {
+                        fallo("Error de sintaxis: -signal debe ser close, open o both.");
+                    }
+                    signalMode = mode;
                     index += 2;
                 }
                 case "-coins", "-c" -> {

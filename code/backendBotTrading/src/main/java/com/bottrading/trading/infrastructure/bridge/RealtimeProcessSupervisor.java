@@ -137,6 +137,7 @@ public class RealtimeProcessSupervisor {
         payload.put("timeframe", instancia.getTimeframe());
         payload.put("capital", instancia.getCapitalReservado());
         payload.put("is_real", instancia.isEsReal());
+        payload.put("signal_mode", instancia.getSignalMode());
         if (instancia.getRiskPerTrade() != null) {
             payload.put("risk_per_trade", instancia.getRiskPerTrade());
         }

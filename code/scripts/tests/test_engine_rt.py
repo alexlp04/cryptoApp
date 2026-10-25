@@ -131,3 +131,54 @@ def test_non_kline_messages_are_ignored(monkeypatch):
         _run(monkeypatch, messages, strategy, sleeps)
 
     assert strategy.calls == 3  # el kline se procesó en cada conexión: sin KeyError antes
+
+
+# ── Modo de señal: cierre, apertura o ambos (#85) ───────────────────────────
+
+def _tick(open_time: int, closed: bool, price: float = 100.0) -> str:
+    p = str(price)
+    return json.dumps({"k": {"t": open_time, "o": p, "h": p, "l": p, "c": p, "v": "1", "x": closed}})
+
+
+class _BuyAlways(_Strategy):
+    def should_buy(self, row):
+        return True
+
+
+def _signals_for(monkeypatch, capsys, mode, messages):
+    sleeps: list = []
+    monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: _BuyAlways())
+    monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+        raise _Stop
+
+    monkeypatch.setattr(engine_rt.asyncio, "sleep", fake_sleep)
+    with pytest.raises(_Stop):
+        asyncio.run(engine_rt.run_symbol("BTCUSDT", "1m", "x.py", 1000.0, 0.02, False, signal_mode=mode))
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("SIGNAL")]
+    return [json.loads(ln.split("\t", 1)[1])["timestamp"] for ln in lines]
+
+
+# vela 1000: dos ticks y cierre; vela 2000: primer tick, cierre; vela 3000: primer tick (sin cerrar)
+_STREAM = [_tick(1000, False), _tick(1000, False), _tick(1000, True),
+           _tick(2000, False), _tick(2000, True), _tick(3000, False)]
+
+
+def test_modo_close_solo_evalua_las_velas_cerradas(monkeypatch, capsys):
+    assert _signals_for(monkeypatch, capsys, "close", _STREAM) == [1000, 2000]
+
+
+def test_modo_open_evalua_la_primera_lectura_de_cada_vela_nueva(monkeypatch, capsys):
+    # la vela 1000 es la primera que se ve tras conectar: no es una apertura real
+    assert _signals_for(monkeypatch, capsys, "open", _STREAM) == [2000, 3000]
+
+
+def test_modo_both_evalua_cierre_y_apertura(monkeypatch, capsys):
+    assert _signals_for(monkeypatch, capsys, "both", _STREAM) == [1000, 2000, 3000]
+
+
+def test_un_modo_desconocido_es_un_error():
+    with pytest.raises(ValueError, match="signal_mode"):
+        asyncio.run(engine_rt.run_symbol("BTCUSDT", "1m", "x.py", 1000.0, 0.02, False, signal_mode="nunca"))
