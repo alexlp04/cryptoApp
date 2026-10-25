@@ -39,6 +39,7 @@ import com.bottrading.strategy.domain.InstanciaEstrategia;
 import com.bottrading.strategy.domain.InstanciaEstrategiaRepository;
 import com.bottrading.trading.application.port.in.AccountingUseCase;
 import com.bottrading.trading.application.port.out.PosicionRepositoryPort;
+import com.bottrading.trading.domain.Lado;
 import com.bottrading.trading.domain.Posicion;
 import com.bottrading.trading.infrastructure.bridge.ProcessedSignalRegistry;
 import com.bottrading.trading.infrastructure.bridge.SignalDTO;
@@ -583,4 +584,108 @@ class PaperTradingServiceTest {
         }
     }
 
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CORTOS
+    // ─────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("CORTOS: SHORT abre y COVER cierra")
+    class ShortTests {
+
+        private SignalDTO crearSignalSHORT() {
+            SignalDTO s = crearSignalBUY();
+            s.setAction("SHORT");
+            s.setStopLoss(new BigDecimal("31000"));
+            s.setTakeProfit(new BigDecimal("27000"));
+            return s;
+        }
+
+        private SignalDTO crearSignalCOVER(String precio) {
+            SignalDTO s = crearSignalSELL();
+            s.setAction("COVER");
+            s.setPrice(new BigDecimal(precio));
+            return s;
+        }
+
+        @Test
+        @DisplayName("✓ SHORT vende con slippage en contra, guarda el lado y el riesgo hasta el stop")
+        void should_open_a_short_selling_below_the_signal_price() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+
+            paperTradingService.onSignal(10L, crearSignalSHORT());
+
+            verify(posicionRepo).save(argThat(p -> p.getLado() == Lado.SHORT
+                    && p.getPrecioEntrada().compareTo(new BigDecimal("29985")) == 0)); // 30000 - 0,05 %
+            verify(accountingService).commitCapital(eq(10L), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("✗ Un SHORT con el stop por debajo de la entrada se rechaza")
+        void should_reject_a_short_whose_stop_is_below_the_entry() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("1000"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.existsByInstanciaAndSimboloAndAbiertaTrue(any(), anyString())).thenReturn(false);
+            SignalDTO s = crearSignalSHORT();
+            s.setStopLoss(new BigDecimal("29000"));
+
+            paperTradingService.onSignal(10L, s);
+
+            verify(posicionRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("✓ COVER gana lo que baja el precio, neto de slippage y comisiones")
+        void should_cover_a_short_with_profit_when_the_price_falls() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            pos.setLado(Lado.SHORT);
+            pos.setUnidades(new BigDecimal("0.01"));
+            pos.setPrecioEntrada(new BigDecimal("29985"));
+            pos.setRiesgo(new BigDecimal("10"));
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+
+            paperTradingService.onSignal(10L, crearSignalCOVER("29000")); // compra a 29014,5
+
+            // bruto = 0.01 * (29985 - 29014.5) = 9.705; comisión = 0.001 * 0.01 * (29985 + 29014.5) = 0.589995
+            verify(accountingService).closeTrade(any(), eq(10L), any(),
+                    eq(new BigDecimal("9.11500500")), eq(new BigDecimal("10")), any());
+        }
+
+        @Test
+        @DisplayName("✓ El objetivo de un corto se cubre a su precio, sin slippage")
+        void should_cover_a_target_without_slippage() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion pos = crearPosicionAbiertaTest(inst);
+            pos.setLado(Lado.SHORT);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(pos));
+            SignalDTO objetivo = crearSignalCOVER("27000");
+            objetivo.setReason("TARGET");
+
+            paperTradingService.onSignal(10L, objetivo);
+
+            assertThat(pos.getPrecioSalida(), is(new BigDecimal("27000.00000000")));
+        }
+
+        @Test
+        @DisplayName("✓ SELL no cierra un corto y COVER no cierra un largo")
+        void should_not_close_a_position_of_the_other_side() {
+            InstanciaEstrategia inst = crearInstanciaActivaTest(new BigDecimal("500"));
+            Posicion corto = crearPosicionAbiertaTest(inst);
+            corto.setLado(Lado.SHORT);
+            when(instanciaRepo.findByIdWithLock(10L)).thenReturn(Optional.of(inst));
+            when(posicionRepo.findByInstanciaAndSimboloAndAbiertaTrue(any(), eq("BTCUSDT")))
+                    .thenReturn(Optional.of(corto));
+
+            paperTradingService.onSignal(10L, crearSignalSELL());
+
+            verify(accountingService, never()).closeTrade(any(), any(), any(), any(), any(), any());
+            assertThat(corto.isAbierta(), is(true));
+        }
+    }
 }

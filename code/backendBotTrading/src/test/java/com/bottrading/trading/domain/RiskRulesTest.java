@@ -66,4 +66,26 @@ class RiskRulesTest {
         // 2 unidades: 0,001 * 2 * (100,05 + 99,95) = 0,4
         assertEquals(0, ExecutionCosts.comision(d("2"), d("100.05"), d("99.95")).compareTo(d("0.4")));
     }
+
+    @Test
+    @DisplayName("Un corto lleva el stop por encima de la entrada y arriesga la misma fracción del equity")
+    void sizes_a_short_with_the_stop_above_the_entry() {
+        assertTrue(RiskRules.stopValido(d("100"), d("105"), Lado.SHORT));
+        assertFalse(RiskRules.stopValido(d("100"), d("95"), Lado.SHORT));
+        assertFalse(RiskRules.stopValido(d("100"), d("105"))); // el mismo stop no vale para un largo
+
+        RiskRules.Sizing corto = RiskRules.dimensionar(d("10000"), d("0.01"), d("100"), d("105"), d("10000"),
+                Lado.SHORT);
+
+        assertEquals(0, corto.riesgo().compareTo(d("100"))); // 1 % de 10 000
+        assertNull(RiskRules.dimensionar(d("10000"), d("0.01"), d("100"), d("95"), d("10000"), Lado.SHORT));
+    }
+
+    @Test
+    @DisplayName("Un corto vende a mercado con slippage en contra y se cubre comprando; el objetivo es límite")
+    void short_execution_costs_mirror_the_long_ones() {
+        assertEquals(0, ExecutionCosts.precioVenta(d("100"), false).compareTo(d("99.95"))); // apertura
+        assertEquals(0, ExecutionCosts.precioCompra(d("100"), false).compareTo(d("100.05"))); // stop o cover
+        assertEquals(0, ExecutionCosts.precioCompra(d("100"), true).compareTo(d("100"))); // objetivo
+    }
 }

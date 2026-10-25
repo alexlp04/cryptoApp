@@ -439,3 +439,26 @@ def test_el_stop_por_atr_usa_la_fila_con_indicadores(monkeypatch, capsys):
 
     assert senales[0]["action"] == "BUY"
     assert senales[0]["stop_loss"] == pytest.approx(97.0) and senales[0]["take_profit"] == pytest.approx(106.0)
+
+
+class _ConStopYCortos(_ConStop):
+    allow_short = True
+
+    def get_short_stop_loss(self, entry_price, row):
+        return entry_price * 1.05
+
+    def get_short_take_profit(self, entry_price, row):
+        return entry_price * 0.90
+
+
+def test_la_ia_abre_un_corto_con_la_prediccion_de_bajada_y_el_stop_lo_cubre(monkeypatch, capsys):
+    mensajes = [_kline(100, 100.0, True), _kline(200, 106.0, False)]
+
+    senales = _senales(monkeypatch, capsys, _ConStopYCortos(1.0), mensajes, ["SELL"])
+
+    assert [(s["action"], s["reason"]) for s in senales] == [("SHORT", "SIGNAL"), ("COVER", "STOP")]
+    assert senales[0]["stop_loss"] == pytest.approx(105.0)
+
+
+def test_la_ia_sin_allow_short_ignora_la_prediccion_de_bajada_sin_posicion(monkeypatch, capsys):
+    assert _senales(monkeypatch, capsys, _ConStop(1.0), [_kline(100, 100.0, True)], ["SELL"]) == []

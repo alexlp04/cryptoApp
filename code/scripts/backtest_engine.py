@@ -84,6 +84,17 @@ def _protective_exit(
     return None
 
 
+def _protective_exit_short(
+    open_: float, high: float, low: float, stop: float, take_profit: float,
+) -> tuple[float, bool] | None:
+    """Como _protective_exit para un corto: el stop está por encima (compra a mercado) y el objetivo por debajo."""
+    if high >= stop:
+        return max(open_, stop), True
+    if low <= take_profit:
+        return min(open_, take_profit), False
+    return None
+
+
 def _close_long(
     capital: float,
     position_size: float,
@@ -166,9 +177,11 @@ def _simulate(
     slippage: float,
     on_trade: Callable[[str, float, int, float | None, float | None], None] | None = None,
     execution: str = "market",
+    short_entry_signal: Callable[[int, Callable[[], dict]], bool] | None = None,
+    short_exit_signal: Callable[[int, Callable[[], dict], float], bool] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
-    Simula longs sobre df con las señales dadas. Es el único bucle de backtesting:
+    Simula longs (y cortos si se dan short_entry_signal y short_exit_signal) sobre df con las señales dadas. Es el único bucle de backtesting:
     el modo clásico y el modo IA solo difieren en entry_signal / exit_signal, así que
     comparten costes, cierre de la posición final y métricas.
 
@@ -183,6 +196,9 @@ def _simulate(
     if execution not in EXECUTION_MODES:
         raise ValueError(f"execution inválido: {execution!r} (usa {', '.join(EXECUTION_MODES)})")
     limit = execution == "limit"
+    shorts = short_entry_signal is not None and short_exit_signal is not None
+    if limit and shorts:
+        raise ValueError("execution='limit' no admite cortos: usa 'market'")
     capital = float(getattr(strategy, "capital", _DEFAULT_CAPITAL))
     risk_per_trade = float(getattr(strategy, "risk_per_trade", _DEFAULT_RISK))
     capital_history = [capital]
@@ -194,6 +210,7 @@ def _simulate(
     skipped_no_stop = 0
     stop_price = take_profit = 0.0
     in_position = False
+    short = False  # lado de la posición abierta
     entry_price = size = 0.0
     entry_fill = 0.0
     peak_capital = capital
@@ -207,35 +224,38 @@ def _simulate(
     pending_sell: float | None = None
     missed_entries = 0
 
-    def open_position(fill: float, levels: tuple[float, float], reference: float, timestamp: int) -> bool:
-        """Abre el long si el stop permite dimensionarlo; reference es el precio que se registra en el trade."""
-        nonlocal size, in_position, entry_fill, entry_price, stop_price, take_profit, trade_count
-        size = position_size(capital, risk_per_trade, fill, levels[0])
+    def open_position(fill: float, levels: tuple[float, float], reference: float, timestamp: int,
+                      is_short: bool = False) -> bool:
+        """Abre la posición si el stop permite dimensionarla; reference es el precio que se registra en el trade."""
+        nonlocal size, in_position, short, entry_fill, entry_price, stop_price, take_profit, trade_count
+        size = position_size(capital, risk_per_trade, fill, levels[0], short=is_short)
         if size <= 0:
             return False
-        in_position = True
+        in_position, short = True, is_short
         entry_fill, entry_price = fill, reference
         stop_price, take_profit = levels
         trade_count += 1
         if on_trade:
-            on_trade("BUY", reference, timestamp, None, None)
+            on_trade("SHORT" if is_short else "BUY", reference, timestamp, None, None)
         return True
 
     def close_position(price: float, timestamp: int, slip: float = slippage) -> None:
         nonlocal capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown
         nonlocal trade_count, in_position
-        exit_fill = price * (1 - slip)
+        exit_fill = price * (1 + slip) if short else price * (1 - slip)
         fee = fee_rate * size * (entry_fill + exit_fill)
+        # Un corto gana lo que baja el precio: el mismo cierre con entrada y salida intercambiadas.
+        entry_leg, exit_leg = (exit_fill, entry_fill) if short else (entry_fill, exit_fill)
         (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
          peak_capital, max_drawdown, pnl) = _close_long(
-            capital, size, entry_fill, exit_fill,
+            capital, size, entry_leg, exit_leg,
             op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown, fee,
         )
         in_position = False
         trade_count += 1
         capital_history.append(capital)
         if on_trade:
-            on_trade("SELL", price, timestamp, pnl, capital)
+            on_trade("COVER" if short else "SELL", price, timestamp, pnl, capital)
 
     # tuplas planas: sin renombrado de columnas y sin dict por vela salvo que se pida
     for i, vals in enumerate(df.itertuples(index=False, name=None)):
@@ -260,24 +280,17 @@ def _simulate(
             else:
                 missed_entries += 1
 
-        if not in_position:
-            if entry_signal(i, row):
-                levels = strategy_levels(strategy, price, row())
-                if limit:
-                    if levels and valid_stop(price, levels[0]):
-                        pending_buy = (price, levels)
-                    else:
-                        skipped_no_stop += 1
-                else:
-                    if not (levels and open_position(price * (1 + slippage), levels, price, timestamp)):
-                        skipped_no_stop += 1
-        else:
+        closed_before = len(capital_history)
+        stopped = False
+        if in_position:
             # Stop y objetivo son órdenes que viven en el mercado: se evalúan con el rango de la vela,
             # no solo con su cierre. La señal de la estrategia se evalúa al cierre, como antes.
             hit = None
             if ohl_idx is not None:
-                hit = _protective_exit(open_, high, low, stop_price, take_profit)
+                protect = _protective_exit_short if short else _protective_exit
+                hit = protect(open_, high, low, stop_price, take_profit)
             if hit is not None:
+                stopped = True
                 pending_sell = None
                 close_position(hit[0], timestamp, slippage if hit[1] else 0.0)
             elif not filled_now:  # la vela del relleno no evalúa salidas por señal: acaba de entrar
@@ -285,13 +298,36 @@ def _simulate(
                     sell_at, pending_sell = pending_sell, None
                     if high > sell_at:
                         close_position(max(open_, sell_at), timestamp, 0.0)
-                if in_position and exit_signal(i, row, entry_price):
+                leaving = short_exit_signal if short else exit_signal
+                if in_position and leaving is not None and leaving(i, row, entry_price):
                     if limit:  # shortcut: should_close también va como límite pasivo; separarlo si una estrategia lo usa de stop
                         pending_sell = price
                     else:
                         close_position(price, timestamp)
 
-        equity.append(capital + size * (price * (1 - slippage) - entry_fill) if in_position else capital)
+        # Tras un stop no se reentra en la misma vela; tras una salida por señal solo si hay cortos (giro).
+        if not in_position and not stopped and (shorts or len(capital_history) == closed_before):
+            if entry_signal(i, row):
+                levels = strategy_levels(strategy, price, row())
+                if limit:
+                    if levels and valid_stop(price, levels[0]):
+                        pending_buy = (price, levels)
+                    else:
+                        skipped_no_stop += 1
+                elif not (levels and open_position(price * (1 + slippage), levels, price, timestamp)):
+                    skipped_no_stop += 1
+            elif short_entry_signal is not None and short_entry_signal(i, row):
+                levels = strategy_levels(strategy, price, row(), short=True)
+                if not (levels and open_position(price * (1 - slippage), levels, price, timestamp, is_short=True)):
+                    skipped_no_stop += 1
+
+        if not in_position:
+            mark = capital
+        elif short:
+            mark = capital + size * (entry_fill - price * (1 + slippage))
+        else:
+            mark = capital + size * (price * (1 - slippage) - entry_fill)
+        equity.append(mark)
 
     if missed_entries:
         logger.info("%s: %d órdenes límite de compra caducaron sin llenarse", symbol, missed_entries)
@@ -317,6 +353,13 @@ def _simulate(
 # =============================================================================
 # MOTOR DE BACKTESTING (versión completa con señales de estrategia)
 # =============================================================================
+
+def _short_signals(strategy, entry, exit_) -> dict[str, Any]:
+    """Señales de cortos para _simulate, solo si la estrategia los permite (allow_short)."""
+    if not getattr(strategy, "allow_short", False):
+        return {}
+    return {"short_entry_signal": entry, "short_exit_signal": exit_}
+
 
 def run_backtest(
     strategy,
@@ -360,6 +403,11 @@ def run_backtest(
         exit_signal=lambda i, row, entry: bool(
             strategy.should_sell(row()) or strategy.should_close(row(), entry)),
         fee_rate=fee_rate, slippage=slippage, on_trade=on_trade, execution=execution,
+        **_short_signals(
+            strategy,
+            lambda i, row: bool(strategy.should_short(row())),
+            lambda i, row, entry: bool(strategy.should_cover(row())),
+        ),
     )
 
 
@@ -422,6 +470,7 @@ def run_backtest_with_predictions(
         entry_signal=lambda i, row: preds[i] == 1,
         exit_signal=lambda i, row, entry: bool(preds[i] != 1 or strategy.should_close(row(), entry)),
         fee_rate=fee_rate, slippage=slippage, execution=execution,
+        **_short_signals(strategy, lambda i, row: preds[i] == -1, lambda i, row, entry: bool(preds[i] != -1)),
     )
     return stats
 

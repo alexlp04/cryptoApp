@@ -9,6 +9,7 @@ import java.math.RoundingMode;
  * <ul>
  *   <li>Riesgo fijo por operación: se arriesga {@code riesgoPorTrade} del equity y el tamaño sale de la
  *       distancia al stop: {@code unidades = equity * riesgoPorTrade / (entrada - stop)}.</li>
+ *   <li>Un corto se dimensiona igual, con el stop por encima de la entrada; se simula sin apalancamiento.</li>
  *   <li>Tope por posición: una posición no supera {@link #MAX_POSITION_FRACTION} del equity ni lo que
  *       queda reservado (spot, sin apalancamiento).</li>
  *   <li>Riesgo abierto total: lo arriesgado en las posiciones abiertas no supera
@@ -31,7 +32,15 @@ public final class RiskRules {
 
     /** Un stop de una posición larga debe ser positivo y estar por debajo de la entrada. */
     public static boolean stopValido(BigDecimal entrada, BigDecimal stop) {
-        return stop != null && entrada != null && stop.signum() > 0 && stop.compareTo(entrada) < 0;
+        return stopValido(entrada, stop, Lado.LONG);
+    }
+
+    /** El stop de un largo está por debajo de la entrada; el de un corto, por encima. */
+    public static boolean stopValido(BigDecimal entrada, BigDecimal stop, Lado lado) {
+        if (stop == null || entrada == null || stop.signum() <= 0) {
+            return false;
+        }
+        return lado == Lado.SHORT ? stop.compareTo(entrada) > 0 : stop.compareTo(entrada) < 0;
     }
 
     /**
@@ -46,11 +55,17 @@ public final class RiskRules {
      */
     public static Sizing dimensionar(BigDecimal equity, BigDecimal riesgoPorTrade, BigDecimal entrada,
             BigDecimal stop, BigDecimal disponible) {
+        return dimensionar(equity, riesgoPorTrade, entrada, stop, disponible, Lado.LONG);
+    }
+
+    /** Como {@link #dimensionar(BigDecimal, BigDecimal, BigDecimal, BigDecimal, BigDecimal)}, para largos o cortos. */
+    public static Sizing dimensionar(BigDecimal equity, BigDecimal riesgoPorTrade, BigDecimal entrada,
+            BigDecimal stop, BigDecimal disponible, Lado lado) {
         if (equity == null || equity.signum() <= 0 || riesgoPorTrade == null || riesgoPorTrade.signum() <= 0
-                || disponible == null || disponible.signum() <= 0 || !stopValido(entrada, stop)) {
+                || disponible == null || disponible.signum() <= 0 || !stopValido(entrada, stop, lado)) {
             return null;
         }
-        BigDecimal porRiesgo = equity.multiply(riesgoPorTrade).divide(entrada.subtract(stop), SCALE * 2,
+        BigDecimal porRiesgo = equity.multiply(riesgoPorTrade).divide(entrada.subtract(stop).abs(), SCALE * 2,
                 RoundingMode.DOWN);
         BigDecimal tope = equity.multiply(MAX_POSITION_FRACTION).min(disponible);
         BigDecimal porTope = tope.divide(entrada, SCALE * 2, RoundingMode.DOWN);
@@ -59,7 +74,7 @@ public final class RiskRules {
             return null;
         }
         BigDecimal nocional = unidades.multiply(entrada).setScale(SCALE, RoundingMode.HALF_UP);
-        BigDecimal riesgo = unidades.multiply(entrada.subtract(stop)).setScale(SCALE, RoundingMode.HALF_UP);
+        BigDecimal riesgo = unidades.multiply(entrada.subtract(stop).abs()).setScale(SCALE, RoundingMode.HALF_UP);
         return new Sizing(unidades, nocional, riesgo);
     }
 
