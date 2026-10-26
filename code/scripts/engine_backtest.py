@@ -18,6 +18,7 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 from backtest_engine import (
+    DEFAULT_CAPITAL,
     DEFAULT_FEE_RATE,
     DEFAULT_SLIPPAGE,
     EXECUTION_MODES,
@@ -25,7 +26,7 @@ from backtest_engine import (
     run_backtest,
     run_backtest_with_predictions,
 )
-from engine_ai_rt import load_model
+from model_loader import NEUTRAL, decode_deep_learning, load_model
 
 logger = setup_engine_logging("engine_backtest")
 
@@ -61,27 +62,8 @@ def _generar_predicciones(
     )
 
     if model_type == "deep_learning":
-        raw = model.predict(x, verbose=0)  # shape (n, n_clases)
-        if raw.ndim == 2 and raw.shape[1] > 1:
-            # Multiclase softmax: argmax → índice de clase predicho
-            encoded_preds = np.argmax(raw, axis=1)
-        else:
-            # Fallback binario (sigmoid escalar)
-            probs = raw.flatten()
-            encoded_preds = np.where(probs >= 0.55, 1, np.where(probs <= 0.45, 0, -99)).astype(int)
-
-        if label_classes is not None:
-            # Decodificar índice → valor original: índice 0 → label_classes[0], etc.
-            lc = np.array(label_classes, dtype=int)
-            # Clamp por si hay índices fuera de rango
-            encoded_preds = np.clip(encoded_preds, 0, len(lc) - 1)
-            preds = lc[encoded_preds]
-        else:
-            # Sin metadata: 3 clases {0→-1, 1→0, 2→1}; con 2 (sigmoide o softmax binario) ya son 0/1
-            # y la banda neutra de la sigmoide (-99) significa "no entrar".
-            n_cls = raw.shape[1] if raw.ndim == 2 else 2
-            preds = np.maximum(encoded_preds, 0) if n_cls <= 2 else encoded_preds - (n_cls // 2)
-
+        preds = decode_deep_learning(model.predict(x, verbose=0), label_classes)
+        preds = np.where(preds == NEUTRAL, 0, preds)  # la banda neutra de la sigmoide significa "no entrar"
     else:
         encoded_preds = model.predict(x).astype(int)
         label_encoder = getattr(model, "label_encoder", None)
@@ -133,7 +115,7 @@ def main() -> None:
         strategy_name = payload.get("strategy_name")
         timeframe = payload.get("timeframe")
         velas = payload.get("velas", {})
-        capital = payload.get("capital", 1000)
+        capital = payload.get("capital", DEFAULT_CAPITAL)
         risk_per_trade = payload.get("risk_per_trade", 0.02)
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico

@@ -418,3 +418,55 @@ def test_el_svm_final_usa_las_mismas_filas_que_optuna(monkeypatch, tmp_path):
                             str(tmp_path), "1h", "BTCUSDT", None)
 
     assert vistas["n"] == 50
+
+
+# ── Entrypoint completo (main) ───────────────────────────────────────────────
+
+def _optimize_payload(**override) -> dict:
+    import pandas as pd
+    rng = np.random.default_rng(11)
+    n = 900
+    close = 40_000.0 * np.exp(np.cumsum(rng.normal(0, 0.004, n)))
+    dataset = pd.DataFrame({
+        "timestamp": 1_700_000_000_000 + np.arange(n) * 3_600_000,
+        "open": close * 0.999, "high": close * 1.004, "low": close * 0.996,
+        "close": close, "volume": rng.uniform(100, 500, n),
+    }).to_dict("records")
+    return {"model_type": "random_forest", "symbol": "BTCUSDT", "timeframe": "1h", "n_trials": 2, "cv_folds": 2,
+            "strategy_name": "StressTestStrategy", "warmup_candles": 30, "dataset": dataset, **override}
+
+
+@pytest.fixture
+def optimizar(tmp_path, monkeypatch):
+    import engine_optimize
+    monkeypatch.setattr(engine_optimize, "project_root", str(tmp_path))
+    monkeypatch.setattr(shared_utils, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("CRYPTOAPP_OPTUNA_STORAGE", raising=False)
+    salida: dict = {}
+
+    def run(payload: dict) -> dict:
+        monkeypatch.setattr(engine_optimize, "read_request_payload", lambda: payload)
+        monkeypatch.setattr(engine_optimize, "write_response", lambda tipo, body: salida.update(tipo=tipo, body=body))
+        monkeypatch.setattr(engine_optimize, "write_error", lambda code, msg: salida.update(error=msg))
+        try:
+            engine_optimize.main()
+        except SystemExit as exc:
+            salida["exit"] = exc.code
+        return salida
+
+    return run
+
+
+def test_main_optimiza_y_guarda_el_mejor_modelo_firmado(optimizar, tmp_path):
+    salida = optimizar(_optimize_payload())
+
+    assert salida["tipo"] == "OPTIMIZE_RESPONSE", salida.get("error")
+    assert salida["body"]["status"] in ("success", "warning")
+    modelos = list((tmp_path / "models").glob("*.pkl"))
+    assert len(modelos) == 1 and modelos[0].with_suffix(".manifest.json").exists()
+
+
+def test_main_rechaza_un_tipo_de_modelo_desconocido(optimizar):
+    salida = optimizar(_optimize_payload(model_type="adivino"))
+
+    assert salida["exit"] == 1 and "no reconocido" in salida["error"]

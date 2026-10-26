@@ -10,7 +10,6 @@ import websockets
 from ipc_protocol import read_request_payload
 from risk_management import PositionTracker, signal_actions, strategy_levels
 from shared_utils import (
-    CODE_DIR,
     build_signal_line,
     emit_heartbeats,
     fetch_recent_klines,
@@ -28,9 +27,6 @@ logger = setup_engine_logging("engine_rt")
 if sys.platform == "win32":
     if "posix" not in sys.modules:
         sys.modules["posix"] = types.ModuleType("posix")
-
-if CODE_DIR not in sys.path:
-    sys.path.append(CODE_DIR)
 
 
 MAX_STRATEGY_ERRORS = 5
@@ -62,7 +58,7 @@ def _buffer_size(max_candles: int, warmup: int) -> int:
 
 def _build_rt_signal(
     symbol: str, action: str, timeframe: str,
-    raw_close: str, row: "pd.Series", is_real: bool,
+    raw_close: str, row: dict, is_real: bool,
     levels: tuple[float, float] | None = None, reason: str = "SIGNAL",
 ) -> dict:
     """Construye el diccionario de señal para enviar a Java por stdout.
@@ -199,14 +195,15 @@ async def run_symbol(
                                                action, symbol)
                                 continue
                         # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
-                        if (int(row["timestamp"]), action) == last_signal:
+                        candle_ts = int(buffer[-1]["timestamp"])  # del buffer: la fila del DataFrame es float64
+                        if (candle_ts, action) == last_signal:
                             continue
-                        last_signal = (int(row["timestamp"]), action)
+                        last_signal = (candle_ts, action)
                         if levels is not None:
                             tracker.open(*levels, side="short" if action == "SHORT" else "long")
                         else:
                             tracker.close()
-                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, row, is_real, levels)
+                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, buffer[-1], is_real, levels)
                         print(build_signal_line(signal), flush=True)
                         logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
 

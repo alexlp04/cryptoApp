@@ -165,7 +165,7 @@ def test_un_chunk_fallido_aborta_la_descarga_en_vez_de_dejar_huecos(monkeypatch)
     monkeypatch.setattr(engine_fetch, "_request_with_backoff", lambda params: None)
 
     with pytest.raises(engine_fetch.ChunkFailedError):
-        engine_fetch._descargar_chunks_paralelo([(0, 1), (2, 3)], "BTCUSDT", "1m", workers=2)
+        list(engine_fetch._descargar_chunks_paralelo([(0, 1), (2, 3)], "BTCUSDT", "1m", workers=2))
 
 
 def test_la_vela_en_curso_no_se_emite(monkeypatch):
@@ -173,7 +173,7 @@ def test_la_vela_en_curso_no_se_emite(monkeypatch):
     cerrada = {"openTime": ahora - 120_000, "closeTime": ahora - 60_001}
     abierta = {"openTime": ahora - 30_000, "closeTime": ahora + 29_999}
     emitidas: list = []
-    monkeypatch.setattr(engine_fetch, "_descargar_chunks_paralelo", lambda *a, **k: [cerrada, abierta])
+    monkeypatch.setattr(engine_fetch, "_descargar_chunks_paralelo", lambda *a, **k: iter([[cerrada, abierta]]))
     monkeypatch.setattr(engine_fetch, "_emitir_velas_ipc", lambda velas: emitidas.extend(velas) or len(velas))
 
     total = engine_fetch.obtener_datos_binance("BTCUSDT", "1m", ahora - 600_000)
@@ -208,3 +208,48 @@ def test_respuesta_200_que_no_es_una_lista_se_trata_como_error(monkeypatch):
     monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: _FakeResp(200, {"inesperado": 1}))
 
     assert engine_fetch._request_with_backoff({"symbol": "X"}) is None
+
+
+def test_los_chunks_salen_en_orden_aunque_se_completen_desordenados(monkeypatch):
+    # El primero tarda más que los demás: aun así debe salir primero.
+    def fake_fetch(i, start, end, symbol, timeframe):
+        engine_fetch.time.sleep(0.05 if i == 0 else 0)
+        return i, [{"openTime": start}]
+
+    monkeypatch.setattr(engine_fetch, "_fetch_chunk", fake_fetch)
+    chunks = [(i * 10, i * 10 + 9) for i in range(6)]
+
+    salida = list(engine_fetch._descargar_chunks_paralelo(chunks, "BTCUSDT", "1m", workers=2))
+
+    assert [c[0]["openTime"] for c in salida] == [c[0] for c in chunks]
+
+
+def test_la_descarga_no_se_adelanta_mas_de_la_ventana(monkeypatch):
+    pedidos: list[int] = []
+    monkeypatch.setattr(engine_fetch, "_fetch_chunk", lambda i, *a: pedidos.append(i) or (i, []))
+    chunks = [(i, i) for i in range(50)]
+
+    gen = engine_fetch._descargar_chunks_paralelo(chunks, "BTCUSDT", "1m", workers=2)
+    next(gen)  # el consumidor no avanza más: no se piden los 50 chunks de golpe
+    engine_fetch.time.sleep(0.1)
+
+    assert len(pedidos) <= 4
+    gen.close()
+
+
+def test_se_emite_cada_chunk_sin_esperar_al_siguiente(monkeypatch):
+    ahora = int(engine_fetch.datetime.now(engine_fetch.UTC).timestamp() * 1000)
+    traza: list[str] = []
+
+    def descargas(*a, **k):
+        for n in (1, 2):
+            traza.append(f"descarga {n}")
+            yield [{"openTime": ahora - 1_000_000 + n, "closeTime": ahora - 500_000 + n}]
+
+    monkeypatch.setattr(engine_fetch, "_descargar_chunks_paralelo", descargas)
+    monkeypatch.setattr(engine_fetch, "_emitir_velas_ipc", lambda v: traza.append(f"emite {len(v)}") or len(v))
+
+    total = engine_fetch.obtener_datos_binance("BTCUSDT", "1m", ahora - 1_200_000)
+
+    assert total == 2
+    assert traza == ["descarga 1", "emite 1", "descarga 2", "emite 1"]  # intercalado, no todo al final

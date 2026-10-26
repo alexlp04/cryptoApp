@@ -315,6 +315,28 @@ def save_model(path: str, save_fn: Any) -> None:
     atomic_save(_manifest_path(path), lambda tmp: _write_json(tmp, manifest))
 
 
+def write_provenance(model_path: str, info: dict[str, Any]) -> None:
+    """Añade al `.metadata.json` del modelo de dónde sale: git, momento, datos y métricas (trazabilidad).
+
+    Se fusiona con el que ya haya (los .keras guardan ahí sus features). No es parte de la firma: no se carga código.
+    """
+    import subprocess
+    from datetime import UTC, datetime
+
+    path = os.path.splitext(model_path)[0] + ".metadata.json"
+    meta: dict[str, Any] = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            meta = json.load(f)
+    try:
+        git_sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, capture_output=True,
+                                 text=True, timeout=5, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        git_sha = None  # sin git (imagen Docker) o fuera de un repositorio
+    meta["provenance"] = {"trained_at": datetime.now(UTC).isoformat(), "git_sha": git_sha, **info}
+    atomic_save(path, lambda tmp: _write_json(tmp, meta))
+
+
 def _write_json(path: str, content: dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(content, f, indent=2)
@@ -905,7 +927,8 @@ def build_and_train_neural_network(
             )
 
     norm_layer = Normalization()
-    norm_layer.adapt(X_train)
+    # Keras reserva el último 10 % para validar: la media y la desviación no deben haberlo visto.
+    norm_layer.adapt(X_train[: int(len(X_train) * 0.9)])
 
     model = Sequential([
         norm_layer,
@@ -939,9 +962,9 @@ def build_and_train_neural_network(
     )
 
     if is_multiclass:
-        y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
+        y_pred = np.argmax(model.predict(X_test, batch_size=1024, verbose=0), axis=1)
     else:
-        y_pred = (model.predict(X_test, verbose=0) > 0.5).astype(int).flatten()
+        y_pred = (model.predict(X_test, batch_size=1024, verbose=0) > 0.5).astype(int).flatten()
 
     return model, y_pred
 

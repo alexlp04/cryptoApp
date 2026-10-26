@@ -315,7 +315,7 @@ def _build_and_eval_neural_network(
     Con `trial` informa del F1 tras cada fold para que el pruner pueda podar.
 
     Para la fase de búsqueda Optuna usa como máximo `optuna_max_samples` filas
-    (muestra estratificada de las últimas filas) para reducir el tiempo del trial.
+    (solo las últimas filas) para reducir el tiempo del trial.
     El entrenamiento final llama a esta función con el dataset completo.
     """
     import tensorflow as tf  # importación diferida para evitar overhead cuando no se usa
@@ -1245,7 +1245,7 @@ def main() -> None:
 
         y_test_pred_original = label_encoder.inverse_transform(y_test_pred_final)
         df_test = df_enriched_full[
-            df_enriched_full["timestamp"].isin(set(timestamps_test.tolist()))
+            df_enriched_full["timestamp"].isin(timestamps_test)
         ].sort_values("timestamp").reset_index(drop=True)
         test_stats = run_backtest_with_predictions(strategy, df_test, y_test_pred_original, symbol)
         del df_enriched_full, df_test
