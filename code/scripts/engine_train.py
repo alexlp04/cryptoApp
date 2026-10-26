@@ -224,7 +224,7 @@ def main() -> None:
         write_provenance(model_path, {
             "symbol": symbol, "timeframe": timeframe, "model_type": model_type, "strategy_name": strategy_name,
             "data_from_ts": int(timestamps_all[0]), "data_to_ts": int(timestamps_all[-1]),
-            "train_rows": int(len(X_train)), "test_rows": int(len(X_test)),
+            "train_rows": len(X_train), "test_rows": len(X_test),
             "metrics": {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "average": avg},
         })
 
