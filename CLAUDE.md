@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (496 tests)
+mvn test          # JUnit + H2 (513 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 347 tests
+pytest code/scripts/tests -q   # 349 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -87,6 +87,16 @@ siga a `requirements.txt`). TensorFlow no va en la imagen (no hay rueda de la ve
 `PythonEnvironmentValidator` solo avisa si falta. Probado en x86
 con la pila completa (Flyway V13, registro, login, `fetch` por el motor Python, parada y reinicio con datos);
 arm64 no se ha podido ejecutar todavía.
+
+## API de solo lectura (`interfaces/api/`)
+
+Solo `GET`, JSON, para la UI y el móvil: `/api/v1/{health,status,strategies,strategies/{id}/positions|pnl|ledger,wallets}`
+(tabla en `deploy/README.md`). Decisiones que no deben deshacerse: **apagada por defecto**
+(`spring.main.web-application-type=none`: la CLI y los tests no abren puerto); se habilita con
+`SPRING_MAIN_WEBAPPLICATIONTYPE=servlet` y entonces `CRYPTOAPP_API_TOKEN` (32+ caracteres) es obligatorio, sin él no
+arranca; todo exige `Authorization: Bearer` salvo `/health` (solo UP/DOWN, 503 si una estrategia ACTIVA no tiene proceso
+o falla la base de datos); escucha en loopback y en Docker el puerto solo se publica en `127.0.0.1`; sin operaciones de
+escritura. Un solo token ve todo, también las estrategias de todos los usuarios.
 
 ## Esquema de base de datos
 
@@ -199,9 +209,11 @@ posición (rango válido 0 < r ≤ 0,10). Implementado en `scripts/risk_manageme
 - **Nombres a rutas.** Símbolo (`[A-Z0-9]{2,20}`), timeframe y nombre de modelo o estrategia se validan en la CLI
   (`CommandParser.esSimboloValido`) **y** en la frontera de cada engine (`require_symbol`, `require_timeframe`,
   `require_name`): acaban en nombres de fichero y URLs.
-- **Dependencias.** Spring Boot se mantiene en una línea con soporte; `jackson-bom.version` y `log4j2.version` del
+- **Dependencias.** Spring Boot se mantiene en una línea con soporte; `jackson-bom.version`, `log4j2.version` y `tomcat.version` del
   `pom.xml` van por delante del BOM solo para parches GHSA: quítalos cuando Boot gestione una versión igual o mayor.
-  Antes de promocionar, consulta las versiones contra OSV (`api.osv.dev/v1/querybatch`).
+  Antes de promocionar, consulta las versiones contra OSV (`api.osv.dev/v1/querybatch`). Riesgo aceptado: dos avisos de
+  `spring-webmvc` 6.2 (SSE con fragmentos y `XsltView`) solo se corrigen en Spring 7; la API no usa ninguna de las dos
+  funciones.
 
 ## Consistencia entre backtest y vivo
 

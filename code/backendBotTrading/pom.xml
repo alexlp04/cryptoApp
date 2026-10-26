@@ -17,10 +17,11 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- Parches de seguridad por delante del BOM de Spring Boot 3.5.16 (avisos GHSA de Jackson y Log4j).
+        <!-- Parches de seguridad por delante del BOM de Spring Boot 3.5.16 (avisos GHSA de Jackson, Log4j y Tomcat).
              Quitar cada propiedad en cuanto Boot gestione una versión igual o posterior. -->
         <jackson-bom.version>2.21.8</jackson-bom.version>
         <log4j2.version>2.26.1</log4j2.version>
+        <tomcat.version>10.1.61</tomcat.version>
         <maven.pmd.version>3.24.0</maven.pmd.version>
         <maven.spotbugs.version>4.8.6.2</maven.spotbugs.version>
         <spotbugs.version>4.8.6</spotbugs.version>
@@ -37,6 +38,12 @@
         </dependency>
 
         <!-- JPA + Hibernate + @Transactional -->
+        <!-- API REST de solo lectura (interfaces/api). Solo arranca el servidor si se habilita el modo web. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>

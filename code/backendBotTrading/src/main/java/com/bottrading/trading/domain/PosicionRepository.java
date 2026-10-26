@@ -16,4 +16,13 @@ public interface PosicionRepository extends JpaRepository<Posicion, Long> {
     boolean existsByInstanciaAndSimboloAndAbiertaTrue(InstanciaEstrategia instancia, String simbolo);
 
     List<Posicion> findByInstanciaAndAbiertaTrue(InstanciaEstrategia instancia);
+
+    /** Posiciones de una estrategia, abiertas o cerradas, de la más reciente a la más antigua. */
+    List<Posicion> findByInstanciaIdAndAbiertaOrderByIdDesc(Long instanciaId, boolean abierta,
+            org.springframework.data.domain.Pageable page);
+
+    long countByInstanciaIdAndAbiertaTrue(Long instanciaId);
+
+    /** Operaciones cerradas en orden cronológico, para la curva de resultados. */
+    List<Posicion> findByInstanciaIdAndAbiertaFalseOrderByFechaCierreAsc(Long instanciaId);
 }

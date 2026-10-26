@@ -256,6 +256,11 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
     }
 
     @Override
+    public Set<Long> idsConProceso() {
+        return runtimeCoordinator.getIdsEstrategiasActivas();
+    }
+
+    @Override
     public void iniciarEstrategiaDetenida(Long instanciaId, Long usuarioId) {
         exigirDueno(instanciaId, usuarioId);
         iniciarEstrategiaDetenida(instanciaId);
