@@ -1,7 +1,10 @@
 """Tests de la inferencia en tiempo real del engine de IA."""
 from __future__ import annotations
 
+import json
+
 import engine_ai_rt
+import model_loader
 import numpy as np
 import pytest
 from engine_ai_rt import _predict_deep_learning
@@ -96,7 +99,6 @@ def test_ml_standard_decodifica_clases_codificadas(encoded, esperado):
 # ── Features sin NaN→0, backfill REST y fallos del modelo (#72 #96) ──────────
 
 import asyncio
-import json
 import pathlib
 from collections import deque
 
@@ -233,7 +235,7 @@ def _dump(models_dir, name, strategy):
 
 @pytest.fixture
 def models_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(engine_ai_rt, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(model_loader, "PROJECT_ROOT", str(tmp_path))
     d = tmp_path / "models"
     d.mkdir()
     return d
@@ -462,3 +464,31 @@ def test_la_ia_abre_un_corto_con_la_prediccion_de_bajada_y_el_stop_lo_cubre(monk
 
 def test_la_ia_sin_allow_short_ignora_la_prediccion_de_bajada_sin_posicion(monkeypatch, capsys):
     assert _senales(monkeypatch, capsys, _ConStop(1.0), [_kline(100, 100.0, True)], ["SELL"]) == []
+
+
+# ── Decodificación compartida con el backtest ───────────────────────────────
+
+def test_decode_deep_learning_cubre_softmax_3_clases_binaria_y_sigmoide():
+    decode = model_loader.decode_deep_learning
+    tres = np.array([[0.7, 0.2, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8]])
+    assert decode(tres, None).tolist() == [-1, 0, 1]
+    assert decode(tres, [-1, 0, 1]).tolist() == [-1, 0, 1]
+    dos = np.array([[0.9, 0.1], [0.2, 0.8]])
+    assert decode(dos, None).tolist() == [0, 1]  # sin metadata, 2 columnas ya son 0/1 (antes salía {-1, 0}: nunca compraba)
+    assert decode(dos, [0, 1]).tolist() == [0, 1]
+    sigmoide = np.array([[0.9], [0.5], [0.1]])
+    assert decode(sigmoide, None).tolist() == [1, model_loader.NEUTRAL, 0]
+
+
+def test_un_softmax_binario_vende_con_la_clase_0_pero_uno_de_3_clases_hace_hold():
+    binario = _FakeKerasModel(np.array([[0.9, 0.1]], dtype="float32"))
+    assert _predict_deep_learning(binario, None, "nn", "BTCUSDT", [0, 1]) == "SELL"
+    tres = _FakeKerasModel(np.array([[0.1, 0.8, 0.1]], dtype="float32"))
+    assert _predict_deep_learning(tres, None, "nn", "BTCUSDT", [-1, 0, 1]) is None
+
+
+def test_la_senal_emite_el_precio_como_texto(capsys):
+    engine_ai_rt._emit_signal("BTCUSDT", "BUY", "1h", {"close": 65000.5, "timestamp": 1}, "xgb", False)
+
+    linea = capsys.readouterr().out.strip().split("\t", 1)[1]
+    assert json.loads(linea)["price"] == "65000.5"

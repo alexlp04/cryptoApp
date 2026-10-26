@@ -3,22 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 import types
 import warnings
 from collections import deque
-from typing import Any
+from decimal import Decimal
 
-import joblib
 import numpy as np
 import pandas as pd
 import websockets
 from ipc_protocol import read_request_payload
+from model_loader import NEUTRAL, decode_deep_learning, load_model
 from risk_management import PositionTracker, signal_actions, strategy_levels
 from shared_utils import (
     CODE_DIR,
-    PROJECT_ROOT,
     build_signal_line,
     emit_heartbeats,
     fetch_recent_klines,
@@ -29,7 +27,6 @@ from shared_utils import (
     seed_buffer,
     setup_engine_logging,
     upsert_candle,
-    verify_model_manifest,
 )
 
 # Ignorar advertencias de Pandas/Scikit-learn sobre nombres de características (Feature names)
@@ -47,138 +44,12 @@ if sys.platform == "win32" and "posix" not in sys.modules:
 if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
-#: Extensiones reconocidas para un modelo entrenado, en orden de preferencia.
-MODEL_EXTENSIONS = (".pkl", ".keras", ".h5")
-
-
-def _load_label_classes(model_path: str) -> list[int] | None:
-    """Lee label_classes del .metadata.json junto al modelo. Devuelve None si no existe."""
-    metadata_path = os.path.splitext(model_path)[0] + ".metadata.json"
-    if not os.path.exists(metadata_path):
-        # intentar .metadata.json si la extensión era .h5
-        metadata_path = model_path + ".metadata.json"
-    if os.path.exists(metadata_path):
-        import json as _json
-        with open(metadata_path, encoding="utf-8") as f:
-            meta = _json.load(f)
-        classes = meta.get("label_classes")
-        if classes is not None:
-            logger.info("Metadata cargada: label_classes=%s", classes)
-            return [int(c) for c in classes]
-    return None
-
-
-# =========================
-# CARGA DE MODELO IA UNIVERSAL
-# =========================
-def _load_from_path(path: str) -> tuple[Any, str, list[int] | None]:
-    """Carga un modelo ya localizado, eligiendo el backend por su extensión."""
-    if path.endswith(".pkl"):
-        logger.info("Cargando modelo clasico (PKL): %s", path)
-        loaded = joblib.load(path)
-        encoder = getattr(loaded, "label_encoder", None)
-        classes = list(encoder.classes_) if encoder is not None else None
-        return loaded, "ml_standard", classes
-
-    logger.info("Cargando modelo de Red Neuronal (Keras/TF): %s", path)
-    from tensorflow.keras.models import load_model as load_keras_model
-    return load_keras_model(path), "deep_learning", _load_label_classes(path)
-
-
-def _candidate_model_paths(
-    models_dir: str, model_name: str, base_filename: str, strategy_name: str | None = None,
-) -> list[str]:
-    """
-    Rutas candidatas en orden de precedencia:
-    0) {modelo}_{tf}_{symbol}_{estrategia} exacto (es lo que escribe el entrenamiento),
-    1) nombre libre (el usuario ha renombrado el modelo),
-    2) formato {modelo}_{timeframe}_{symbol} sin sufijo.
-    Las variantes con otro sufijo de estrategia las resuelve load_model (ambigüedad).
-    """
-    names = [f"{base_filename}_{strategy_name}"] if strategy_name else []
-    names += [model_name, base_filename]
-    return [os.path.join(models_dir, f"{name}{ext}") for name in names for ext in MODEL_EXTENSIONS]
-
-
-def _suffix_variants(models_dir: str, base_filename: str) -> list[str]:
-    """Modelos del mismo modelo/tf/symbol entrenados con alguna estrategia (orden estable)."""
-    return [
-        os.path.join(models_dir, fname)
-        for fname in sorted(os.listdir(models_dir))
-        if fname.startswith(f"{base_filename}_") and fname.endswith(MODEL_EXTENSIONS)
-    ]
-
-
-def _trained_strategy(model: Any, path: str) -> str | None:
-    """Estrategia con la que se entrenó el modelo (atributo del .pkl o .metadata.json del .keras)."""
-    declared = getattr(model, "strategy_name", None)
-    if declared:
-        return declared
-    metadata_path = os.path.splitext(path)[0] + ".metadata.json"
-    if os.path.exists(metadata_path):
-        with open(metadata_path, encoding="utf-8") as f:
-            return json.load(f).get("strategy_name")
-    return None
-
-
-def _attach_training_metadata(model: Any, path: str) -> None:
-    """Expone warmup_candles y train_end_ts también en los .keras (viven en su .metadata.json)."""
-    metadata_path = os.path.splitext(path)[0] + ".metadata.json"
-    if not os.path.exists(metadata_path):
-        return
-    with open(metadata_path, encoding="utf-8") as f:
-        meta = json.load(f)
-    for key in ("warmup_candles", "train_end_ts", "feature_cols"):
-        if getattr(model, key, None) is None and meta.get(key) is not None:
-            setattr(model, key, meta[key])
-
-
-def load_model(
-    model_name: str, timeframe: str, symbol: str, strategy_name: str | None = None,
-) -> tuple[Any, str, list[int] | None]:
-    """
-    Carga dinámicamente diferentes tipos de modelos basados en su extensión y librería.
-    Soporta Scikit-Learn, XGBoost, LightGBM (.pkl) y TensorFlow/Keras (.h5 / .keras).
-    Devuelve (modelo, tipo, label_classes) donde label_classes es la lista original
-    de clases [-1, 0, 1] leída del .metadata.json (o None si no existe).
-
-    Con strategy_name se prefiere el modelo entrenado con esa estrategia y se aborta si el
-    modelo cargado declara otra distinta (sus features no coincidirían).
-    """
-    models_dir = os.path.join(PROJECT_ROOT, 'models')
-    base_filename = f"{model_name}_{timeframe}_{symbol}"
-
-    path = next((p for p in _candidate_model_paths(models_dir, model_name, base_filename, strategy_name)
-                 if os.path.exists(p)), None)
-    if path is None:
-        variants = _suffix_variants(models_dir, base_filename)
-        if len(variants) > 1:
-            raise ValueError(
-                f"Modelo ambiguo para '{base_filename}': {[os.path.basename(v) for v in variants]}. "
-                "Indica la estrategia o elimina los que sobren."
-            )
-        path = variants[0] if variants else None
-    if path is None:
-        raise FileNotFoundError(
-            f"No se encontró ningún modelo para '{model_name}' "
-            f"(buscado como {base_filename}[_estrategia], nombre libre y variantes con sufijo). "
-            f"Extensiones probadas: {', '.join(MODEL_EXTENSIONS)}"
-        )
-
-    verify_model_manifest(path)
-    loaded = _load_from_path(path)
-    _attach_training_metadata(loaded[0], path)
-    trained_with = _trained_strategy(loaded[0], path)
-    if strategy_name and trained_with and trained_with != strategy_name:
-        raise ValueError(
-            f"El modelo {os.path.basename(path)} se entrenó con '{trained_with}' "
-            f"pero el motor usa '{strategy_name}': las features no coinciden."
-        )
-    return loaded
-
 # =========================
 # SUBFUNCIONES DE PREDICCIÓN
 # =========================
+#: Probabilidad mínima de la clase predicha para operar con un modelo binario de scikit-learn.
+#: shortcut: umbral único para todos los modelos; si hace falta uno por modelo, guardarlo en su metadata.
+BINARY_MIN_PROB = 0.52
 
 def _prepare_feature_row(
     df_buffer: deque,
@@ -210,12 +81,6 @@ def _prepare_feature_row(
         return None
 
     ultima_fila = df_con_indicadores[actual_feature_cols].iloc[[-1]].copy()
-
-    if list(ultima_fila.columns) != actual_feature_cols:
-        logger.warning(
-            "[%s] Orden de columnas diferente. Reordenando.", symbol,
-        )
-        ultima_fila = ultima_fila[actual_feature_cols]
 
     ultima_fila = (
         ultima_fila
@@ -272,9 +137,9 @@ def _predict_ml_standard(
                 "[%s] %s Predice: %s (Sube: %.1f%%, Baja: %.1f%%)",
                 symbol, model_name.upper(), prediccion, prob_sube * 100, prob_baja * 100,
             )
-            if int(prediccion) == 1 and prob_sube >= 0.52:
+            if int(prediccion) == 1 and prob_sube >= BINARY_MIN_PROB:
                 return "BUY"
-            if int(prediccion) == 0 and prob_baja >= 0.52:
+            if int(prediccion) == 0 and prob_baja >= BINARY_MIN_PROB:
                 return "SELL"
 
     except AttributeError:
@@ -298,43 +163,21 @@ def _predict_deep_learning(
 ) -> str | None:
     """Ejecuta predicción con modelos TensorFlow/Keras y devuelve la acción.
 
-    Soporta tanto modelos binarios (sigmoid escalar) como multiclase (softmax).
-    Usa label_classes para decodificar el índice predicho al espacio original.
+    Decodifica con `decode_deep_learning`, la misma función que usa el backtest. Un modelo de 3 clases
+    (-1/0/1) hace hold con 0; uno binario (0/1, o sigmoide) vende con 0.
     """
     raw = model.predict(x_pred, verbose=0)
-
-    if raw.ndim == 2 and raw.shape[1] > 1:
-        # Multiclase softmax — el caso de neural_network entrenado con 3 clases
-        probs = raw[0]
-        encoded_idx = int(np.argmax(probs))
-        if label_classes is not None:
-            original = int(label_classes[encoded_idx])
-        else:
-            # fallback: 3 clases {0→-1, 1→0, 2→1}
-            original = encoded_idx - (len(probs) // 2)
-
-        prob_str = ", ".join(
-            f"{cls}:{p:.1%}" for cls, p in zip(
-                label_classes if label_classes is not None else range(len(probs)), probs
-            )
-        )
-        logger.info("[%s] RED NEURONAL (multiclase) Predice: %d [%s]", symbol, original, prob_str)
-
-        if original == 1:
-            return "BUY"
-        if original == -1:
-            return "SELL"
+    label = int(decode_deep_learning(raw, label_classes)[0])
+    three_classes = (-1 in label_classes) if label_classes is not None else raw.ndim == 2 and raw.shape[1] > 2
+    logger.info("[%s] RED NEURONAL Predice: %d (salida %s)", symbol, label,
+                ", ".join(f"{p:.1%}" for p in np.asarray(raw)[0]))
+    if label == NEUTRAL:
         return None
-
-    else:
-        # Binario sigmoid escalar
-        prob = float(raw[0][0])
-        logger.info("[%s] RED NEURONAL (binario) Predice: %.2f%% confianza alcísta", symbol, prob * 100)
-        if prob >= 0.55:
-            return "BUY"
-        if prob <= 0.45:
-            return "SELL"
-        return None
+    if label == 1:
+        return "BUY"
+    if label == -1 or (label == 0 and not three_classes):
+        return "SELL"
+    return None
 
 
 def _emit_signal(
@@ -350,7 +193,7 @@ def _emit_signal(
         "symbol": symbol,
         "action": action,
         "timeframe": timeframe,
-        "price": float(new_row["close"]),
+        "price": str(Decimal(str(new_row["close"]))),  # texto: Java lo lee como BigDecimal, como en engine_rt
         "timestamp": int(new_row["timestamp"]),
         "is_real": is_real,
         "source": f"AI_{model_name.upper()}",
