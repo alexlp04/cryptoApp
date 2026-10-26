@@ -59,12 +59,12 @@ class UsuarioApplicationServiceTest {
         Usuario u = conPassword("s3creta!");
 
         for (int i = 0; i < Usuario.MAX_INTENTOS; i++) {
-            assertFalse(service.validarCredenciales("alex", "mala"));
+            assertTrue(service.autenticar("alex", "mala").isEmpty());
         }
 
         assertTrue(u.estaBloqueado(Instant.now()));
         ValidationException e = assertThrows(ValidationException.class,
-                () -> service.validarCredenciales("alex", "s3creta!"));
+                () -> service.autenticar("alex", "s3creta!"));
         assertTrue(e.getMessage().contains("bloqueada"));
         verify(repo, times(Usuario.MAX_INTENTOS)).save(u);
     }
@@ -74,10 +74,10 @@ class UsuarioApplicationServiceTest {
     void success_resets_the_counter() {
         Usuario u = conPassword("s3creta!");
 
-        service.validarCredenciales("alex", "mala");
-        service.validarCredenciales("alex", "mala");
+        service.autenticar("alex", "mala");
+        service.autenticar("alex", "mala");
         assertEquals(2, u.getIntentosFallidos());
-        assertTrue(service.validarCredenciales("alex", "s3creta!"));
+        assertTrue(service.autenticar("alex", "s3creta!").isPresent());
 
         assertEquals(0, u.getIntentosFallidos());
     }
@@ -88,16 +88,16 @@ class UsuarioApplicationServiceTest {
         Usuario u = conPassword("s3creta!");
         u.restaurarBloqueo(0, Instant.now().minusSeconds(1));
 
-        assertTrue(service.validarCredenciales("alex", "s3creta!"));
+        assertTrue(service.autenticar("alex", "s3creta!").isPresent());
         assertEquals(null, u.getBloqueadoHasta());
     }
 
     @Test
-    @DisplayName("Un usuario inexistente devuelve false sin guardar nada")
+    @DisplayName("Un usuario inexistente devuelve vacío sin guardar nada")
     void unknown_user_is_rejected() {
         when(repo.findByNombreAndEliminadoFalse("nadie")).thenReturn(Optional.empty());
 
-        assertFalse(service.validarCredenciales("nadie", "x"));
+        assertTrue(service.autenticar("nadie", "x").isEmpty());
         verify(repo, never()).save(any());
     }
 }
