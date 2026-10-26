@@ -86,6 +86,7 @@ def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int, 
     """
     import engine_ai_rt
     import engine_rt
+    import rt_stream
 
     engine = engine_ai_rt if ai_model is not None else engine_rt
     out = io.StringIO()
@@ -103,7 +104,7 @@ def _rt_events(strategy_rt, seed: list[dict], candles: list[dict], window: int, 
     patches: list[Any] = [
         mock.patch.object(engine, "load_strategy_by_path", lambda *a, **k: strategy_rt),
         mock.patch.object(engine, "fetch_recent_klines", lambda *a, **k: list(seed)),
-        mock.patch.object(engine.websockets, "connect", lambda url: _ReplayStream(candles, out)),
+        mock.patch.object(rt_stream.websockets, "connect", lambda url: _ReplayStream(candles, out)),
         mock.patch.object(asyncio, "sleep", stop),
     ]
     if ai_model is not None:

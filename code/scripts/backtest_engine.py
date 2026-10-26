@@ -23,7 +23,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from risk_management import position_size, strategy_levels, valid_stop
+from risk_management import (
+    position_size,
+    protective_exit_long,
+    protective_exit_short,
+    strategy_levels,
+    valid_stop,
+)
 
 # =============================================================================
 # CONFIGURACIÓN DE RUTAS
@@ -65,37 +71,6 @@ RESULTADO_NEUTRO: str = "NEUTRO"
 
 # =============================================================================
 # HELPERS PRIVADOS DE GESTIÓN DE POSICIÓN
-# =============================================================================
-
-def _protective_exit(
-    open_: float, high: float, low: float, stop: float, take_profit: float,
-) -> tuple[float, bool] | None:
-    """Salida por stop o por objetivo dentro de la vela: (precio, aplica_slippage), o None.
-
-    Orden pesimista: si la misma vela toca el stop y el objetivo, se asume que saltó primero el stop
-    (con velas no se sabe el orden real). Un hueco más allá del nivel se ejecuta a la apertura:
-    el stop es una orden a mercado (con slippage), el objetivo una orden límite (sin él).
-    """
-    if low <= stop:
-        return min(open_, stop), True
-    if high >= take_profit:
-        return max(open_, take_profit), False
-    return None
-
-
-def _protective_exit_short(
-    open_: float, high: float, low: float, stop: float, take_profit: float,
-) -> tuple[float, bool] | None:
-    """Como _protective_exit para un corto: el stop está por encima (compra a mercado) y el objetivo por debajo."""
-    if high >= stop:
-        return max(open_, stop), True
-    if low <= take_profit:
-        return min(open_, take_profit), False
-    return None
-
-
-# =============================================================================
-# UTILIDADES DE CARPETA Y CSV
 # =============================================================================
 
 def crear_carpeta_estrategia(nombre_estrategia: str) -> str:
@@ -259,7 +234,7 @@ def _simulate(
             # no solo con su cierre. La señal de la estrategia se evalúa al cierre, como antes.
             hit = None
             if ohl_idx is not None:
-                protect = _protective_exit_short if short else _protective_exit
+                protect = protective_exit_short if short else protective_exit_long
                 hit = protect(open_, high, low, stop_price, take_profit)
             if hit is not None:
                 stopped = True

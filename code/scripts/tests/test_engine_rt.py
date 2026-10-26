@@ -42,11 +42,14 @@ import json
 
 import engine_rt
 import pytest
+import rt_stream
+
+MINUTE_MS = 60_000  # los timestamps de los tests son índices de vela de 1m: el motor exige velas contiguas
 
 
 def _kline(ts: int, close: float = 100.0) -> str:
     c = str(close)
-    return json.dumps({"k": {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": "1", "x": True}})
+    return json.dumps({"k": {"t": ts * MINUTE_MS, "o": c, "h": c, "l": c, "c": c, "v": "1", "x": True}})
 
 
 class _FakeWS:
@@ -98,7 +101,7 @@ def _sin_red(monkeypatch):
 
 def _run(monkeypatch, messages, strategy, sleeps):
     monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: strategy)
-    monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
+    monkeypatch.setattr(rt_stream.websockets, "connect", lambda url: _FakeWS(messages))
 
     async def fake_sleep(delay):
         sleeps.append(delay)
@@ -125,7 +128,7 @@ def test_clean_close_waits_before_reconnecting_with_growing_backoff(monkeypatch)
     with pytest.raises(_Stop):
         _run(monkeypatch, [], _Strategy(), sleeps)  # el stream cierra sin mensajes
 
-    assert sleeps == [5, 10, 20]
+    assert sleeps == [1, 2, 4]
 
 
 def test_non_kline_messages_are_ignored(monkeypatch):
@@ -142,8 +145,9 @@ def test_non_kline_messages_are_ignored(monkeypatch):
 # ── Modo de señal: cierre, apertura o ambos (#85) ───────────────────────────
 
 def _tick(open_time: int, closed: bool, price: float = 100.0) -> str:
+    """Tick de la vela `open_time` (en milésimas de vela: 1000 = vela 1, 2000 = vela 2...)."""
     p = str(price)
-    return json.dumps({"k": {"t": open_time, "o": p, "h": p, "l": p, "c": p, "v": "1", "x": closed}})
+    return json.dumps({"k": {"t": open_time * 60, "o": p, "h": p, "l": p, "c": p, "v": "1", "x": closed}})
 
 
 class _BuyAlways(_Strategy):
@@ -173,7 +177,7 @@ class _BuyAlways(_Strategy):
 def _signals_for(monkeypatch, capsys, mode, messages):
     sleeps: list = []
     monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: _BuyAlways())
-    monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
+    monkeypatch.setattr(rt_stream.websockets, "connect", lambda url: _FakeWS(messages))
 
     async def fake_sleep(delay):
         sleeps.append(delay)
@@ -183,7 +187,7 @@ def _signals_for(monkeypatch, capsys, mode, messages):
     with pytest.raises(_Stop):
         asyncio.run(engine_rt.run_symbol("BTCUSDT", "1m", "x.py", 1000.0, 0.02, False, signal_mode=mode))
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("SIGNAL")]
-    return [json.loads(ln.split("\t", 1)[1])["timestamp"] for ln in lines]
+    return [json.loads(ln.split("\t", 1)[1])["timestamp"] // 60 for ln in lines]
 
 
 # vela 1000: dos ticks y cierre; vela 2000: primer tick, cierre; vela 3000: primer tick (sin cerrar)
@@ -216,7 +220,7 @@ def test_al_conectar_el_buffer_se_siembra_y_la_estrategia_no_espera_al_calentami
     sleeps: list = []
     strategy = _Strategy()
     strategy.WARMUP_PERIOD = 5
-    historico = [{"timestamp": t, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}
+    historico = [{"timestamp": t * MINUTE_MS, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}
                  for t in range(1, 6)]
     monkeypatch.setattr(engine_rt, "fetch_recent_klines", lambda *a, **k: list(historico))
 
@@ -245,7 +249,7 @@ def test_si_el_rest_falla_se_sigue_con_el_stream(monkeypatch):
 
 def _signals(monkeypatch, capsys, strategy, messages, open_position=None):
     monkeypatch.setattr(engine_rt, "load_strategy_by_path", lambda *a, **k: strategy)
-    monkeypatch.setattr(engine_rt.websockets, "connect", lambda url: _FakeWS(messages))
+    monkeypatch.setattr(rt_stream.websockets, "connect", lambda url: _FakeWS(messages))
 
     async def fake_sleep(delay):
         raise _Stop
