@@ -152,21 +152,6 @@ public final class PathConfig {
         return false;
     }
 
-    public static String getValidModelPath(String nombreModelo, String timeframe, String symbol) {
-        if (contieneTraversal(nombreModelo, timeframe, symbol)) {
-            throw new IllegalArgumentException("Nombre de modelo inválido por seguridad.");
-        }
-
-        return findModelPath(nombreModelo, timeframe, symbol).orElseThrow(() -> new IllegalArgumentException(
-            "No existe el modelo '" + nombreModelo + "' para " + timeframe + ":" + symbol +
-            " en la carpeta: " + MODELS_DIR + "\n" +
-            "Buscado como: 1) nombre libre (.pkl/.keras/.h5), " +
-            "2) formato estándar ({modelo}_{timeframe}_{symbol}), " +
-            "3) variantes con sufijo de estrategia. " +
-            "¿Has ejecutado el comando 'train'?"
-        ));
-    }
-
     /**
      * Comprueba si el script de Python de la estrategia existe.
      */
@@ -177,7 +162,7 @@ public final class PathConfig {
 
     /**
      * Comprueba si el archivo del modelo entrenado existe para ese algoritmo, timeframe y símbolo.
-     * Aplica exactamente los mismos criterios de búsqueda que {@link #getValidModelPath}.
+     * Busca como nombre libre, en el formato estándar ({modelo}_{timeframe}_{symbol}) y con sufijo de estrategia.
      */
     public static boolean existeModelo(String modelo, String timeframe, String symbol) {
         return !contieneTraversal(modelo, timeframe, symbol)
