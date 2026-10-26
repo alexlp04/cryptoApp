@@ -153,9 +153,18 @@ Crea el archivo `code/backendBotTrading/.env` con las variables minimas requerid
 
 ```env
 DB_URL=jdbc:mysql://localhost:3306/bottradingdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-DB_USER=tu_usuario
+DB_USER=admin
 DB_PASSWORD=tu_password
+DB_RO_USER=userro
+DB_RO_PASSWORD=tu_password_de_solo_lectura
 ```
+
+`DB_USER` / `DB_PASSWORD` es el usuario con el que escribe la aplicacion (lectura, escritura y las migraciones de
+Flyway sobre `bottradingdb`). `DB_RO_USER` / `DB_RO_PASSWORD` es un usuario de solo lectura, con `SELECT` y nada mas,
+para consultar desde fuera de la aplicacion (cliente `mysql`, el MCP de MySQL de `.mcp.json`...): la aplicacion no
+lo usa y, si falta, no pasa nada. Para que Claude Code lo vea, exporta esas dos variables antes de lanzarlo (no hagas `source .env`: el `&` de `DB_URL` o de una
+contrasena lo rompe):
+`export DB_RO_USER=$(grep -m1 '^DB_RO_USER=' code/backendBotTrading/.env | cut -d= -f2-)` y lo mismo con `DB_RO_PASSWORD`. Nunca uses `root` ni subas el `.env` (esta en `.gitignore`).
 
 **El esquema lo crea y versiona Flyway**, no Hibernate: `ddl-auto` esta en `validate`, asi que
 basta con una base vacia. Las migraciones viven en
