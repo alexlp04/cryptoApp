@@ -1,5 +1,7 @@
 package com.bottrading.interfaces.cli.commands;
 
+import java.util.Optional;
+
 import com.bottrading.interfaces.cli.CliCommandContext;
 import com.bottrading.interfaces.cli.CliInputValidator;
 import com.bottrading.user.domain.Usuario;
@@ -24,10 +26,10 @@ public final class LoginCommand implements CliCommand {
         String nombre = context.scanner().nextLine().trim();
         String pass = CliInputValidator.readPassword(context, "Password: ");
 
-        if (context.authenticateUseCase().validarCredenciales(nombre, pass)) {
-            Usuario usuario = context.getUsuarioUseCase().obtenerPorNombre(nombre);
-            context.sessionManager().login(usuario);
-            context.println().accept("Sesion iniciada como " + usuario.getNombre());
+        Optional<Usuario> usuario = context.authenticateUseCase().autenticar(nombre, pass);
+        if (usuario.isPresent()) {
+            context.sessionManager().login(usuario.get());
+            context.println().accept("Sesion iniciada como " + usuario.get().getNombre());
             return;
         }
 

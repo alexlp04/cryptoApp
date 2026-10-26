@@ -64,8 +64,24 @@ public final class PathConfig {
     public static final String ENGINE_OPTIMIZE_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_OPTIMIZE);
     public static final String ENGINE_AI_RT_PATH = resolvePath("code", DIR_SCRIPTS, FILE_ENGINE_AI_RT);
 
+    /** Variable de entorno (o propiedad del sistema) que fija la raíz del proyecto, p. ej. dentro de una imagen Docker. */
+    static final String PROJECT_ROOT_ENV = "CRYPTOAPP_PROJECT_ROOT";
+
     private static String calculateProjectRoot() {
-        String userDir = System.getProperty("user.dir");
+        String override = System.getenv(PROJECT_ROOT_ENV);
+        return calculateProjectRoot(override != null ? override : System.getProperty("cryptoapp.project-root"),
+                System.getProperty("user.dir"));
+    }
+
+    /**
+     * Raíz explícita si se indica; si no, la primera carpeta ascendente desde userDir que contiene
+     * code/backendBotTrading. Sin ninguna de las dos cae a userDir: shortcut, vale mientras la
+     * estructura del repositorio viaje con la aplicación (la imagen Docker la copia entera).
+     */
+    static String calculateProjectRoot(String override, String userDir) {
+        if (override != null && !override.isBlank()) {
+            return Paths.get(override.trim()).toAbsolutePath().toString();
+        }
         Path path = Paths.get(userDir);
         
         // Búsqueda recursiva hacia arriba hasta encontrar la carpeta que contiene "code/backendBotTrading"

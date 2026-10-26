@@ -2,10 +2,7 @@ package com.bottrading.training.infrastructure.bridge;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,12 +73,12 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
             String timeframe,
             int warmupCandles) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        String primarySymbol = symbolCandles.keySet().stream().findFirst().orElse("UNKNOWN");
+        String primarySymbol = EnginePayloads.simboloPrincipal(symbolCandles);
 
         payload.put("model_type", modelType);
         payload.put("symbol", primarySymbol);
         payload.put("timeframe", timeframe);
-        payload.put("dataset", serializarVelas(symbolCandles));
+        payload.put("dataset", EnginePayloads.serializarVelas(symbolCandles));
         payload.put("hyperparameters", hyperparameters == null ? Map.of() : hyperparameters);
         // Obligatorio: sin el, engine_train entrena sobre las velas de calentamiento,
         // cuyos indicadores aun no estan formados (engine_optimize si lo enviaba).
@@ -89,36 +86,10 @@ public class PythonTrainingAdapter implements TrainingEnginePort {
 
         if (strategyPath != null && !strategyPath.isBlank()) {
             payload.put("strategy_path", strategyPath);
-            payload.put("strategy_name", extraerNombreEstrategia(strategyPath));
+            payload.put("strategy_name", EnginePayloads.nombreEstrategia(strategyPath));
         }
 
         return payload;
-    }
-
-    private List<Map<String, Object>> serializarVelas(Map<String, List<Vela>> symbolCandles) {
-        List<Map<String, Object>> dataset = new ArrayList<>();
-
-        for (Map.Entry<String, List<Vela>> entry : symbolCandles.entrySet()) {
-            for (Vela vela : entry.getValue()) {
-                Map<String, Object> row = new HashMap<>();
-                row.put("symbol", entry.getKey());
-                row.put("timestamp", vela.getOpenTime());
-                row.put("open", vela.getOpen());
-                row.put("high", vela.getHigh());
-                row.put("low", vela.getLow());
-                row.put("close", vela.getClose());
-                row.put("volume", vela.getVolume());
-                dataset.add(row);
-            }
-        }
-
-        return dataset;
-    }
-
-    private String extraerNombreEstrategia(String strategyPath) {
-        Path path = Paths.get(strategyPath).getFileName();
-        String fileName = path == null ? strategyPath : path.toString();
-        return fileName.endsWith(".py") ? fileName.substring(0, fileName.length() - 3) : fileName;
     }
 
     TrainingResult leerTrainingResult(InputStream inputStream) throws IOException {
