@@ -254,19 +254,17 @@ cobertura de JaCoCo, que el CI publica como artefacto del run.
 
 ### Auditoria de dependencias
 
-OWASP dependency-check esta **deliberadamente fuera** de `mvn verify` (sus `executions` estan
-comentadas en el `pom.xml`): la API del NVD es intermitente y no debe tumbar la validacion de un
-PR. Corre en su propio workflow, `.github/workflows/security-audit.yml`, cada lunes y bajo
-demanda, junto a `pip-audit` sobre `requirements.txt`. Ninguno bloquea; ambos dejan su informe
-como artefacto.
+Los avisos de seguridad de las dependencias estan **fuera** de `mvn verify`: consultan APIs externas
+intermitentes y no deben tumbar la validacion de un PR. Corren en su propio workflow,
+`.github/workflows/security-audit.yml`, cada lunes y bajo demanda: las dependencias Java contra OSV
+(`.github/scripts/osv_audit.py`, sin clave) y las Python con `pip-audit` sobre `requirements.txt`. Ninguno
+bloquea PRs. Los avisos Java aceptados, con su motivo, estan en `.github/osv-ignore.txt`.
 
 ```bash
-# Manualmente, tal y como documenta el pom
-cd code/backendBotTrading && mvn dependency-check:check -N
+# En local
+cd code/backendBotTrading && mvn dependency:list -DincludeScope=runtime -DoutputFile=/tmp/deps.txt
+python ../../.github/scripts/osv_audit.py < /tmp/deps.txt
 ```
-
-> Define el secreto `NVD_API_KEY` en el repositorio para que el analisis no quede limitado por
-> el rate limit del NVD. Sin el funciona, pero mucho mas lento.
 
 ### Esquema de base de datos
 

@@ -26,7 +26,6 @@
         <maven.spotbugs.version>4.8.6.2</maven.spotbugs.version>
         <spotbugs.version>4.8.6</spotbugs.version>
         <maven.jacoco.version>0.8.12</maven.jacoco.version>
-        <maven.dependency.check.version>10.0.4</maven.dependency.check.version>
     </properties>
 
     <dependencies>
@@ -174,33 +173,6 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin>
-
-            <!-- OWASP Dependency-Check: Manual trigger only (transient NVD API unreliability) -->
-            <!-- Usage: mvn dependency-check:check -N -->
-            <plugin>
-                <groupId>org.owasp</groupId>
-                <artifactId>dependency-check-maven</artifactId>
-                <version>${maven.dependency.check.version}</version>
-                <configuration>
-                    <format>HTML</format>
-                    <failBuildOnCVSS>7</failBuildOnCVSS>
-                    <failOnError>false</failOnError>
-                    <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
-                </configuration>
-                <!-- Executions commented: NVD API is unreliable in CI/CD context. -->
-                <!-- Unlock manually with: mvn dependency-check:check if setup changes or before releases. -->
-                <!-- 
-                <executions>
-                    <execution>
-                        <id>dependency-check</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                -->
             </plugin>
 
             <plugin>

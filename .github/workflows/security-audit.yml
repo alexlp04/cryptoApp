@@ -2,15 +2,12 @@ name: Auditoría de dependencias
 
 # Lo que el CI principal NO cubre.
 #
-# El pom tiene OWASP dependency-check con sus `executions` comentadas a propósito
-# ("NVD API is unreliable in CI/CD context"), así que hoy no se ejecuta nunca: las
-# dependencias Java no se auditan. Las Python tampoco, porque requirements.txt no pasa
-# por ningún escáner.
+# Lo que el CI principal NO cubre: avisos de seguridad en las dependencias. Java se consulta en OSV
+# (api.osv.dev, sin clave ni bases de datos que descargar; el escáner OWASP se quitó porque la
+# descarga del NVD no terminaba) y Python con pip-audit sobre requirements.txt.
 #
-# La decisión del pom es razonable para el camino de PR —una API externa intermitente no
-# debe tumbar la validación de un cambio de código— pero eso no significa renunciar al
-# análisis, sino sacarlo de ahí. Aquí corre en su propio workflow: semanal, manual bajo
-# demanda, y sin bloquear a nadie. Si encuentra algo, queda en los artefactos.
+# Una API externa intermitente no debe tumbar la validación de un cambio de código, así que
+# corre en su propio workflow: semanal, manual bajo demanda, y sin bloquear a nadie.
 
 on:
   schedule:
@@ -23,11 +20,8 @@ permissions:
 
 jobs:
   java:
-    name: Dependencias Java (OWASP)
+    name: Dependencias Java (OSV)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: code/backendBotTrading
     steps:
       - uses: actions/checkout@v4
 
@@ -37,31 +31,15 @@ jobs:
           distribution: temurin
           cache: maven
 
-      # La base de datos del NVD son cientos de MB y su descarga es la parte lenta y
-      # frágil del análisis. Cachearla entre semanas evita repetirla desde cero.
-      - name: Cache de la base NVD
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: nvd-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: nvd-${{ runner.os }}-
+      # Las dependencias de runtime (transitivas incluidas) que resuelve Maven de verdad.
+      - name: Listar dependencias
+        working-directory: code/backendBotTrading
+        run: mvn -B --no-transfer-progress dependency:list -DincludeScope=runtime -DoutputFile=${{ runner.temp }}/deps.txt
 
-      # -N (non-recursive) es la invocación que documenta el propio pom.
-      # NVD_API_KEY es opcional: sin ella funciona, pero con límite de peticiones muy bajo.
-      # El pom ya tiene failOnError=false y failBuildOnCVSS=7.
-      - name: dependency-check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn -B --no-transfer-progress dependency-check:check -N
-
-      - name: Publicar informe
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-check-report
-          path: code/backendBotTrading/target/dependency-check-report.html
-          if-no-files-found: ignore
-          retention-days: 30
+      # OSV no necesita clave ni descargar bases de datos. Los avisos aceptados, con su motivo, están
+      # en .github/osv-ignore.txt; cualquier otro hace fallar el job (este workflow no bloquea PRs).
+      - name: Consultar OSV
+        run: python .github/scripts/osv_audit.py < "${{ runner.temp }}/deps.txt"
 
   python:
     name: Dependencias Python (pip-audit)
