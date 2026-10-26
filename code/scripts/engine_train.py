@@ -32,6 +32,7 @@ from shared_utils import (
     require_timeframe,
     save_model,
     setup_engine_logging,
+    write_provenance,
 )
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.utils.class_weight import compute_class_weight
@@ -210,6 +211,7 @@ def main() -> None:
 
         # Metricas de clasificacion
         avg = metric_average(y_test, y_pred)
+        avg_note = "" if avg == "binary" else " (media ponderada por clase)"  # con 3 clases no es "acierto en subidas"
         acc = float(accuracy_score(y_test, y_pred))
         prec = float(precision_score(y_test, y_pred, average=avg, zero_division=0))
         rec = float(recall_score(y_test, y_pred, average=avg, zero_division=0))
@@ -219,10 +221,17 @@ def main() -> None:
             acc, prec, rec, f1,
         )
 
+        write_provenance(model_path, {
+            "symbol": symbol, "timeframe": timeframe, "model_type": model_type, "strategy_name": strategy_name,
+            "data_from_ts": int(timestamps_all[0]), "data_to_ts": int(timestamps_all[-1]),
+            "train_rows": int(len(X_train)), "test_rows": int(len(X_test)),
+            "metrics": {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "average": avg},
+        })
+
         # Backtest real sobre test set con predicciones del modelo (P1.1)
         y_pred_original = label_encoder.inverse_transform(y_pred)
         df_test = df_enriched_full[
-            df_enriched_full["timestamp"].isin(set(timestamps_test.tolist()))
+            df_enriched_full["timestamp"].isin(timestamps_test)
         ].sort_values("timestamp").reset_index(drop=True)
         del df_enriched_full
         gc.collect()
@@ -249,9 +258,9 @@ def main() -> None:
             "label_classes": label_encoder.classes_.tolist(),
             "metrics": {
                 "Accuracy (Precision Global)": f"{acc * 100:.2f}%",
-                "Precision (Acierto en subidas)": f"{prec * 100:.2f}%",
-                "Recall (Deteccion de subidas)": f"{rec * 100:.2f}%",
-                "F1-Score (Balance)": f"{f1 * 100:.2f}%",
+                f"Precision{avg_note}": f"{prec * 100:.2f}%",
+                f"Recall{avg_note}": f"{rec * 100:.2f}%",
+                f"F1-Score{avg_note}": f"{f1 * 100:.2f}%",
             },
             "trading_simulation_test": {
                 "op_totales": test_stats["op_totales"],
