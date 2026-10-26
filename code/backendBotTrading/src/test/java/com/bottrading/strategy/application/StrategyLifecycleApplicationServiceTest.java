@@ -565,13 +565,13 @@ class StrategyLifecycleApplicationServiceTest {
         void shutdown_pauses_and_startup_reconciles() {
             com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase useCase =
                     org.mockito.Mockito.mock(com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase.class);
-            StrategyLifecycleHooks hooks = new StrategyLifecycleHooks(useCase);
+            StrategyLifecycleHooks hooks = new StrategyLifecycleHooks(useCase, false);
 
             hooks.alArrancar();
             hooks.alApagar();
 
             verify(useCase).reconciliarEstadoConRuntime();
-            verify(useCase).detenerTodas();
+            verify(useCase).pausarPorApagado();
             verify(useCase, never()).terminarTodas();
         }
     }
@@ -694,5 +694,92 @@ class StrategyLifecycleApplicationServiceTest {
 
         verify(instanciaRepo, never()).save(any());
         verify(runtimeCoordinator, never()).ejecutarTradeEnTiempoReal(any(), any());
+    }
+
+    @Nested
+    @DisplayName("Reanudar al arrancar (24/7)")
+    class ReanudarAlArrancarTests {
+
+        @Test
+        @DisplayName("✓ Una estrategia nueva y una reanudada quedan marcadas para reanudar")
+        void started_strategies_are_marked() {
+            doReturn(crearInstanciaTest(42L, EstadoEstrategia.CREADA))
+                    .when(accountingService).activateStrategy(anyLong(), anyLong(), any());
+            InstanciaEstrategia nueva = lifecycleService.crearYActivarEstrategia("S", "m", "1h", List.of("BTCUSDT"),
+                    false, 1L, new BigDecimal("0.01"), new BigDecimal("100"), 5L);
+            InstanciaEstrategia pausada = crearInstanciaTest(10L, EstadoEstrategia.DETENIDA);
+            doReturn(Optional.of(pausada)).when(instanciaRepo).findByIdWithLock(10L);
+
+            lifecycleService.iniciarEstrategiaDetenida(10L);
+
+            assertThat(nueva.isReanudarAlArrancar(), is(true));
+            assertThat(pausada.isReanudarAlArrancar(), is(true));
+        }
+
+        @Test
+        @DisplayName("✓ Parar a mano quita la marca; el apagado de la aplicación la conserva")
+        void manual_stop_clears_the_mark_but_shutdown_keeps_it() {
+            InstanciaEstrategia aMano = crearInstanciaTest(1L, EstadoEstrategia.ACTIVA);
+            InstanciaEstrategia porApagado = crearInstanciaTest(2L, EstadoEstrategia.ACTIVA);
+            aMano.setReanudarAlArrancar(true);
+            porApagado.setReanudarAlArrancar(true);
+            doReturn(Optional.of(aMano)).when(instanciaRepo).findByIdWithLock(1L);
+            doReturn(Optional.of(porApagado)).when(instanciaRepo).findByIdWithLock(2L);
+            doReturn(Set.of(2L)).when(runtimeCoordinator).getIdsEstrategiasActivas();
+
+            lifecycleService.detenerEstrategia(1L);
+            lifecycleService.pausarPorApagado();
+
+            assertThat(aMano.getEstado(), is(EstadoEstrategia.DETENIDA));
+            assertThat(aMano.isReanudarAlArrancar(), is(false));
+            assertThat(porApagado.getEstado(), is(EstadoEstrategia.DETENIDA));
+            assertThat(porApagado.isReanudarAlArrancar(), is(true));
+        }
+
+        @Test
+        @DisplayName("✓ Parar a mano una estrategia ya DETENIDA también quita la marca")
+        void stopping_an_already_paused_strategy_clears_the_mark() {
+            InstanciaEstrategia pausada = crearInstanciaTest(3L, EstadoEstrategia.DETENIDA);
+            pausada.setReanudarAlArrancar(true);
+            doReturn(Optional.of(pausada)).when(instanciaRepo).findByIdWithLock(3L);
+
+            lifecycleService.detenerEstrategia(3L);
+
+            assertThat(pausada.isReanudarAlArrancar(), is(false));
+        }
+
+        @Test
+        @DisplayName("✓ Al arrancar se reanudan las marcadas y una que falla no impide las demás")
+        void resumes_marked_strategies_even_if_one_fails() {
+            InstanciaEstrategia rota = crearInstanciaTest(1L, EstadoEstrategia.DETENIDA);
+            InstanciaEstrategia buena = crearInstanciaTest(2L, EstadoEstrategia.DETENIDA);
+            doReturn(List.of(rota, buena)).when(instanciaRepo)
+                    .findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia.DETENIDA);
+            doReturn(Optional.of(rota)).when(instanciaRepo).findByIdWithLock(1L);
+            doReturn(Optional.of(buena)).when(instanciaRepo).findByIdWithLock(2L);
+            doThrow(new IllegalStateException("sin python")).doNothing().when(runtimeCoordinator)
+                    .ejecutarTradeEnTiempoReal(any(), any());
+
+            lifecycleService.reanudarMarcadas();
+
+            verify(runtimeCoordinator, times(2)).ejecutarTradeEnTiempoReal(any(), any());
+            assertThat(buena.getEstado(), is(EstadoEstrategia.ACTIVA));
+            assertThat(rota.getEstado(), is(EstadoEstrategia.DETENIDA)); // lanzarRuntime la devuelve a DETENIDA
+        }
+
+        @Test
+        @DisplayName("✓ El gancho de arranque reanuda solo con autoresume activo, y después de reconciliar")
+        void startup_hook_resumes_only_when_enabled() {
+            com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase useCase =
+                    org.mockito.Mockito.mock(com.bottrading.strategy.application.port.in.StrategyLifecycleUseCase.class);
+
+            new StrategyLifecycleHooks(useCase, false).alArrancar();
+            verify(useCase, never()).reanudarMarcadas();
+
+            new StrategyLifecycleHooks(useCase, true).alArrancar();
+            org.mockito.InOrder orden = org.mockito.Mockito.inOrder(useCase);
+            orden.verify(useCase, times(2)).reconciliarEstadoConRuntime();
+            orden.verify(useCase).reanudarMarcadas();
+        }
     }
 }

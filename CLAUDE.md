@@ -88,6 +88,12 @@ siga a `requirements.txt`). TensorFlow no va en la imagen (no hay rueda de la ve
 con la pila completa (Flyway V13, registro, login, `fetch` por el motor Python, parada y reinicio con datos);
 arm64 no se ha podido ejecutar todavía.
 
+**Reanudación en el arranque** (`CRYPTOAPP_AUTORESUME`, apagada por defecto y activa en el compose): la columna
+`instancia_estrategia.reanudar_al_arrancar` se marca al activar o reanudar y se limpia al pausar a mano (`detenerEstrategia`);
+el apagado de la aplicación (`pausarPorApagado`) pausa sin limpiarla. Al arrancar, tras reconciliar las ACTIVA huérfanas
+(caída brusca), `reanudarMarcadas` reanuda las DETENIDA marcadas, y una que falla no impide las demás. Probado en Docker con
+`docker stop` y con SIGKILL.
+
 ## Esquema de base de datos
 
 Lo versiona **Flyway**, no `ddl-auto=update`. La baseline vive en

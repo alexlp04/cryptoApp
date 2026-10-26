@@ -15,6 +15,7 @@ public interface InstanciaEstrategiaRepositoryPort {
     List<InstanciaEstrategia> findAll();
 
     List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
+    List<InstanciaEstrategia> findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia estado);
 
     List<InstanciaEstrategia> findByUsuarioId(Long usuarioId);
 
