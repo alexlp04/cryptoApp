@@ -1,0 +1,5 @@
+# Avisos de dependencias Java aceptados (un ID por línea). Cada uno con su motivo; se quita cuando se corrige.
+
+# spring-webmvc 6.2: solo se corrigen en Spring 7. La API de solo lectura no renderiza SSE con fragmentos ni usa XsltView.
+GHSA-j9f9-w8pj-32f8
+GHSA-pc63-qcmh-9cmg
