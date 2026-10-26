@@ -20,9 +20,9 @@
       "env": {
         "MYSQL_HOST": "${MYSQL_HOST:-127.0.0.1}",
         "MYSQL_PORT": "${MYSQL_PORT:-3306}",
-        "MYSQL_USER": "${MYSQL_USER:-bottradinguser}",
+        "MYSQL_USER": "${DB_RO_USER:-userro}",
         "MYSQL_DB": "${MYSQL_DB:-bottradingdb}",
-        "MYSQL_PASS": "${MYSQL_PASS}",
+        "MYSQL_PASS": "${DB_RO_PASSWORD}",
         "ALLOW_INSERT_OPERATION": "false",
         "ALLOW_UPDATE_OPERATION": "false",
         "ALLOW_DELETE_OPERATION": "false",
