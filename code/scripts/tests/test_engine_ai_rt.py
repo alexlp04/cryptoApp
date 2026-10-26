@@ -7,6 +7,7 @@ import engine_ai_rt
 import model_loader
 import numpy as np
 import pytest
+import rt_stream
 from engine_ai_rt import _predict_deep_learning
 
 
@@ -143,6 +144,9 @@ def test_fetch_recent_klines_descarta_la_vela_abierta(monkeypatch):
     monkeypatch.setattr(shared_utils.time, "time", lambda: now_ms / 1000)
 
     class _Resp:
+        status_code = 200
+        headers = types.MappingProxyType({})
+
         def raise_for_status(self):
             pass
 
@@ -176,8 +180,10 @@ class _FakeWS:
         return gen()
 
 
-def _closed_kline(ts: int) -> str:
-    return json.dumps({"E": ts, "k": {"t": ts, "T": ts + 59, "o": "1", "h": "1", "l": "1",
+def _closed_kline(index: int) -> str:
+    """Vela cerrada de 1m número `index` (el motor exige velas contiguas)."""
+    ts = index * 60_000
+    return json.dumps({"E": ts, "k": {"t": ts, "T": ts + 59_999, "o": "1", "h": "1", "l": "1",
                                       "c": "1", "v": "1", "x": True}})
 
 
@@ -187,7 +193,7 @@ def _run_symbol(monkeypatch, strategy, messages, decide, seeded):
     monkeypatch.setattr(engine_ai_rt, "_decide_action", decide)
     monkeypatch.setattr(engine_ai_rt, "fetch_recent_klines",
                         lambda s, tf, limit: seeded.append(limit) or [])
-    monkeypatch.setattr(engine_ai_rt.websockets, "connect", lambda url: _FakeWS(messages))
+    monkeypatch.setattr(rt_stream.websockets, "connect", lambda url: _FakeWS(messages))
     return asyncio.run(engine_ai_rt.run_symbol("BTCUSDT", "1m", "x.py", "xgb", 1000.0, 0.02, False))
 
 
@@ -196,7 +202,7 @@ def test_fallo_persistente_del_modelo_termina_sin_reconectar(monkeypatch):
         raise ValueError("modelo roto")
 
     seeded: list = []
-    messages = [_closed_kline(i * 100) for i in range(engine_ai_rt.MAX_CONSECUTIVE_FAILURES)]
+    messages = [_closed_kline(i) for i in range(engine_ai_rt.MAX_CONSECUTIVE_FAILURES)]
     # warmup 1 → el suelo MIN_WARMUP_CANDLES (50) exige muchas velas: se siembra el buffer a mano
     monkeypatch.setattr(engine_ai_rt, "MIN_WARMUP_CANDLES", 1)
 

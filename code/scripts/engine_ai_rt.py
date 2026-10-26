@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
 import types
@@ -11,11 +10,12 @@ from decimal import Decimal
 
 import numpy as np
 import pandas as pd
-import websockets
 from ipc_protocol import read_request_payload
 from model_loader import NEUTRAL, decode_deep_learning, load_model
 from risk_management import PositionTracker, signal_actions, strategy_levels
+from rt_stream import kline_events
 from shared_utils import (
+    buffer_is_contiguous,
     build_signal_line,
     emit_heartbeats,
     fetch_recent_klines,
@@ -23,7 +23,6 @@ from shared_utils import (
     require_name,
     require_symbol,
     require_timeframe,
-    seed_buffer,
     setup_engine_logging,
     upsert_candle,
 )
@@ -249,9 +248,6 @@ async def run_symbol(
     high_activity_test_mode: bool = False,
     open_position: dict | None = None,
 ) -> None:
-    clean_symbol = symbol.lower().replace("/", "")
-    url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
-
     logger.info("Iniciando AI Stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
     model, model_type, label_classes = load_model(
@@ -261,104 +257,109 @@ async def run_symbol(
     df_buffer: deque = deque(maxlen=buffer_size)
     last_processed_event_id = 0
     consecutive_failures = 0
-    retry_delay = 5
-    max_retry_delay = 300
+    warned_gap_at = -1
     tracker = PositionTracker(open_position)
 
-    while True:
+    def emit_exit(price: float, reason: str, timestamp: int) -> None:
+        """Cierra la posición abierta por stop u objetivo y se lo cuenta a Java."""
+        exit_action = "COVER" if tracker.side == "short" else "SELL"
+        tracker.close()
+        _emit_signal(symbol, exit_action, timeframe, {"close": price, "timestamp": timestamp},
+                     model_name, is_real, reason=reason)
+
+    async for event in kline_events(symbol, timeframe, df_buffer, buffer_size, fetch_recent_klines):
+        k, data = event.k, event.data
         try:
-            async with websockets.connect(url) as ws:
-                logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                await seed_buffer(df_buffer, symbol, timeframe, buffer_size, fetch_recent_klines)
-                async for msg in ws:
-                    data = json.loads(msg)
-                    k = data.get("k")
-                    if not k:
-                        continue  # mensajes que no son kline
-                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
-                    is_candle_closed = k["x"]
+            # Velas que se cerraron mientras el stream estaba caído: en ellas nadie vigiló el stop.
+            for missed in event.missed:
+                hit = tracker.protective_exit_in_candle(missed["open"], missed["high"], missed["low"])
+                if hit is not None:
+                    logger.warning("[%s] El stop/objetivo se tocó durante la desconexión (vela %s)",
+                                   symbol, missed["timestamp"])
+                    emit_exit(hit[0], hit[1], int(missed["timestamp"]))
+                    break
 
-                    # Stop y objetivo se vigilan en cada mensaje, también con la vela sin cerrar.
-                    protective = tracker.protective_exit(float(k["c"]))
-                    if protective is not None:
-                        exit_price, reason = protective
-                        exit_action = "COVER" if tracker.side == "short" else "SELL"
-                        tracker.close()
-                        _emit_signal(symbol, exit_action, timeframe,
-                                     {"close": exit_price, "timestamp": int(k["t"])},
-                                     model_name, is_real, reason=reason)
+            is_candle_closed = k["x"]
+
+            # Stop y objetivo se vigilan en cada mensaje, también con la vela sin cerrar.
+            protective = tracker.protective_exit(float(k["c"]))
+            if protective is not None:
+                emit_exit(protective[0], protective[1], int(k["t"]))
+                continue
+
+            if not is_candle_closed and not high_activity_test_mode:
+                continue
+
+            event_id = (
+                int(data.get("E", 0))
+                if (high_activity_test_mode and not is_candle_closed)
+                else int(k["T"])
+            )
+            if event_id == last_processed_event_id:
+                continue
+            last_processed_event_id = event_id
+
+            new_row = {
+                "timestamp": int(k["t"]),
+                "open": float(k["o"]),
+                "high": float(k["h"]),
+                "low": float(k["l"]),
+                "close": float(k["c"]),
+                "volume": float(k["v"]),
+            }
+            upsert_candle(df_buffer, new_row)
+
+            if len(df_buffer) < min_candles:
+                continue
+
+            if not buffer_is_contiguous(df_buffer, timeframe):
+                # Un hueco en las velas (stream caído sin poder resembrar) falsea los indicadores.
+                if warned_gap_at != int(new_row["timestamp"]):
+                    warned_gap_at = int(new_row["timestamp"])
+                    logger.error("[%s] El buffer tiene huecos: no se predice hasta resembrarlo", symbol)
+                continue
+
+            try:
+                action = await asyncio.to_thread(
+                    _decide_action, df_buffer, strategy, symbol,
+                    model, model_type, model_name, label_classes)
+                consecutive_failures = 0
+            except Exception:
+                # Un fallo del modelo/estrategia no es una caída de red: no reconectar.
+                consecutive_failures += 1
+                logger.exception("Error de predicción en %s (%d/%d)",
+                                 symbol, consecutive_failures, MAX_CONSECUTIVE_FAILURES)
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
+                continue
+
+            # El modelo predice subida (BUY) o bajada (SELL): según la posición abierta, la subida compra
+            # o cubre un corto, y la bajada vende un largo o abre un corto (si la estrategia los permite).
+            shorts = bool(getattr(strategy, "allow_short", False))
+            actions = signal_actions(tracker.side, action == "BUY", action == "SELL",
+                                     shorts and action == "SELL", shorts and action == "BUY")
+            row = None
+            for act in actions:
+                levels = None
+                if act in ("BUY", "SHORT"):
+                    if row is None:
+                        row = await asyncio.to_thread(_indicator_row, df_buffer, strategy)
+                    levels = strategy_levels(strategy, new_row["close"], row, short=act == "SHORT")
+                    if levels is None:
+                        logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
+                                       "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
+                                       act, symbol)
                         continue
-
-                    if not is_candle_closed and not high_activity_test_mode:
-                        continue
-
-                    event_id = (
-                        int(data.get("E", 0))
-                        if (high_activity_test_mode and not is_candle_closed)
-                        else int(k["T"])
-                    )
-                    if event_id == last_processed_event_id:
-                        continue
-                    last_processed_event_id = event_id
-
-                    new_row = {
-                        "timestamp": int(k["t"]),
-                        "open": float(k["o"]),
-                        "high": float(k["h"]),
-                        "low": float(k["l"]),
-                        "close": float(k["c"]),
-                        "volume": float(k["v"]),
-                    }
-                    upsert_candle(df_buffer, new_row)
-
-                    if len(df_buffer) < min_candles:
-                        continue
-
-                    try:
-                        action = await asyncio.to_thread(
-                            _decide_action, df_buffer, strategy, symbol,
-                            model, model_type, model_name, label_classes)
-                        consecutive_failures = 0
-                    except Exception:
-                        # Un fallo del modelo/estrategia no es una caída de red: no reconectar.
-                        consecutive_failures += 1
-                        logger.exception("Error de predicción en %s (%d/%d)",
-                                         symbol, consecutive_failures, MAX_CONSECUTIVE_FAILURES)
-                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                            raise ModelFailure(f"{symbol}: {consecutive_failures} fallos seguidos") from None
-                        continue
-
-                    # El modelo predice subida (BUY) o bajada (SELL): según la posición abierta, la subida compra
-                    # o cubre un corto, y la bajada vende un largo o abre un corto (si la estrategia los permite).
-                    shorts = bool(getattr(strategy, "allow_short", False))
-                    actions = signal_actions(tracker.side, action == "BUY", action == "SELL",
-                                             shorts and action == "SELL", shorts and action == "BUY")
-                    row = None
-                    for act in actions:
-                        levels = None
-                        if act in ("BUY", "SHORT"):
-                            if row is None:
-                                row = await asyncio.to_thread(_indicator_row, df_buffer, strategy)
-                            levels = strategy_levels(strategy, new_row["close"], row, short=act == "SHORT")
-                            if levels is None:
-                                logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
-                                               "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
-                                               act, symbol)
-                                continue
-                        if levels is not None:
-                            tracker.open(*levels, side="short" if act == "SHORT" else "long")
-                        else:
-                            tracker.close()
-                        _emit_signal(symbol, act, timeframe, new_row, model_name, is_real, levels)
-
-            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+                if levels is not None:
+                    tracker.open(*levels, side="short" if act == "SHORT" else "long")
+                else:
+                    tracker.close()
+                _emit_signal(symbol, act, timeframe, new_row, model_name, is_real, levels)
         except ModelFailure:
             raise  # termina el proceso con código != 0 para que Java lo supervise
         except Exception:
-            logger.exception("Error en loop WS de %s", symbol)
+            logger.exception("Error procesando una vela de %s; se sigue con la siguiente", symbol)
 
-        await asyncio.sleep(retry_delay)
-        retry_delay = min(retry_delay * 2, max_retry_delay)
 
 # =========================
 # MAIN

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import inspect
+import itertools
 import json
 import logging
 import logging.handlers
@@ -120,34 +121,116 @@ def setup_engine_logging(engine_name: str, stream=None) -> logging.Logger:
 SIGNAL_PREFIX: str = "SIGNAL\t"
 
 
-def upsert_candle(buffer: Any, candle: dict) -> None:
-    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden."""
+#: Duración de cada timeframe de Binance en ms (una sola tabla para fetch y motores RT).
+INTERVAL_MS: dict[str, int] = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000, "8h": 28_800_000,
+    "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000, "1w": 604_800_000,
+}
+KLINES_URL = "https://api.binance.com/api/v3/klines"
+WS_BASE_URL = "wss://stream.binance.com:9443/ws"
+KLINES_PAGE_LIMIT = 1000  # máximo que Binance devuelve por petición
+KLINES_ATTEMPTS = 3
+KLINES_TIMEOUT_SECONDS = 10.0
+KLINES_MAX_WAIT_SECONDS = 30.0
+
+
+def upsert_candle(buffer: Any, candle: dict) -> bool:
+    """Los ticks de la vela abierta comparten open_time: sustituyen a la última, no se añaden.
+
+    Una vela más antigua que la última (mensaje retrasado o repetido) se descarta: añadirla dejaría
+    el buffer desordenado. Devuelve False si se descartó.
+    """
+    if buffer and candle["timestamp"] < buffer[-1]["timestamp"]:
+        return False
     if buffer and buffer[-1]["timestamp"] == candle["timestamp"]:
         buffer[-1] = candle
     else:
         buffer.append(candle)
+    return True
+
+
+def buffer_is_contiguous(buffer: Any, timeframe: str) -> bool:
+    """True si las velas del buffer van de una en una (sin huecos por mensajes o reconexiones perdidos)."""
+    step = INTERVAL_MS.get(timeframe)
+    if step is None or len(buffer) < 2:
+        return True
+    stamps = [c["timestamp"] for c in buffer]
+    return all(b - a == step for a, b in itertools.pairwise(stamps))
+
+
+def _klines_page(params: dict[str, str | int]) -> list:
+    """Una página de /klines con reintentos: red caída, 5xx, 429/418 (respetando Retry-After) y cuerpos rotos.
+
+    Un 4xx distinto (símbolo inválido, parámetros) no se reintenta: repetirlo no lo arregla.
+    """
+    log = logging.getLogger(__name__)
+    for attempt in range(1, KLINES_ATTEMPTS + 1):
+        wait = 2.0 ** attempt
+        try:
+            response = requests.get(KLINES_URL, params=params, timeout=KLINES_TIMEOUT_SECONDS)
+            if response.status_code in (429, 418) or response.status_code >= 500:
+                retry_after = response.headers.get("Retry-After", "")
+                wait = float(retry_after) if retry_after.isdigit() else wait
+                log.warning("REST klines: HTTP %d; intento %d/%d", response.status_code, attempt, KLINES_ATTEMPTS)
+                response.raise_for_status()
+            response.raise_for_status()
+            data = response.json()  # ValueError si el cuerpo no es JSON (p. ej. HTML de un proxy)
+            if not isinstance(data, list):
+                raise ValueError(f"Respuesta inesperada de /klines: {str(data)[:120]}")  # noqa: TRY004 - se reintenta como un cuerpo roto
+            return data
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, ValueError) as exc:
+            if attempt == KLINES_ATTEMPTS:
+                raise
+            log.warning("REST klines: %s; intento %d/%d", exc, attempt, KLINES_ATTEMPTS)
+        except requests.exceptions.HTTPError as exc:
+            retryable = exc.response is not None and (exc.response.status_code in (429, 418)
+                                                      or exc.response.status_code >= 500)
+            if not retryable or attempt == KLINES_ATTEMPTS:
+                raise
+        time.sleep(min(wait, KLINES_MAX_WAIT_SECONDS))
+    raise RuntimeError("inalcanzable")  # pragma: no cover
 
 
 def fetch_recent_klines(symbol: str, timeframe: str, limit: int = 500) -> list[dict]:
-    """Últimas velas CERRADAS por REST (para sembrar el buffer RT y cerrar huecos al reconectar)."""
-    params: dict[str, str | int] = {
-        "symbol": symbol.replace("/", "").upper(), "interval": timeframe, "limit": limit}
-    response = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
-    response.raise_for_status()
+    """Últimas `limit` velas CERRADAS por REST (para sembrar el buffer RT y cerrar huecos al reconectar).
+
+    Binance da como mucho 1000 por petición: un calentamiento mayor se pide por páginas hacia atrás.
+    """
+    symbol = symbol.replace("/", "").upper()
+    rows: list = []
+    end_time: int | None = None
+    while len(rows) < limit:
+        page_limit = min(KLINES_PAGE_LIMIT, limit - len(rows))
+        params: dict[str, str | int] = {"symbol": symbol, "interval": timeframe, "limit": page_limit}
+        if end_time is not None:
+            params["endTime"] = end_time
+        page = _klines_page(params)
+        if not page:
+            break
+        rows = page + rows
+        end_time = int(page[0][0]) - 1
+        if len(page) < page_limit:
+            break
     now_ms = time.time() * 1000
     return [
         {"timestamp": int(c[0]), "open": float(c[1]), "high": float(c[2]),
          "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])}
-        for c in response.json() if c[6] < now_ms  # closeTime pasada = vela cerrada
+        for c in rows if c[6] < now_ms  # closeTime pasada = vela cerrada
     ]
 
 
-async def seed_buffer(buffer: Any, symbol: str, timeframe: str, limit: int, fetch: Any = None) -> None:
+async def seed_buffer(
+    buffer: Any, symbol: str, timeframe: str, limit: int, fetch: Any = None,
+) -> tuple[bool, list[dict]]:
     """Rellena el buffer con velas cerradas por REST (`fetch` por defecto es fetch_recent_klines).
 
     Se llama al conectar y al reconectar el stream RT: sin esperar horas a juntar el calentamiento
-    y sin huecos por las velas que se perdieron mientras el WebSocket estuvo caído. Si el REST
-    falla se sigue con lo que haya en el buffer y se acumula desde el stream.
+    y sin huecos por las velas que se perdieron mientras el WebSocket estuvo caído.
+
+    Devuelve (ok, perdidas): ok=False si el REST falló (el buffer queda como estaba y puede tener un
+    hueco: el llamador debe reintentar); perdidas son las velas cerradas posteriores a la última que
+    había en el buffer, en las que no hubo ticks que vigilar (para revisar stop y objetivo).
     """
     import asyncio
 
@@ -155,11 +238,14 @@ async def seed_buffer(buffer: Any, symbol: str, timeframe: str, limit: int, fetc
     try:
         klines = await asyncio.to_thread(fetch or fetch_recent_klines, symbol, timeframe, limit)
     except Exception:
-        log.exception("[%s] No se pudo sembrar el buffer por REST; se acumula desde el stream", symbol)
-        return
+        log.exception("[%s] No se pudo sembrar el buffer por REST", symbol)
+        return False, []
+    last_seen = buffer[-1]["timestamp"] if buffer else None
+    missed = [c for c in klines if last_seen is not None and c["timestamp"] >= last_seen]
     buffer.clear()
     buffer.extend(klines)
-    log.info("[%s] Buffer sembrado con %d velas cerradas", symbol, len(buffer))
+    log.info("[%s] Buffer sembrado con %d velas cerradas (%d desde la última vista)", symbol, len(buffer), len(missed))
+    return True, missed
 
 
 def encode_labels(y_train_raw: Any, y_test_raw: Any) -> tuple[Any, Any, Any, Any]:

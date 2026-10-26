@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 from ipc_protocol import write_error, write_response
 from requests.adapters import HTTPAdapter
-from shared_utils import require_symbol, require_timeframe, setup_engine_logging
+from shared_utils import INTERVAL_MS, require_symbol, require_timeframe, setup_engine_logging
 
 logger = setup_engine_logging("engine_fetch")
 
@@ -49,23 +49,6 @@ def _build_session() -> requests.Session:
 # GETs concurrentes al apoyarse en el PoolManager (thread-safe) de urllib3.
 _SESSION: requests.Session = _build_session()
 
-INTERVAL_MS = {
-    "1m": 60_000,
-    "3m": 180_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "30m": 1_800_000,
-    "1h": 3_600_000,
-    "2h": 7_200_000,
-    "4h": 14_400_000,
-    "6h": 21_600_000,
-    "8h": 28_800_000,
-    "12h": 43_200_000,
-    "1d": 86_400_000,
-    "3d": 259_200_000,
-    "1w": 604_800_000,
-    "1M": 2_592_000_000,
-}
 
 def _parse_candle(candle: list, symbol: str, timeframe: str) -> dict:
     return {

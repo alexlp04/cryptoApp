@@ -1,22 +1,21 @@
 import asyncio
-import json
 import sys
 import types
 from collections import deque
 from decimal import Decimal
 
 import pandas as pd
-import websockets
 from ipc_protocol import read_request_payload
 from risk_management import PositionTracker, signal_actions, strategy_levels
+from rt_stream import kline_events
 from shared_utils import (
+    buffer_is_contiguous,
     build_signal_line,
     emit_heartbeats,
     fetch_recent_klines,
     load_strategy_by_path,
     require_symbol,
     require_timeframe,
-    seed_buffer,
     setup_engine_logging,
     upsert_candle,
 )
@@ -98,124 +97,121 @@ async def run_symbol(
     reanudar tras un reinicio), para no dejarla sin protección.
     """
     _validate_signal_mode(signal_mode)
-    clean_symbol = symbol.lower().replace("/", "")
-    url = f"wss://stream.binance.com:9443/ws/{clean_symbol}@kline_{timeframe}"
-
     logger.info("Iniciando stream para %s en %s", symbol, timeframe)
     strategy = load_strategy_by_path(strategy_path, capital, risk_per_trade)
     min_candles = getattr(strategy, "WARMUP_PERIOD", 20)
-    buffer: deque = deque(maxlen=_buffer_size(max_candles, min_candles))
+    buffer_len = _buffer_size(max_candles, min_candles)
+    buffer: deque = deque(maxlen=buffer_len)
     last_signal: tuple[int, str] | None = None
     last_open_time: int | None = None  # vela del último mensaje; sobrevive a las reconexiones
-
-    retry_delay = 5
-    max_retry_delay = 300
-
     consecutive_errors = 0
+    warned_gap_at: int | None = None
     tracker = PositionTracker(open_position)
 
-    while True:
+    def emit_exit(price: float, reason: str, candle: dict) -> None:
+        """Cierra la posición abierta por stop u objetivo y se lo cuenta a Java."""
+        nonlocal last_signal
+        exit_action = "COVER" if tracker.side == "short" else "SELL"
+        tracker.close()
+        signal = _build_rt_signal(symbol, exit_action, timeframe, str(price), candle, is_real, reason=reason)
+        last_signal = (int(candle["timestamp"]), exit_action)
+        print(build_signal_line(signal), flush=True)
+        logger.info("SEÑAL ENVIADA: %s (%s) para %s a precio %s", exit_action, reason, symbol, price)
+
+    async for event in kline_events(symbol, timeframe, buffer, buffer_len, fetch_recent_klines):
+        k = event.k
         try:
-            async with websockets.connect(url) as ws:
-                logger.info("Conectado a WebSocket de Binance para %s", symbol)
-                # Al conectar y al reconectar: calentamiento al instante y sin las velas perdidas.
-                await seed_buffer(buffer, symbol, timeframe, _buffer_size(max_candles, min_candles),
-                                  fetch_recent_klines)
-                async for msg in ws:
-                    k = json.loads(msg).get("k")
-                    if not k:
-                        continue  # mensajes que no son kline (errores, pings de aplicación)
-                    retry_delay = 5  # el backoff solo se reinicia con datos válidos
+            # Velas que se cerraron mientras el stream estaba caído: en ellas nadie vigiló el stop.
+            for missed in event.missed:
+                hit = tracker.protective_exit_in_candle(missed["open"], missed["high"], missed["low"])
+                if hit is not None:
+                    logger.warning("[%s] El stop/objetivo se tocó durante la desconexión (vela %s)",
+                                   symbol, missed["timestamp"])
+                    emit_exit(hit[0], hit[1], missed)
+                    break
 
-                    # Todo mensaje actualiza el buffer; signal_mode decide solo cuándo se evalúa.
-                    open_time = int(k["t"])
-                    # El primer mensaje tras (re)conectar no es una apertura real: se ignora como "nueva vela"
-                    new_candle = last_open_time is not None and open_time != last_open_time
-                    last_open_time = open_time
+            # El primer mensaje tras (re)conectar no es una apertura real: se ignora como "nueva vela"
+            open_time = int(k["t"])
+            new_candle = last_open_time is not None and open_time != last_open_time
+            last_open_time = open_time
 
-                    # Binance devuelve precios como strings — float para operaciones pandas/numpy.
-                    # La clave del precio de cierre original se preserva para emitir la señal
-                    # con precisión total (Decimal) sin depender del redondeo de float64.
-                    raw_close: str = k["c"]
+            # Binance devuelve precios como strings — float para operaciones pandas/numpy.
+            # La clave del precio de cierre original se preserva para emitir la señal
+            # con precisión total (Decimal) sin depender del redondeo de float64.
+            raw_close: str = k["c"]
 
-                    upsert_candle(buffer, {
-                        "timestamp": int(k["t"]),
-                        "open": float(k["o"]),
-                        "high": float(k["h"]),
-                        "low": float(k["l"]),
-                        "close": float(k["c"]),
-                        "volume": float(k["v"]),
-                    })
+            # Todo mensaje actualiza el buffer; signal_mode decide solo cuándo se evalúa.
+            upsert_candle(buffer, {
+                "timestamp": open_time,
+                "open": float(k["o"]),
+                "high": float(k["h"]),
+                "low": float(k["l"]),
+                "close": float(k["c"]),
+                "volume": float(k["v"]),
+            })
 
-                    # Stop y objetivo se vigilan en cada mensaje, no solo al evaluar la estrategia.
-                    protective = tracker.protective_exit(float(raw_close))
-                    if protective is not None:
-                        exit_price, reason = protective
-                        exit_action = "COVER" if tracker.side == "short" else "SELL"
-                        tracker.close()
-                        signal = _build_rt_signal(symbol, exit_action, timeframe, str(exit_price), buffer[-1],
-                                                  is_real, reason=reason)
-                        last_signal = (int(buffer[-1]["timestamp"]), exit_action)
-                        print(build_signal_line(signal), flush=True)
-                        logger.info("SEÑAL ENVIADA: %s (%s) para %s a precio %s", exit_action, reason, symbol,
-                                    exit_price)
+            # Stop y objetivo se vigilan en cada mensaje, no solo al evaluar la estrategia.
+            protective = tracker.protective_exit(float(raw_close))
+            if protective is not None:
+                emit_exit(protective[0], protective[1], buffer[-1])
+                continue
+
+            if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
+                continue
+
+            if not buffer_is_contiguous(buffer, timeframe):
+                # Un hueco en las velas (stream caído sin poder resembrar) falsea los indicadores.
+                if warned_gap_at != open_time:
+                    warned_gap_at = open_time
+                    logger.error("[%s] El buffer tiene huecos: no se evalúa hasta resembrarlo", symbol)
+                continue
+
+            try:
+                df = pd.DataFrame(list(buffer))
+                df = strategy.populate_indicators(df)
+                row = df.iloc[-1]
+
+                shorts = bool(getattr(strategy, "allow_short", False))
+                actions = signal_actions(
+                    tracker.side, bool(strategy.should_buy(row)), bool(strategy.should_sell(row)),
+                    shorts and bool(strategy.should_short(row)),
+                    shorts and bool(strategy.should_cover(row)),
+                )
+                consecutive_errors = 0
+            except Exception:
+                # Un bug de la estrategia no es una caída de red: reconectar no lo arregla.
+                consecutive_errors += 1
+                logger.exception("Error de estrategia en %s (%d/%d)",
+                                 symbol, consecutive_errors, MAX_STRATEGY_ERRORS)
+                if consecutive_errors >= MAX_STRATEGY_ERRORS:
+                    raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
+                continue
+
+            for action in actions:
+                levels = None
+                if action in ("BUY", "SHORT"):
+                    levels = strategy_levels(strategy, float(raw_close), row, short=action == "SHORT")
+                    if levels is None:
+                        logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
+                                       "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
+                                       action, symbol)
                         continue
-
-                    if len(buffer) < min_candles or not _should_evaluate(signal_mode, bool(k["x"]), new_candle):
-                        continue
-
-                    try:
-                        df = pd.DataFrame(list(buffer))
-                        df = strategy.populate_indicators(df)
-                        row = df.iloc[-1]
-
-                        shorts = bool(getattr(strategy, "allow_short", False))
-                        actions = signal_actions(
-                            tracker.side, bool(strategy.should_buy(row)), bool(strategy.should_sell(row)),
-                            shorts and bool(strategy.should_short(row)),
-                            shorts and bool(strategy.should_cover(row)),
-                        )
-                        consecutive_errors = 0
-                    except Exception:
-                        # Un bug de la estrategia no es una caída de red: reconectar no lo arregla.
-                        consecutive_errors += 1
-                        logger.exception("Error de estrategia en %s (%d/%d)",
-                                         symbol, consecutive_errors, MAX_STRATEGY_ERRORS)
-                        if consecutive_errors >= MAX_STRATEGY_ERRORS:
-                            raise StrategyFailure(f"{symbol}: {consecutive_errors} errores seguidos") from None
-                        continue
-
-                    for action in actions:
-                        levels = None
-                        if action in ("BUY", "SHORT"):
-                            levels = strategy_levels(strategy, float(raw_close), row, short=action == "SHORT")
-                            if levels is None:
-                                logger.warning("%s de %s descartado: la estrategia no dio un stop válido "
-                                               "(al otro lado de la entrada); sin stop no se puede acotar el riesgo",
-                                               action, symbol)
-                                continue
-                        # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
-                        candle_ts = int(buffer[-1]["timestamp"])  # del buffer: la fila del DataFrame es float64
-                        if (candle_ts, action) == last_signal:
-                            continue
-                        last_signal = (candle_ts, action)
-                        if levels is not None:
-                            tracker.open(*levels, side="short" if action == "SHORT" else "long")
-                        else:
-                            tracker.close()
-                        signal = _build_rt_signal(symbol, action, timeframe, raw_close, buffer[-1], is_real, levels)
-                        print(build_signal_line(signal), flush=True)
-                        logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
-
-            logger.warning("Stream de %s cerrado por el servidor; reconectando en %ds", symbol, retry_delay)
+                # Una señal por vela y acción aunque lleguen varios ticks de la misma vela.
+                candle_ts = int(buffer[-1]["timestamp"])  # del buffer: la fila del DataFrame es float64
+                if (candle_ts, action) == last_signal:
+                    continue
+                last_signal = (candle_ts, action)
+                if levels is not None:
+                    tracker.open(*levels, side="short" if action == "SHORT" else "long")
+                else:
+                    tracker.close()
+                signal = _build_rt_signal(symbol, action, timeframe, raw_close, buffer[-1], is_real, levels)
+                print(build_signal_line(signal), flush=True)
+                logger.info("SEÑAL ENVIADA: %s para %s a precio %s", action, symbol, raw_close)
         except StrategyFailure:
             raise  # el proceso debe terminar con código != 0 para que Java lo supervise
         except Exception:
-            logger.exception("Error en loop de %s", symbol)
-
-        await asyncio.sleep(retry_delay)
-        retry_delay = min(retry_delay * 2, max_retry_delay)  # backoff exponencial
-
+            logger.exception("Error procesando una vela de %s; se sigue con la siguiente", symbol)
 
 
 def main() -> None:
