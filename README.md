@@ -254,7 +254,7 @@ bloquea PRs. Los avisos Java aceptados, con su motivo, estan en `.github/osv-ign
 ```bash
 # En local
 cd code/backendBotTrading && mvn dependency:list -DincludeScope=runtime -DoutputFile=/tmp/deps.txt
-python ../../.github/scripts/osv_audit.py /tmp/deps.txt ../../.github/osv-ignore.txt
+python ../../.github/scripts/osv_audit.py < /tmp/deps.txt
 ```
 
 ### Esquema de base de datos

@@ -1,10 +1,10 @@
 """osv_audit.py — audita las dependencias Java contra OSV (api.osv.dev), sin la base del NVD.
 
-Entrada: la salida de `mvn dependency:list -DoutputFile=...` (una dependencia por línea,
-`grupo:artefacto:tipo:versión:ámbito`). Sale con código 1 si alguna tiene un aviso que no esté en el
-fichero de ignorados (un ID por línea, `#` para comentarios: los riesgos aceptados y por qué).
+Entrada (stdin): la salida de `mvn dependency:list -DoutputFile=...` (una dependencia por línea,
+`grupo:artefacto:tipo:versión:ámbito`). Sale con código 1 si alguna tiene un aviso que no esté en
+`.github/osv-ignore.txt` (un ID por línea, `#` para comentarios: los riesgos aceptados y por qué).
 
-Uso:  python osv_audit.py deps.txt [ignorados.txt]
+Uso:  python osv_audit.py < deps.txt
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 OSV = "https://api.osv.dev/v1"
+IGNORE_FILE = Path(__file__).resolve().parent.parent / "osv-ignore.txt"  # fijo: ninguna ruta llega por argumento
 BATCH = 500  # OSV admite hasta 1000 consultas por petición
 _DEP = re.compile(r"^\s*([\w.\-]+):([\w.\-]+):[\w.\-]+(?::[\w.\-]+)?:([\w.\-]+):(?:compile|runtime|provided|test|system)\b")
 
@@ -54,14 +55,13 @@ def load_ignored(text: str) -> set[str]:
 
 
 def main() -> int:
-    deps_file = Path(sys.argv[1])
-    ignored = load_ignored(Path(sys.argv[2]).read_text(encoding="utf-8")) if len(sys.argv) > 2 else set()
-    deps = parse_dependencies(deps_file.read_text(encoding="utf-8"))
+    ignored = load_ignored(IGNORE_FILE.read_text(encoding="utf-8")) if IGNORE_FILE.exists() else set()
+    deps = parse_dependencies(sys.stdin.read())
     if not deps:
-        print(f"No se encontró ninguna dependencia en {deps_file}: ¿falló `mvn dependency:list`?")
+        print("No se recibió ninguna dependencia por la entrada estándar: ¿falló `mvn dependency:list`?")
         return 1
     print(f"{len(deps)} dependencias Java consultadas en OSV")
-    pending = {dep: [i for i in ids if i not in ignored] for dep, ids in find_vulnerabilities(deps).items()}
+    pending = {dep: [i for i in ids if i not in ignored] for dep, ids in find_vulnerabilities(deps, _http).items()}
     pending = {dep: ids for dep, ids in pending.items() if ids}
     for (name, version), ids in sorted(pending.items()):
         for vuln_id in ids:

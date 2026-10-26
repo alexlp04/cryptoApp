@@ -39,7 +39,7 @@ jobs:
       # OSV no necesita clave ni descargar bases de datos. Los avisos aceptados, con su motivo, están
       # en .github/osv-ignore.txt; cualquier otro hace fallar el job (este workflow no bloquea PRs).
       - name: Consultar OSV
-        run: python .github/scripts/osv_audit.py "${{ runner.temp }}/deps.txt" .github/osv-ignore.txt
+        run: python .github/scripts/osv_audit.py < "${{ runner.temp }}/deps.txt"
 
   python:
     name: Dependencias Python (pip-audit)
