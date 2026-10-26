@@ -102,14 +102,33 @@ def test_retry_after_numerico_se_acota_al_maximo():
     assert engine_fetch._retry_after(_FakeResp(429, headers={"Retry-After": "99999"}), 60) == engine_fetch.MAX_BACKOFF_SEC
 
 
-def test_no_duerme_tras_el_ultimo_intento(monkeypatch):
+def test_un_429_no_gasta_reintentos_y_el_chunk_acaba_descargandose(monkeypatch):
+    # bug #43: tres 429 seguidos con max_retries=2 agotaban el presupuesto y dejaban un hueco de datos
     sleeps: list = []
     monkeypatch.setattr(engine_fetch.time, "sleep", lambda s: sleeps.append(s))
+    respuestas = iter([_FakeResp(429), _FakeResp(429), _FakeResp(429), _FakeResp(200, [[1]])])
+    monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: next(respuestas))
+
+    data = engine_fetch._request_with_backoff({"symbol": "X"}, max_retries=2)
+
+    assert data == [[1]] and len(sleeps) == 3
+
+
+def test_el_rate_limit_sostenido_acaba_rindiendose(monkeypatch):
+    sleeps: list = []
+    monkeypatch.setattr(engine_fetch.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(engine_fetch, "MAX_THROTTLE_WAITS", 4)
     monkeypatch.setattr(engine_fetch._SESSION, "get", lambda *a, **k: _FakeResp(429))
 
     assert engine_fetch._request_with_backoff({"symbol": "X"}, max_retries=3) is None
 
-    assert len(sleeps) == 2  # entre intentos, no después del tercero
+    assert len(sleeps) == 5  # la quinta espera supera el límite de 4: se duerme y ya no se reintenta
+
+
+def test_la_espera_lleva_jitter_acotado_al_25_por_ciento():
+    esperas = {engine_fetch._jitter(100.0) for _ in range(50)}
+
+    assert len(esperas) > 1 and all(100.0 <= e <= 125.0 for e in esperas)
 
 
 def test_error_http_con_cuerpo_html_devuelve_none_sin_excepcion(monkeypatch):
