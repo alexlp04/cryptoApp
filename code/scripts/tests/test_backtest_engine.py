@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 from backtest_engine import (
     _calculate_backtest_stats,
-    _close_long,
     _generate_empty_stats,
     crear_carpeta_estrategia,
     guardar_trade_a_csv,
@@ -91,69 +90,6 @@ def _df_mock(n: int = 50) -> pd.DataFrame:
         "close":  close,
         "volume": rng.uniform(100, 500, n),
     })
-
-
-# ─── Tests: _close_long ──────────────────────────────────────────────────────
-
-class TestCloseLong:
-
-    def _call(self, entry: float, exit_: float, capital: float = 10_000.0,
-              pos_size: float = 0.1) -> tuple:
-        return _close_long(
-            capital=capital,
-            position_size=pos_size,
-            entry_price=entry,
-            exit_price=exit_,
-            op_ganadas=0,
-            op_perdidas=0,
-            pos_pnl=0.0,
-            neg_pnl=0.0,
-            peak_capital=capital,
-            max_drawdown=0.0,
-        )
-
-    def test_should_increment_op_ganadas_on_profit(self):
-        _, op_ganadas, op_perdidas, *_ = self._call(100.0, 110.0)
-        assert op_ganadas == 1
-        assert op_perdidas == 0
-
-    def test_should_increment_op_perdidas_on_loss(self):
-        _, op_ganadas, op_perdidas, *_ = self._call(100.0, 90.0)
-        assert op_ganadas == 0
-        assert op_perdidas == 1
-
-    def test_should_not_change_counters_on_breakeven(self):
-        _, op_ganadas, op_perdidas, *_ = self._call(100.0, 100.0)
-        assert op_ganadas == 0
-        assert op_perdidas == 0
-
-    def test_should_add_pnl_to_capital_on_profit(self):
-        # pnl = 0.1 * (110 − 100) = 1.0
-        capital, *_ = self._call(100.0, 110.0)
-        assert abs(capital - 10_001.0) < 1e-9
-
-    def test_should_subtract_pnl_from_capital_on_loss(self):
-        # pnl = 0.1 * (90 − 100) = −1.0
-        capital, *_ = self._call(100.0, 90.0)
-        assert abs(capital - 9_999.0) < 1e-9
-
-    def test_should_track_max_drawdown_on_loss(self):
-        # Given: capital empieza en 10000, cae 1
-        *_, _peak_capital, max_drawdown, _pnl = self._call(100.0, 90.0)
-        assert max_drawdown > 0.0
-
-    def test_should_accumulate_pos_pnl_on_profit(self):
-        _, _, _, pos_pnl, *_ = self._call(100.0, 110.0)
-        assert pos_pnl > 0.0
-
-    def test_should_accumulate_neg_pnl_on_loss(self):
-        _, _, _, _, neg_pnl, *_ = self._call(100.0, 90.0)
-        assert neg_pnl > 0.0
-
-    def test_should_return_pnl_as_final_element(self):
-        *_, pnl = self._call(100.0, 110.0)
-        # pnl = 0.1 * 10 = 1.0
-        assert abs(pnl - 1.0) < 1e-9
 
 
 # ─── Tests: crear_carpeta_estrategia ─────────────────────────────────────────

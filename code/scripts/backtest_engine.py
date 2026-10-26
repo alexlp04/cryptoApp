@@ -32,8 +32,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 code_dir = os.path.dirname(current_dir)
 project_root = os.path.dirname(code_dir)
 
-results_root = os.path.join(project_root, "results")
-os.makedirs(results_root, exist_ok=True)
+results_root = os.path.join(project_root, "results")  # se crea al guardar (crear_carpeta_estrategia)
 
 if code_dir not in sys.path:
     sys.path.insert(0, code_dir)
@@ -42,7 +41,7 @@ if code_dir not in sys.path:
 logger = logging.getLogger(__name__)
 
 # Capital y riesgo por defecto cuando la estrategia no tiene valores explícitos
-_DEFAULT_CAPITAL: float = 10_000.0
+DEFAULT_CAPITAL: float = 10_000.0
 _DEFAULT_RISK: float = 0.02
 
 # Costes de ejecución por defecto (Binance spot: 0,1 % de comisión por lado y 0,05 % de slippage).
@@ -93,38 +92,6 @@ def _protective_exit_short(
     if low <= take_profit:
         return min(open_, take_profit), False
     return None
-
-
-def _close_long(
-    capital: float,
-    position_size: float,
-    entry_price: float,
-    exit_price: float,
-    op_ganadas: int,
-    op_perdidas: int,
-    pos_pnl: float,
-    neg_pnl: float,
-    peak_capital: float,
-    max_drawdown: float,
-    fee: float = 0.0,
-) -> tuple[float, int, int, float, float, float, float, float]:
-    """
-    Cierra un long y actualiza todos los acumuladores del backtest.
-    fee: comisión total (entrada + salida) en dinero, ya calculada por el llamador.
-    Devuelve: (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
-               peak_capital, max_drawdown, pnl)
-    """
-    pnl = position_size * (exit_price - entry_price) - fee
-    capital += pnl
-    peak_capital = max(peak_capital, capital)
-    max_drawdown = max(max_drawdown, peak_capital - capital)
-    if pnl > 0:
-        op_ganadas += 1
-        pos_pnl += pnl
-    elif pnl < 0:
-        op_perdidas += 1
-        neg_pnl += abs(pnl)
-    return capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown, pnl
 
 
 # =============================================================================
@@ -199,7 +166,7 @@ def _simulate(
     shorts = short_entry_signal is not None and short_exit_signal is not None
     if limit and shorts:
         raise ValueError("execution='limit' no admite cortos: usa 'market'")
-    capital = float(getattr(strategy, "capital", _DEFAULT_CAPITAL))
+    capital = float(getattr(strategy, "capital", DEFAULT_CAPITAL))
     risk_per_trade = float(getattr(strategy, "risk_per_trade", _DEFAULT_RISK))
     capital_history = [capital]
     equity: list[float] = []
@@ -246,11 +213,16 @@ def _simulate(
         fee = fee_rate * size * (entry_fill + exit_fill)
         # Un corto gana lo que baja el precio: el mismo cierre con entrada y salida intercambiadas.
         entry_leg, exit_leg = (exit_fill, entry_fill) if short else (entry_fill, exit_fill)
-        (capital, op_ganadas, op_perdidas, pos_pnl, neg_pnl,
-         peak_capital, max_drawdown, pnl) = _close_long(
-            capital, size, entry_leg, exit_leg,
-            op_ganadas, op_perdidas, pos_pnl, neg_pnl, peak_capital, max_drawdown, fee,
-        )
+        pnl = size * (exit_leg - entry_leg) - fee
+        capital += pnl
+        peak_capital = max(peak_capital, capital)
+        max_drawdown = max(max_drawdown, peak_capital - capital)
+        if pnl > 0:
+            op_ganadas += 1
+            pos_pnl += pnl
+        elif pnl < 0:
+            op_perdidas += 1
+            neg_pnl += -pnl
         in_position = False
         trade_count += 1
         capital_history.append(capital)
@@ -533,7 +505,7 @@ def _calculate_backtest_stats(
     y el Sharpe se anualiza; sin ella se usan los cierres de capital_history.
     """
     op_totales = max(trade_count // 2, 0)
-    initial_capital = float(getattr(strategy, "capital", _DEFAULT_CAPITAL))
+    initial_capital = float(getattr(strategy, "capital", DEFAULT_CAPITAL))
 
     retorno_total = final_capital - initial_capital
     retorno_acumulado = (retorno_total / initial_capital * 100) if initial_capital > 0 else 0.0

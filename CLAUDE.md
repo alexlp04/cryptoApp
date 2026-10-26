@@ -166,7 +166,7 @@ get_take_profit(entry_price, row) -> float
 ```
 
 Concretos ya provistos (sobreescribibles): `get_warmup_period()`, `should_close()`,
-`get_feature_columns()`, `get_label()`, `max_open_trades()`.
+`get_feature_columns()`, `get_label()`.
 
 Puntos que suelen malinterpretarse:
 - `WARMUP_PERIOD` y `LABEL_RETURN_THRESHOLD` son atributos de clase; ajústalos al timeframe.
