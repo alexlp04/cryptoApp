@@ -286,9 +286,7 @@ bash code/backendBotTrading/src/test/resources/e2e/train_neural_network_e2e.sh
 - Configuracion Maven y calidad: `code/backendBotTrading/pom.xml`
 - Configuracion Sonar: `code/backendBotTrading/sonar-project.properties`
 
-> `info/tablas.sql` se conserva como **referencia historica y esta desactualizado** (le faltan
-> `instancia_estrategia.nombre_modelo` y `posicion.{precio_salida, pnl, fecha_cierre}`). La
-> fuente de verdad del esquema son las migraciones Flyway.
+> La fuente de verdad del esquema son las migraciones Flyway.
 
 > Nota: este snapshot del repositorio se centra en el codigo, los resultados y los artefactos de ejecucion. La memoria academica del TFG no forma parte de la raiz actual del proyecto.
 
