@@ -12,13 +12,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Constructor;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Scanner;
-import java.util.function.Consumer;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,19 +40,7 @@ class CliCommandsTest {
     private final WalletManagementUseCase wallets = mock(WalletManagementUseCase.class);
 
     private CliCommandContext context(String input) throws Exception {
-        Constructor<?> ctor = CliCommandContext.class.getDeclaredConstructors()[0];
-        Class<?>[] types = ctor.getParameterTypes();
-        Object[] args = new Object[types.length];
-        for (int i = 0; i < args.length; i++) {
-            args[i] = Consumer.class.equals(types[i]) ? (Consumer<String>) out::add : mock(types[i]);
-        }
-        args[0] = new Scanner(input);
-        args[1] = create;
-        args[3] = auth;
-        args[4] = session;
-        args[5] = lifecycle;
-        args[9] = wallets;
-        return (CliCommandContext) ctor.newInstance(args);
+        return CliTestContexts.create(input, out::add, 1, create, 3, auth, 4, session, 5, lifecycle, 9, wallets);
     }
 
     private void logged(boolean value) {
