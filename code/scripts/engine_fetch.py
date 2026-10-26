@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,9 @@ BINANCE_MAX_LIMIT = 1000
 MAX_PARALLEL_WORKERS = 5
 DEFAULT_RATE_LIMIT_WAIT = 60
 MAX_BACKOFF_SEC = 300
+#: Esperas seguidas por 429/418 (cada una respeta Retry-After) antes de rendirse con un chunk. No gastan el presupuesto
+#: de reintentos por error: bajo rate-limit sostenido el chunk acababa en None y dejaba un hueco de datos.
+MAX_THROTTLE_WAITS = 30
 # Evita frames IPC excesivamente grandes que pueden cerrar el pipe en el consumidor.
 EMIT_CHUNK_SIZE = 2_000
 
@@ -80,8 +84,13 @@ def _parse_candle(candle: list, symbol: str, timeframe: str) -> dict:
     }
 
 
+def _jitter(wait: float) -> float:
+    """Hasta un 25 % más: con 5 workers esperando lo mismo, todos reintentarían a la vez (thundering herd)."""
+    return wait * (1 + random.uniform(0, 0.25))
+
+
 def _apply_backoff(backoff: float) -> float:
-    time.sleep(min(backoff, MAX_BACKOFF_SEC))
+    time.sleep(_jitter(min(backoff, MAX_BACKOFF_SEC)))
     return min(backoff * 2, MAX_BACKOFF_SEC)
 
 
@@ -100,19 +109,15 @@ def _handle_response_status(response: requests.Response, attempt: int, max_retri
 
     if response.status_code == 429:
         wait = _retry_after(response, DEFAULT_RATE_LIMIT_WAIT)
-        logger.warning("Rate limit (429). Intento %s/%s.", attempt, max_retries)
-        if not last_attempt:
-            logger.warning("Esperando %ss...", wait)
-            time.sleep(wait)
-        return "retry", backoff
+        logger.warning("Rate limit (429). Esperando %ss...", wait)
+        time.sleep(_jitter(wait))
+        return "throttled", backoff
 
     if response.status_code == 418:
         wait = _retry_after(response, MAX_BACKOFF_SEC)
-        logger.error("IP baneada temporalmente (418). Intento %s/%s.", attempt, max_retries)
-        if not last_attempt:
-            logger.error("Esperando %ss...", wait)
-            time.sleep(wait)
-        return "retry", backoff
+        logger.error("IP baneada temporalmente (418). Esperando %ss...", wait)
+        time.sleep(_jitter(wait))
+        return "throttled", backoff
 
     if response.status_code >= 500:
         logger.warning(
@@ -138,14 +143,25 @@ def _request_with_backoff(
     max_retries: int = 5,
 ) -> list | None:
     backoff = 2.0
+    attempt = 0
+    throttled = 0
 
-    for attempt in range(1, max_retries + 1):
+    while attempt < max_retries:
+        attempt += 1
         try:
             response = _SESSION.get(
                 URL_FETCH, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
 
             status_action, backoff = _handle_response_status(
                 response, attempt, max_retries, backoff)
+            if status_action == "throttled":
+                throttled += 1
+                if throttled > MAX_THROTTLE_WAITS:
+                    logger.error("Rate limit sostenido: %s esperas seguidas sin respuesta para params=%s",
+                                 MAX_THROTTLE_WAITS, params)
+                    return None
+                attempt -= 1  # el rate-limit no es un fallo de la petición: no gasta reintentos
+                continue
             if status_action == "retry":
                 continue
 
