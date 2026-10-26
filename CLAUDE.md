@@ -55,11 +55,11 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (519 tests)
+mvn test          # JUnit + H2 (563 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 349 tests
+pytest code/scripts/tests -q   # 369 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -238,7 +238,11 @@ Regla de decisión de la IA (backtest = vivo): con un modelo de 3 clases, 1 abre
 corto si la estrategia los permite) y la predicción neutral no hace nada. Antes el backtest cerraba con cualquier
 predicción distinta de 1. Diferencias conocidas que quedan: el motor RT exige probabilidad >= 0,52 en modelos
 binarios de scikit-learn y el backtest usa el argmax; el RT omite la predicción si algún feature es NaN y el
-backtest los rellena con 0.
+backtest los rellena con 0; el SVM final se guarda sin `predict_proba` (`probability=False`), así que en RT decide
+sin umbral de confianza, igual que el backtest. Los modelos Keras decodifican su salida con una sola función
+(`model_loader.decode_deep_learning`) en backtest y RT; los modelos se cargan desde `model_loader.py`.
+
+Cada modelo entrenado deja en su `.metadata.json` un bloque `provenance` (git, momento, rango de datos, métricas).
 
 Hallazgo: el buffer RT es `max(100, WARMUP_PERIOD)`. Una estrategia sin `WARMUP_PERIOD` (como un cruce de EMA 20/50)
 con buffer 100 pierde entradas que el backtest sí hace; con 300 coincide. Fija siempre `WARMUP_PERIOD` al mayor
