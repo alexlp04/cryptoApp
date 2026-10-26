@@ -48,18 +48,6 @@ public class WalletApplicationService implements WalletManagementUseCase {
         walletRepositoryPort.save(wallet);
     }
 
-    @Transactional
-    public void eliminarWallet(long id) {
-        Wallet wallet = walletRepositoryPort.findById(id)
-                .orElseThrow(() -> new ValidationException("Wallet no encontrada"));
-
-        if (wallet.isActive()) {
-            throw new ValidationException("No se puede eliminar una wallet activa. Deten las estrategias asociadas primero.");
-        }
-
-        walletRepositoryPort.delete(wallet);
-    }
-
     @Override
     public BigDecimal getBalance(String nombre) {
         Usuario usuario = sessionManager.getCurrentUser();
