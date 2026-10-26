@@ -3,7 +3,8 @@ from __future__ import annotations
 import random
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pandas as pd
@@ -14,9 +15,9 @@ from shared_utils import require_symbol, require_timeframe, setup_engine_logging
 
 logger = setup_engine_logging("engine_fetch")
 
-URL_FETCH = "https://api.binance.com/api/v3/uiKlines"
+URL_FETCH = "https://api.binance.com/api/v3/klines"
 REQUEST_TIMEOUT_SECONDS = 20
-# Binance uiKlines returns up to 1000 rows per request.
+# Binance klines returns up to 1000 rows per request.
 BINANCE_MAX_LIMIT = 1000
 MAX_PARALLEL_WORKERS = 5
 DEFAULT_RATE_LIMIT_WAIT = 60
@@ -297,68 +298,43 @@ def _descargar_chunks_paralelo(
     symbol: str,
     timeframe: str,
     workers: int,
-) -> list[dict]:
-    """Descarga todos los chunks en paralelo y devuelve las velas ordenadas y deduplicadas."""
-    resultados: dict[int, list[dict]] = {}
-    completados = 0
+) -> Iterator[list[dict]]:
+    """Genera las velas de cada chunk en orden, conforme se completan.
 
+    Solo hay en vuelo `2 * workers` chunks: la memoria queda acotada y Java puede insertar mientras se
+    sigue descargando. Los chunks son contiguos y disjuntos (`_calcular_chunks`), así que no hace falta
+    deduplicar.
+    """
+    pending: dict[int, Future] = {}
+    submitted = 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_fetch_chunk, i, start, end, symbol, timeframe): i
-            for i, (start, end) in enumerate(chunks)
-        }
-        for future in as_completed(futures):
-            try:
-                chunk_index, velas = future.result()
-            except Exception:
-                # Sin cancelar, el with espera a TODAS las futuras pendientes y el proceso seguía
-                # descargando minutos después del fallo.
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
-            resultados[chunk_index] = velas
-            completados += 1
-            if completados % 10 == 0 or completados == len(chunks):
-                logger.info(
-                    "Descarga: %s/%s chunks completados (%s%%)",
-                    completados, len(chunks),
-                    round(completados / len(chunks) * 100),
-                )
-
-    todas: list[dict] = []
-    for i in range(len(chunks)):
-        todas.extend(resultados.get(i, []))
-
-    seen: set[int] = set()
-    unicas: list[dict] = []
-    for vela in todas:
-        if vela["openTime"] not in seen:
-            seen.add(vela["openTime"])
-            unicas.append(vela)
-
-    duplicados = len(todas) - len(unicas)
-    if duplicados > 0:
-        logger.info("Eliminados %s duplicados en bordes de chunk.", duplicados)
-    return unicas
+        try:
+            for emit_index in range(len(chunks)):
+                while submitted < len(chunks) and submitted < emit_index + 2 * workers:
+                    start, end = chunks[submitted]
+                    pending[submitted] = executor.submit(_fetch_chunk, submitted, start, end, symbol, timeframe)
+                    submitted += 1
+                yield pending.pop(emit_index).result()[1]
+                if (emit_index + 1) % 10 == 0 or emit_index + 1 == len(chunks):
+                    logger.info("Progreso: %s/%s chunks (%s%%).", emit_index + 1, len(chunks),
+                                round((emit_index + 1) / len(chunks) * 100))
+        except BaseException:
+            # Sin cancelar, el with espera a TODAS las futuras pendientes y el proceso seguía
+            # descargando minutos después del fallo (o de que el consumidor abandonase).
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
 
 def _emitir_velas_ipc(velas: list[dict]) -> int:
-    """Emite las velas a Java en chunks IPC y devuelve el total de velas emitidas."""
-    total_emitidas = 0
+    """Emite las velas a Java en frames IPC de EMIT_CHUNK_SIZE y devuelve cuántas emitió."""
     for i in range(0, len(velas), EMIT_CHUNK_SIZE):
-        chunk_ipc = velas[i: i + EMIT_CHUNK_SIZE]
         try:
-            write_response("FETCH_CHUNK", {"velas": chunk_ipc})
+            write_response("FETCH_CHUNK", {"velas": velas[i: i + EMIT_CHUNK_SIZE]})
         except BrokenPipeError:
-            logger.error(
-                "Broken pipe emitiendo chunk IPC (offset=%s, size=%s, emitidas=%s/%s). "
-                "El consumidor Java cerró stdout antes de finalizar.",
-                i, len(chunk_ipc), total_emitidas, len(velas),
-            )
+            logger.error("Broken pipe emitiendo a Java (offset=%s/%s): el consumidor cerró stdout antes de acabar.",
+                         i, len(velas))
             raise
-        total_emitidas += len(chunk_ipc)
-        if total_emitidas % 50_000 == 0:
-            logger.info("Emitidas %s/%s velas a Java.", total_emitidas, len(velas))
-    return total_emitidas
+    return len(velas)
 
 
 def obtener_datos_binance(
@@ -385,12 +361,12 @@ def obtener_datos_binance(
         len(chunks), BINANCE_MAX_LIMIT, workers, symbol, timeframe,
     )
 
-    velas_unicas = _descargar_chunks_paralelo(chunks, symbol, timeframe, workers)
-    # La API incluye la vela en curso (closeTime futuro): persistirla dejaba OHLCV parcial para siempre.
-    velas_unicas = [v for v in velas_unicas if v["closeTime"] < until_ms]
-    total_emitidas = _emitir_velas_ipc(velas_unicas)
+    total_emitidas = 0
+    for velas in _descargar_chunks_paralelo(chunks, symbol, timeframe, workers):
+        # La API incluye la vela en curso (closeTime futuro): persistirla dejaba OHLCV parcial para siempre.
+        total_emitidas += _emitir_velas_ipc([v for v in velas if v["closeTime"] < until_ms])
 
-    logger.info("Descarga y emisión completadas: %s velas únicas.", total_emitidas)
+    logger.info("Descarga y emisión completadas: %s velas.", total_emitidas)
     return total_emitidas
 
 
