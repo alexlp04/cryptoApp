@@ -57,9 +57,6 @@ class TestBaseStrategyContract:
     def test_should_return_warmup_period_at_least_strategy_constant(self, strategy):
         assert strategy.get_warmup_period() >= StressTestStrategy.WARMUP_PERIOD
 
-    def test_should_return_max_open_trades_as_1_by_default(self, strategy):
-        assert strategy.max_open_trades() == 1
-
 
 # ─── Tests: BaseStrategy.get_label ───────────────────────────────────────────
 

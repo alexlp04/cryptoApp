@@ -80,9 +80,6 @@ class BaseStrategy(ABC):
         """Por defecto, simétrico al objetivo largo; si cae a 0 o menos, el corto no tiene objetivo."""
         return 2 * entry_price - self.get_take_profit(entry_price, row)
 
-    def max_open_trades(self) -> int:
-        return 1
-
     def get_feature_columns(self, df: pd.DataFrame) -> list[str]:
         base = {"timestamp", "open", "high", "low", "close", "volume"}
         return [c for c in df.columns if c not in base]
