@@ -107,9 +107,7 @@ escritura. Un solo token ve todo, también las estrategias de todos los usuarios
 ## Esquema de base de datos
 
 Lo versiona **Flyway**, no `ddl-auto=update`. La baseline vive en
-`src/main/resources/db/migration/V1__baseline_schema.sql`; `info/tablas.sql` quedó
-como referencia histórica y **está desactualizado** (le faltan `instancia_estrategia.nombre_modelo`
-y `posicion.{precio_salida, pnl, fecha_cierre}`). No lo uses como fuente de verdad.
+`src/main/resources/db/migration/V1__baseline_schema.sql`; las migraciones son la única fuente de verdad del esquema.
 
 Al añadir o cambiar un campo de una entidad, crea una migración `V<n>__descripcion.sql`.
 `SchemaMigrationValidationTest` falla si entidades y migraciones divergen — los tests
