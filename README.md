@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-	<a href="https://github.com/alexlp04/cryptoapp/actions/workflows/ci.yml">
-		<img alt="CI" src="https://github.com/alexlp04/cryptoapp/actions/workflows/ci.yml/badge.svg">
+	<a href="https://github.com/alexlp04/cryptoApp/actions/workflows/ci.yml">
+		<img alt="CI" src="https://github.com/alexlp04/cryptoApp/actions/workflows/ci.yml/badge.svg">
 	</a>
 </p>
 
@@ -122,7 +122,7 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/alexlp04/cryptoapp.git
+git clone https://github.com/alexlp04/cryptoApp.git
 cd cryptoapp
 ```
 
