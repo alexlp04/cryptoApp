@@ -16,7 +16,6 @@ from ipc_protocol import read_request_payload
 from model_loader import NEUTRAL, decode_deep_learning, load_model
 from risk_management import PositionTracker, signal_actions, strategy_levels
 from shared_utils import (
-    CODE_DIR,
     build_signal_line,
     emit_heartbeats,
     fetch_recent_klines,
@@ -40,9 +39,6 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 if sys.platform == "win32" and "posix" not in sys.modules:
     sys.modules["posix"] = types.ModuleType("posix")
-
-if CODE_DIR not in sys.path:
-    sys.path.append(CODE_DIR)
 
 # =========================
 # SUBFUNCIONES DE PREDICCIÓN
