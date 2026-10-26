@@ -11,4 +11,6 @@ public interface LedgerRepository extends JpaRepository<LedgerEntry, Long> {
     List<LedgerEntry> findByWalletIdOrderByIdDesc(Long walletId);
 
     List<LedgerEntry> findByEstrategiaIdOrderByIdDesc(Long estrategiaId);
+
+    List<LedgerEntry> findByEstrategiaIdOrderByIdDesc(Long estrategiaId, org.springframework.data.domain.Pageable page);
 }
