@@ -68,7 +68,7 @@ class SchemaMigrationMySqlIntegrationTest {
     @Test
     @DisplayName("Las columnas de cierre de posición existen con tipo DECIMAL")
     void columnasDeCierreConTipoCorrecto() {
-        // Estas tres faltaban en info/tablas.sql; sin ellas no se puede registrar
+        // Estas tres faltaban en el esquema original; sin ellas no se puede registrar
         // el resultado de una operación cerrada.
         Integer encontradas = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.columns "
