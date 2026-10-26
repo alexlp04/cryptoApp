@@ -55,7 +55,7 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (513 tests)
+mvn test          # JUnit + H2 (519 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
@@ -87,6 +87,12 @@ siga a `requirements.txt`). TensorFlow no va en la imagen (no hay rueda de la ve
 `PythonEnvironmentValidator` solo avisa si falta. Probado en x86
 con la pila completa (Flyway V13, registro, login, `fetch` por el motor Python, parada y reinicio con datos);
 arm64 no se ha podido ejecutar todavía.
+
+**Reanudación en el arranque** (`CRYPTOAPP_AUTORESUME`, apagada por defecto y activa en el compose): la columna
+`instancia_estrategia.reanudar_al_arrancar` se marca al activar o reanudar y se limpia al pausar a mano (`detenerEstrategia`);
+el apagado de la aplicación (`pausarPorApagado`) pausa sin limpiarla. Al arrancar, tras reconciliar las ACTIVA huérfanas
+(caída brusca), `reanudarMarcadas` reanuda las DETENIDA marcadas, y una que falla no impide las demás. Probado en Docker con
+`docker stop` y con SIGKILL.
 
 ## API de solo lectura (`interfaces/api/`)
 

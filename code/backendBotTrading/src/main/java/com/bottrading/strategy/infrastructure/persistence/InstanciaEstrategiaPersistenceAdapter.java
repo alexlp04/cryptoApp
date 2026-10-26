@@ -25,6 +25,11 @@ public class InstanciaEstrategiaPersistenceAdapter implements InstanciaEstrategi
     }
 
     @Override
+    public List<InstanciaEstrategia> findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia estado) {
+        return instanciaEstrategiaRepository.findByEstadoAndReanudarAlArrancarTrue(estado);
+    }
+
+    @Override
     public List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado) {
         return instanciaEstrategiaRepository.findByEstado(estado);
     }

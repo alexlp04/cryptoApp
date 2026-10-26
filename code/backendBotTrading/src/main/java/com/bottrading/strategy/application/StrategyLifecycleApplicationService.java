@@ -75,6 +75,7 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
                 nombreEstra, nombreModelo, tf, coins, isReal, walletId, risk, capital);
         instancia.setUsuarioId(usuarioId);
         instancia.setSignalMode(signalMode); // valida el valor antes de persistir nada
+        instancia.setReanudarAlArrancar(true);
 
         instancia = instanciaRepo.save(Objects.requireNonNull(instancia, "Instancia no puede ser null"));
         log.info("Estrategia {} creada con ID {}", nombreEstra, instancia.getId());
@@ -156,6 +157,7 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
                 return null;
             }
             e.setEstado(EstadoEstrategia.ACTIVA);
+            e.setReanudarAlArrancar(true);
             return instanciaRepo.save(e);
         });
         if (instancia == null) {
@@ -186,11 +188,53 @@ public class StrategyLifecycleApplicationService implements StrategyLifecycleUse
      */
     @Override
     public void detenerEstrategia(Long instanciaId) {
+        pausar(instanciaId, false);
+    }
+
+    /**
+     * Pausa y, si se pausa a mano, quita la marca de reanudación (también a una ya DETENIDA): 'stop' es una orden
+     * de no volver a arrancar sola hasta el próximo 'start'. El apagado de la aplicación la conserva.
+     */
+    private void pausar(Long instanciaId, boolean conservarReanudacion) {
         Objects.requireNonNull(instanciaId, INSTANCIA_ID_NULL_MSG);
-        if (cambiarEstado(instanciaId, EstadoEstrategia.ACTIVA, EstadoEstrategia.DETENIDA)) {
-            log.info("Estrategia {} PAUSADA (fondos en reserva)", instanciaId);
-        }
+        tx.executeWithoutResult(status -> instanciaRepo.findByIdWithLock(instanciaId).ifPresent(e -> {
+            boolean pausada = EstadoEstrategia.ACTIVA == e.getEstado();
+            boolean desmarcada = !conservarReanudacion && e.isReanudarAlArrancar();
+            if (pausada) {
+                e.setEstado(EstadoEstrategia.DETENIDA);
+            }
+            if (desmarcada) {
+                e.setReanudarAlArrancar(false);
+            }
+            if (pausada || desmarcada) {
+                instanciaRepo.save(e);
+            }
+            if (pausada) {
+                log.info("Estrategia {} PAUSADA (fondos en reserva)", instanciaId);
+            }
+        }));
         runtimeCoordinator.detenerEstrategia(instanciaId);
+    }
+
+    @Override
+    public void pausarPorApagado() {
+        Set<Long> ids = idsActivos();
+        if (ids.isEmpty()) {
+            return;
+        }
+        log.info("Apagando: pausando {} estrategias; se reanudarán solas al arrancar si está habilitado", ids.size());
+        ids.forEach(id -> pausar(id, true));
+    }
+
+    @Override
+    public void reanudarMarcadas() {
+        for (InstanciaEstrategia i : instanciaRepo.findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia.DETENIDA)) {
+            try {
+                iniciarEstrategiaDetenida(i.getId());
+            } catch (RuntimeException e) { // una estrategia que no arranca no impide reanudar las demás
+                log.error("No se pudo reanudar la estrategia {} al arrancar", i.getId(), e);
+            }
+        }
     }
 
     /**

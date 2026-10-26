@@ -42,6 +42,9 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       TZ: UTC
+      # Tras un reinicio o un corte de luz, las estrategias que estaban en marcha se reanudan solas (las que paraste
+      # a mano con 'stop' no).
+      CRYPTOAPP_AUTORESUME: "true"
       # API REST de solo lectura (token en secrets/api.token). Escucha en todas las interfaces DEL CONTENEDOR; el puerto
       # solo se publica en 127.0.0.1 de la Pi: para verlo desde el móvil, VPN (ver README).
       SPRING_MAIN_WEBAPPLICATIONTYPE: servlet
