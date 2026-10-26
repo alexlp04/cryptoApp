@@ -15,9 +15,9 @@ from shared_utils import require_symbol, require_timeframe, setup_engine_logging
 
 logger = setup_engine_logging("engine_fetch")
 
-URL_FETCH = "https://api.binance.com/api/v3/uiKlines"
+URL_FETCH = "https://api.binance.com/api/v3/klines"
 REQUEST_TIMEOUT_SECONDS = 20
-# Binance uiKlines returns up to 1000 rows per request.
+# Binance klines returns up to 1000 rows per request.
 BINANCE_MAX_LIMIT = 1000
 MAX_PARALLEL_WORKERS = 5
 DEFAULT_RATE_LIMIT_WAIT = 60
