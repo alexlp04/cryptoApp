@@ -18,6 +18,7 @@ if CODE_DIR not in sys.path:
     sys.path.append(CODE_DIR)
 
 from backtest_engine import (
+    DEFAULT_CAPITAL,
     DEFAULT_FEE_RATE,
     DEFAULT_SLIPPAGE,
     EXECUTION_MODES,
@@ -114,7 +115,7 @@ def main() -> None:
         strategy_name = payload.get("strategy_name")
         timeframe = payload.get("timeframe")
         velas = payload.get("velas", {})
-        capital = payload.get("capital", 1000)
+        capital = payload.get("capital", DEFAULT_CAPITAL)
         risk_per_trade = payload.get("risk_per_trade", 0.02)
         escribir_trades = payload.get("escribir_trades", False)
         model_name = payload.get("model_name")  # opcional — None → backtest clásico
