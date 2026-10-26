@@ -70,6 +70,10 @@ public class InstanciaEstrategia extends BaseEntity {
     @Column(name = "signal_mode", nullable = false, length = 10)
     private String signalMode = MODO_SENAL_CIERRE;
 
+    /** Si la aplicación debe reanudarla sola al arrancar: estaba en marcha y no se pausó a mano. */
+    @Column(name = "reanudar_al_arrancar", nullable = false)
+    private boolean reanudarAlArrancar;
+
     public static final String MODO_SENAL_CIERRE = "close";
     public static final java.util.Set<String> MODOS_SENAL = java.util.Set.of("close", "open", "both");
 
@@ -206,6 +210,14 @@ public class InstanciaEstrategia extends BaseEntity {
             throw new IllegalArgumentException("Modo de señal inválido: " + signalMode + " (usa close, open o both)");
         }
         this.signalMode = signalMode;
+    }
+
+    public boolean isReanudarAlArrancar() {
+        return reanudarAlArrancar;
+    }
+
+    public void setReanudarAlArrancar(boolean reanudarAlArrancar) {
+        this.reanudarAlArrancar = reanudarAlArrancar;
     }
 
     public boolean isEsReal() {

@@ -52,4 +52,24 @@ class InstanciaEstrategiaRepositoryJpaTest {
 
         assertEquals(0, new BigDecimal("100").compareTo(repartido));
     }
+
+    @Test
+    @DisplayName("La consulta de reanudación devuelve solo las del estado pedido y marcadas; sin marcar por defecto")
+    void finds_only_marked_strategies_in_the_requested_state() {
+        guardar(EstadoEstrategia.DETENIDA, "10", 904L);
+        InstanciaEstrategia marcada = repo.save(marcadaEn(EstadoEstrategia.DETENIDA, 904L));
+        repo.save(marcadaEn(EstadoEstrategia.TERMINADA, 904L));
+
+        List<InstanciaEstrategia> reanudables = repo.findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia.DETENIDA);
+
+        assertEquals(List.of(marcada.getId()), reanudables.stream().map(InstanciaEstrategia::getId).toList());
+    }
+
+    private InstanciaEstrategia marcadaEn(EstadoEstrategia estado, long wallet) {
+        InstanciaEstrategia i = InstanciaEstrategia.inicializar("S", null, "1h", List.of("BTCUSDT"), false, wallet,
+                new BigDecimal("0.02"), new BigDecimal("10"));
+        i.setEstado(estado);
+        i.setReanudarAlArrancar(true);
+        return i;
+    }
 }

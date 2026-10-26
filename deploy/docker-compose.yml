@@ -41,6 +41,9 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       TZ: UTC
+      # Tras un reinicio o un corte de luz, las estrategias que estaban en marcha se reanudan solas (las que paraste
+      # a mano con 'stop' no).
+      CRYPTOAPP_AUTORESUME: "true"
     secrets:
       - model_key
     volumes:

@@ -55,4 +55,13 @@ public interface StrategyLifecycleUseCase {
 
     /** Pasa a DETENIDA las ACTIVA sin runtime vivo (tras una caída o al arrancar). */
     void reconciliarEstadoConRuntime();
+
+    /**
+     * Apagado de la aplicación: pausa las ACTIVA (fondos en reserva) SIN quitarles la marca de reanudación, para que
+     * {@link #reanudarMarcadas()} las reanude en el próximo arranque. {@link #detenerTodas()} es la pausa a mano.
+     */
+    void pausarPorApagado();
+
+    /** Al arrancar: reanuda las DETENIDA marcadas para reanudar (las que estaban en marcha al apagar o caer). */
+    void reanudarMarcadas();
 }

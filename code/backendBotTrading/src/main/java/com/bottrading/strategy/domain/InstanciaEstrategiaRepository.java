@@ -28,6 +28,8 @@ public interface InstanciaEstrategiaRepository extends JpaRepository<InstanciaEs
 
     List<InstanciaEstrategia> findByEstado(EstadoEstrategia estado);
 
+    List<InstanciaEstrategia> findByEstadoAndReanudarAlArrancarTrue(EstadoEstrategia estado);
+
     List<InstanciaEstrategia> findByUsuarioId(Long usuarioId);
 
     List<InstanciaEstrategia> findByUsuarioIdAndEstado(Long usuarioId, EstadoEstrategia estado);

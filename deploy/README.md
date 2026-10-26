@@ -30,10 +30,14 @@ Para construir en el PC y no en la Pi: `docker buildx build --platform linux/arm
 | Ver logs | `docker compose logs -f app` y `data/logs/` |
 | Llevar un modelo entrenado | copia el `.pkl` y su `.manifest.json` a `data/models/` (`rsync`/`scp`) |
 | Desplegar una estrategia o cambios de código | commit, `git pull` en la Pi y `docker compose up -d --build` (las estrategias van dentro de la imagen) |
-| Parar | `docker compose stop`: pausa las estrategias activas con los fondos en reserva; al arrancar se reconcilian |
+| Parar | `docker compose stop`: pausa las estrategias activas con los fondos en reserva; al volver a arrancar se reanudan solas |
+| Parar una estrategia de forma definitiva | `stop` en la CLI: no se reanuda sola; vuelve con `start` |
 | Copia de la base | `docker compose exec db sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" bottradingdb' > backup.sql` |
 
-El contenedor se reinicia solo (`restart: unless-stopped`), también tras un corte de luz.
+El contenedor se reinicia solo (`restart: unless-stopped`), también tras un corte de luz, y **las estrategias que estaban
+en marcha se reanudan solas** al arrancar (`CRYPTOAPP_AUTORESUME`): tanto tras una parada ordenada como tras una caída
+brusca (probado con `docker stop` y con `SIGKILL`). Las que pausaste a mano con `stop` se quedan pausadas. Una estrategia
+que ya estaba parada antes de actualizar a esta versión no tiene la marca y no se reanuda sola.
 
 ## Seguridad
 - No se publica ningún puerto: ni la CLI ni MySQL se ven desde la red. Para el acceso desde el móvil, cuando exista
