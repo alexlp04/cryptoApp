@@ -55,4 +55,7 @@ public interface StrategyLifecycleUseCase {
 
     /** Pasa a DETENIDA las ACTIVA sin runtime vivo (tras una caída o al arrancar). */
     void reconciliarEstadoConRuntime();
+
+    /** Estrategias que ahora mismo tienen un proceso en tiempo real vivo (para el estado de salud). */
+    java.util.Set<Long> idsConProceso();
 }
