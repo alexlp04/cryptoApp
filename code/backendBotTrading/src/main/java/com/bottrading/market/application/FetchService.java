@@ -2,7 +2,6 @@ package com.bottrading.market.application;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -15,7 +14,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,11 +35,12 @@ import com.bottrading.trading.infrastructure.bridge.PythonBridgeExecutionExcepti
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeFacade;
 import com.bottrading.trading.infrastructure.bridge.PythonBridgeRequest;
 import com.bottrading.trading.infrastructure.bridge.protocol.IpcMessagePackCodec;
-import com.google.gson.Gson;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
-import com.google.gson.reflect.TypeToken;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -56,20 +55,22 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class FetchService implements FetchMarketDataUseCase {
 
-    private static final Type VELA_DTO_LIST_TYPE = new TypeToken<List<VelaDTO>>() {}.getType();
-
-    private final Gson gson = new Gson();
+    private static final TypeReference<List<VelaDTO>> VELA_DTO_LIST_TYPE = new TypeReference<>() {};
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private static final long PROGRESS_LOG_EVERY = 100_000L;
 
     private final VelaRepositoryPort velaRepo;
     private final JdbcTemplate jdbcTemplate;
     private final PythonBridgeFacade pythonBridgeFacade;
 
-    private static final int BATCH_INSERT_SIZE = 50000;
+    // 10 000 filas por sentencia: un lote de 50 000 con 13 columnas tensaba memoria y max_allowed_packet de MySQL.
+    private static final int BATCH_INSERT_SIZE = 10_000;
     private static final int MAX_RETRIES = 3;
         private static final int BINANCE_PAGE_LIMIT = 1000;
-        private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/uiKlines";
+        private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines";
         private static final Duration BINANCE_HTTP_TIMEOUT = Duration.ofSeconds(30);
-        private static final String SQL_INSERT_VELA_PLAIN = """
+        private static final String SQL_UPSERT_VELA = """
             INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, \
             taker_base_volume, taker_quote_volume, symbol, time_interval) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) \
             ON DUPLICATE KEY UPDATE close = VALUES(close), volume = VALUES(volume)""";
@@ -196,7 +197,7 @@ public class FetchService implements FetchMarketDataUseCase {
             return 0;
         }
 
-        long intervalMs = resolveIntervalMillisStrict(timeframe);
+        long intervalMs = getIntervalMillis(timeframe);
         long fromMs = from.toInstant(ZoneOffset.UTC).toEpochMilli();
         long toMs = to.toInstant(ZoneOffset.UTC).toEpochMilli();
 
@@ -223,14 +224,14 @@ public class FetchService implements FetchMarketDataUseCase {
         } catch (DataFetchException e) {
             // Lo ya descargado no se pierde: se guarda y el error dice hasta dónde se llegó.
             if (!insertBatch.isEmpty()) {
-                totalInserted += executePlainInsertBatch(insertBatch);
+                totalInserted += insertarLote(insertBatch);
             }
             throw new DataFetchException("Relleno de [" + symbol + "][" + timeframe + "] interrumpido en "
                     + Instant.ofEpochMilli(cursor) + " (" + totalInserted + " velas guardadas): " + e.getMessage(), e);
         }
 
         if (!insertBatch.isEmpty()) {
-            totalInserted += executePlainInsertBatch(insertBatch);
+            totalInserted += insertarLote(insertBatch);
             insertBatch.clear();
         }
 
@@ -268,7 +269,7 @@ public class FetchService implements FetchMarketDataUseCase {
                 insertBatch.add(mapCandleToInsertArgs(candle, symbol, timeframe));
 
                 if (insertBatch.size() >= BATCH_INSERT_SIZE) {
-                    inserted += executePlainInsertBatch(insertBatch);
+                    inserted += insertarLote(insertBatch);
                     insertBatch.clear();
                 }
             }
@@ -445,78 +446,76 @@ public class FetchService implements FetchMarketDataUseCase {
 
     /**
      * Lee velas desde Python en streaming IPC (frames MessagePack) e inserta en BD por lotes.
+     * Si Python cierra con un frame FETCH_RESPONSE, su total debe coincidir con las velas recibidas.
      */
     private int leerVelasEnStreamingYGuardar(InputStream in, String symbol, String interval) throws IOException {
         int totalGuardadas = 0;
         long tiempoInicio = System.currentTimeMillis();
         List<Object[]> batch = new ArrayList<>(BATCH_INSERT_SIZE);
+        long siguienteHito = PROGRESS_LOG_EVERY;
 
         Optional<Map<String, Object>> maybeEnvelope;
         while ((maybeEnvelope = IpcMessagePackCodec.readEnvelopeOrEmpty(in)).isPresent()) {
             Map<String, Object> envelope = maybeEnvelope.get();
             lanzarSiEsError(envelope);
-            List<VelaDTO> velasChunk = extraerVelasChunk(envelope);
-            if (!velasChunk.isEmpty()) {
-                totalGuardadas += procesarChunkVelas(velasChunk, symbol, interval, batch, totalGuardadas, tiempoInicio);
-                ConsoleLoader.getInstance().updateMessage(
-                        "Descargando " + symbol + " [" + interval + "] — " + totalGuardadas + " velas");
+            if ("FETCH_RESPONSE".equals(envelope.get("message_type"))) {
+                comprobarTotal(envelope, totalGuardadas + batch.size());
+                continue;
+            }
+            for (VelaDTO dto : extraerVelasChunk(envelope)) {
+                batch.add(aArgumentosInsert(dto, symbol, interval));
+                if (batch.size() >= BATCH_INSERT_SIZE) {
+                    totalGuardadas += insertarLote(batch);
+                    batch.clear();
+                }
+            }
+            ConsoleLoader.getInstance().updateMessage(
+                    "Descargando " + symbol + " [" + interval + "] — " + (totalGuardadas + batch.size()) + " velas");
+            if (totalGuardadas >= siguienteHito) {
+                long segundos = Math.max(1L, (System.currentTimeMillis() - tiempoInicio) / 1000L);
+                log.info("Progreso: {} velas guardadas ({} velas/seg)", totalGuardadas, totalGuardadas / segundos);
+                siguienteHito = totalGuardadas + PROGRESS_LOG_EVERY;
             }
         }
 
         if (!batch.isEmpty()) {
-            int insertadas = guardarBatchVelas(batch);
-            totalGuardadas += insertadas;
+            totalGuardadas += insertarLote(batch);
             batch.clear();
         }
 
         long tiempoTotal = System.currentTimeMillis() - tiempoInicio;
-        double velocidadMedia = totalGuardadas > 0 ? totalGuardadas / (tiempoTotal / 1000.0) : 0;
+        double velocidadMedia = totalGuardadas > 0 ? totalGuardadas / (Math.max(1L, tiempoTotal) / 1000.0) : 0;
         log.info("Lectura MessagePack completada: {} registros guardados en {} ms ({} registros/seg)",
                 totalGuardadas, tiempoTotal, String.format("%.0f", velocidadMedia));
 
         return totalGuardadas;
     }
 
-    private int procesarChunkVelas(List<VelaDTO> velasChunk,
-            String symbol,
-            String interval,
-            List<Object[]> batch,
-            int totalPrevio,
-            long tiempoInicio) {
-        int insertadasEnChunk = 0;
-        for (VelaDTO dto : velasChunk) {
-            Object[] datos = new Object[] {
-                dto.getOpenTime(),
-                new BigDecimal(dto.getOpen()),
-                new BigDecimal(dto.getHigh()),
-                new BigDecimal(dto.getLow()),
-                new BigDecimal(dto.getClose()),
-                new BigDecimal(dto.getVolume()),
-                dto.getCloseTime(),
-                new BigDecimal(dto.getQuoteVolume()),
-                dto.getTrades(),
-                new BigDecimal(dto.getTakerBaseVolume()),
-                new BigDecimal(dto.getTakerQuoteVolume()),
-                symbol,
-                interval
-            };
-
-            batch.add(datos);
-
-            if (batch.size() >= BATCH_INSERT_SIZE) {
-                int insertadas = guardarBatchVelas(batch);
-                insertadasEnChunk += insertadas;
-                int totalActual = totalPrevio + insertadasEnChunk;
-                if (totalActual % 100000 == 0) {
-                    long tiempoTranscurrido = System.currentTimeMillis() - tiempoInicio;
-                    double velocidad = totalActual / (tiempoTranscurrido / 1000.0);
-                    log.info("Progreso: {} registros guardados ({} registros/seg)",
-                            totalActual, String.format("%.0f", velocidad));
-                }
-                batch.clear();
-            }
+    /** El total que anuncia Python debe ser el de las velas recibidas: si no, se perdió algún frame. */
+    static void comprobarTotal(Map<String, Object> envelope, int recibidas) {
+        Object payload = envelope.get("payload");
+        Object total = payload instanceof Map<?, ?> m ? m.get("total") : null;
+        if (total instanceof Number n && n.intValue() != recibidas) {
+            throw new DataFetchException("Python anunció " + n.intValue() + " velas pero llegaron " + recibidas);
         }
-        return insertadasEnChunk;
+    }
+
+    private static Object[] aArgumentosInsert(VelaDTO dto, String symbol, String interval) {
+        return new Object[] {
+            dto.getOpenTime(),
+            new BigDecimal(dto.getOpen()),
+            new BigDecimal(dto.getHigh()),
+            new BigDecimal(dto.getLow()),
+            new BigDecimal(dto.getClose()),
+            new BigDecimal(dto.getVolume()),
+            dto.getCloseTime(),
+            new BigDecimal(dto.getQuoteVolume()),
+            dto.getTrades(),
+            new BigDecimal(dto.getTakerBaseVolume()),
+            new BigDecimal(dto.getTakerQuoteVolume()),
+            symbol,
+            interval
+        };
     }
 
     /** Un frame ERROR de Python es un fallo de la descarga, no "0 velas". */
@@ -539,28 +538,16 @@ public class FetchService implements FetchMarketDataUseCase {
             return List.of();
         }
 
-        String velasJson = gson.toJson(velasObj);
-        List<VelaDTO> velas = gson.fromJson(velasJson, VELA_DTO_LIST_TYPE);
-        return velas != null ? velas : List.of();
+        // Directo del Map de MessagePack a los DTO, sin pasar por un String JSON por cada frame de 2 000 velas.
+        return MAPPER.convertValue(velasObj, VELA_DTO_LIST_TYPE);
     }
 
-    /**
-     * Inserta batch de velas directamente en BD usando JDBC sin ORM.
-     * ON DUPLICATE KEY UPDATE maneja solapamiento automáticamente.
-     */
-    private int guardarBatchVelas(List<Object[]> batch) {
-        if (batch.isEmpty()) {
-            return 0;
-        }
-        int insertadas = executePlainInsertBatch(batch);
-        log.debug("Batch inserted: {} records", batch.size());
-        return insertadas;
-    }
-
-    private int executePlainInsertBatch(@org.springframework.lang.NonNull List<Object[]> batch) {
+    private int insertarLote(@org.springframework.lang.NonNull List<Object[]> batch) {
         try {
-            int[] results = jdbcTemplate.batchUpdate(SQL_INSERT_VELA_PLAIN, batch);
-            return (int) Arrays.stream(results).filter(r -> r > 0).count();
+            jdbcTemplate.batchUpdate(SQL_UPSERT_VELA, batch);
+            // Con ON DUPLICATE KEY MySQL devuelve 1/2/0 según insertó, actualizó o no cambió nada: no vale como
+            // recuento. Cuenta las filas enviadas, que es lo que el log y el spinner dicen ("velas sincronizadas").
+            return batch.size();
         } catch (Exception e) {
             log.error("Error inserting batch of {} records: {}", batch.size(), e.getMessage());
             throw new DataFetchException("Batch insert failed", e);
@@ -650,13 +637,6 @@ public class FetchService implements FetchMarketDataUseCase {
                 + "&endTime=" + endTime
                 + "&limit=" + BINANCE_PAGE_LIMIT;
         return URI.create(BINANCE_KLINES_URL + "?" + query);
-    }
-
-    private long resolveIntervalMillisStrict(String interval) {
-        return Timeframe.buscar(interval)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Timeframe no soportado para fetchRange: " + interval))
-                .millis();
     }
 
     /** Un timeframe no soportado falla: antes caía a 1 min y la detección de huecos re-descargaba todo cada vez. */

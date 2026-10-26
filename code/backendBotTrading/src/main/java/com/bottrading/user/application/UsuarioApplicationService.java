@@ -101,11 +101,11 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
      */
     @Override
     @Transactional
-    public boolean validarCredenciales(String nombre, String password) {
+    public Optional<Usuario> autenticar(String nombre, String password) {
         Optional<Usuario> encontrado = usuarioRepositoryPort.findByNombreAndEliminadoFalse(nombre);
         if (encontrado.isEmpty()) {
             HashUtils.verificarPassword(password, HASH_SENUELO);
-            return false;
+            return Optional.empty();
         }
         Usuario usuario = encontrado.get();
         Instant ahora = Instant.now();
@@ -119,10 +119,10 @@ public class UsuarioApplicationService implements CreateUsuarioUseCase, GetUsuar
                 usuario.registrarAcierto();
                 usuarioRepositoryPort.save(usuario);
             }
-            return true;
+            return Optional.of(usuario);
         }
         usuario.registrarFallo(ahora);
         usuarioRepositoryPort.save(usuario);
-        return false;
+        return Optional.empty();
     }
 }
