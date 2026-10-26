@@ -4,8 +4,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from backtest_engine import _protective_exit, run_backtest
+from backtest_engine import run_backtest
 from risk_management import MAX_POSITION_FRACTION, position_size, risk_amount, valid_stop
+from risk_management import protective_exit_long as _protective_exit
 
 
 def test_el_tamano_arriesga_exactamente_la_fraccion_del_equity():

@@ -59,7 +59,7 @@ mvn test          # JUnit + H2 (563 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
-pytest code/scripts/tests -q   # 369 tests
+pytest code/scripts/tests -q   # 401 tests
 ruff check code/               # config en ruff.toml
 mypy code/scripts              # config en mypy.ini
 ```
@@ -247,6 +247,23 @@ Cada modelo entrenado deja en su `.metadata.json` un bloque `provenance` (git, m
 Hallazgo: el buffer RT es `max(100, WARMUP_PERIOD)`. Una estrategia sin `WARMUP_PERIOD` (como un cruce de EMA 20/50)
 con buffer 100 pierde entradas que el backtest sí hace; con 300 coincide. Fija siempre `WARMUP_PERIOD` al mayor
 periodo del indicador más lento (varias veces, para las medias exponenciales).
+
+## Conexión con Binance (REST y WebSocket)
+
+El stream de velas de los dos motores RT lo lleva `rt_stream.kline_events`; el REST de velas recientes,
+`shared_utils.fetch_recent_klines`. Qué hacen ante cada fallo (probado con un Binance falso, `tests/test_binance_faults.py`):
+
+- **REST:** reintenta 3 veces red caída, timeouts, 5xx, 429/418 (respeta `Retry-After`) y cuerpos que no son JSON o no
+  son una lista; un 4xx (símbolo inválido) falla a la primera. Más de 1000 velas se piden por páginas hacia atrás.
+- **WebSocket:** reconecta siempre (1 s al principio, doblando hasta 5 min; se reinicia con datos válidos). Cubre el
+  corte de las 24 h de Binance, cierres con error, cortes bruscos y servidor caído. Un stream conectado que no manda
+  nada en 120 s se da por muerto. JSON roto, mensajes que no son velas, velas incompletas y velas retrasadas se
+  descartan sin reconectar.
+- **Huecos:** al (re)conectar se resiembra el buffer por REST y se revisan las velas cerradas que se perdieron: si
+  en alguna saltó el stop o el objetivo de la posición abierta, se emite la salida con la fecha de esa vela. Si el REST
+  falla al resembrar, se reintenta en la siguiente vela, y mientras el buffer tenga huecos la estrategia **no se evalúa**
+  (los indicadores saldrían distintos a los del backtest).
+- **No cubierto:** el `fetchRange` de Java (relleno de huecos de la base) tiene su propio manejo de errores, distinto.
 
 ## Reglas de código
 

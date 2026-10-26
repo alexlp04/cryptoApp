@@ -65,6 +65,38 @@ def strategy_levels(strategy, entry_price: float, row, short: bool = False) -> t
     return (stop, take_profit) if valid_stop(entry_price, stop, short) else None
 
 
+def protective_exit_long(
+    open_: float, high: float, low: float, stop: float, take_profit: float,
+) -> tuple[float, bool] | None:
+    """Salida por stop o por objetivo dentro de la vela: (precio, aplica_slippage), o None.
+
+    Orden pesimista: si la misma vela toca el stop y el objetivo, se asume que saltó primero el stop
+    (con velas no se sabe el orden real). Un hueco más allá del nivel se ejecuta a la apertura:
+    el stop es una orden a mercado (con slippage), el objetivo una orden límite (sin él).
+    """
+    if low <= stop:
+        return min(open_, stop), True
+    if high >= take_profit:
+        return max(open_, take_profit), False
+    return None
+
+
+def protective_exit_short(
+    open_: float, high: float, low: float, stop: float, take_profit: float,
+) -> tuple[float, bool] | None:
+    """Como protective_exit_long para un corto: el stop está por encima (compra a mercado) y el objetivo por debajo."""
+    if high >= stop:
+        return max(open_, stop), True
+    if low <= take_profit:
+        return min(open_, take_profit), False
+    return None
+
+
+# =============================================================================
+# UTILIDADES DE CARPETA Y CSV
+# =============================================================================
+
+
 def signal_actions(side: str | None, buy: bool, sell: bool, short: bool = False, cover: bool = False) -> list[str]:
     """Acciones a emitir según la posición abierta (side: None, "long" o "short") y las señales de la estrategia.
 
@@ -116,6 +148,22 @@ class PositionTracker:
     def close(self) -> None:
         self._levels = None
         self._side = None
+
+    def protective_exit_in_candle(self, open_: float, high: float, low: float) -> tuple[float, str] | None:
+        """(precio de salida, motivo) si el rango de una vela ya cerrada tocó el stop o el objetivo.
+
+        Misma regla que el backtest (si toca los dos gana el stop). Sirve para revisar las velas que
+        el motor se perdió mientras el stream estuvo caído: en ellas no hubo ticks que vigilar.
+        """
+        if self._levels is None:
+            return None
+        stop, take_profit = self._levels
+        hit = (protective_exit_short if self._side == "short" else protective_exit_long)(
+            open_, high, low, stop, take_profit)
+        if hit is None:
+            return None
+        price, is_stop = hit
+        return price, "STOP" if is_stop else "TARGET"
 
     def protective_exit(self, price: float) -> tuple[float, str] | None:
         """(precio de salida, motivo) si el precio actual toca el stop o el objetivo, si no None.
