@@ -64,4 +64,7 @@ public interface StrategyLifecycleUseCase {
 
     /** Al arrancar: reanuda las DETENIDA marcadas para reanudar (las que estaban en marcha al apagar o caer). */
     void reanudarMarcadas();
+
+    /** Estrategias que ahora mismo tienen un proceso en tiempo real vivo (para el estado de salud). */
+    java.util.Set<Long> idsConProceso();
 }
