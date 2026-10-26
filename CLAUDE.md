@@ -55,7 +55,7 @@ Cada dominio sigue arquitectura hexagonal: `domain` no depende de `infrastructur
 ```bash
 # Backend
 cd code/backendBotTrading && mvn spring-boot:run
-mvn test          # JUnit + H2 (563 tests)
+mvn test          # JUnit + H2 (572 tests)
 mvn verify        # incluye Checkstyle y PMD
 
 # Python
@@ -263,7 +263,10 @@ El stream de velas de los dos motores RT lo lleva `rt_stream.kline_events`; el R
   en alguna saltó el stop o el objetivo de la posición abierta, se emite la salida con la fecha de esa vela. Si el REST
   falla al resembrar, se reintenta en la siguiente vela, y mientras el buffer tenga huecos la estrategia **no se evalúa**
   (los indicadores saldrían distintos a los del backtest).
-- **No cubierto:** el `fetchRange` de Java (relleno de huecos de la base) tiene su propio manejo de errores, distinto.
+- **Java (`FetchService.fetchRange`, relleno de huecos de la base):** mismas reglas que el REST de Python — reintenta
+  red caída, 429/418/5xx (con `Retry-After`, sin esperar más de 60 s) y cuerpos que no son la lista de velas; un 4xx
+  falla a la primera con el `code`/`msg` de Binance; una fila rota es un `DataFetchException` y lo ya descargado se
+  guarda. La URL se puede cambiar con `-Dcryptoapp.binance.klines-url` (un espejo, o el servidor falso de los tests).
 
 ## Reglas de código
 

@@ -40,6 +40,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +71,8 @@ public class FetchService implements FetchMarketDataUseCase {
     private static final int MAX_RETRIES = 3;
         private static final int BINANCE_PAGE_LIMIT = 1000;
         private static final String BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines";
+        /** Sobrescribible con -Dcryptoapp.binance.klines-url (un espejo, o el servidor falso de los tests). */
+        private final String klinesUrl = System.getProperty("cryptoapp.binance.klines-url", BINANCE_KLINES_URL);
         private static final Duration BINANCE_HTTP_TIMEOUT = Duration.ofSeconds(30);
         private static final String SQL_UPSERT_VELA = """
             INSERT INTO vela (open_time, open, high, low, close, volume, close_time, quote_volume, trades, \
@@ -262,11 +266,20 @@ public class FetchService implements FetchMarketDataUseCase {
         int inserted = 0;
 
         for (JsonElement element : klines) {
-            JsonArray candle = element.getAsJsonArray();
-            long openTime = candle.get(0).getAsLong();
-            if (openTime >= fromMs && openTime <= toMs) {
+            long openTime;
+            Object[] args;
+            try {
+                JsonArray candle = element.getAsJsonArray();
+                openTime = candle.get(0).getAsLong();
+                args = openTime >= fromMs && openTime <= toMs ? mapCandleToInsertArgs(candle, symbol, timeframe) : null;
+            } catch (IllegalStateException | IndexOutOfBoundsException | NumberFormatException
+                    | UnsupportedOperationException e) {
+                throw new DataFetchException("Vela con formato inesperado en la respuesta de Binance: "
+                        + recortar(element.toString()), e);
+            }
+            if (args != null) {
                 lastOpenTimeInPage = openTime;
-                insertBatch.add(mapCandleToInsertArgs(candle, symbol, timeframe));
+                insertBatch.add(args);
 
                 if (insertBatch.size() >= BATCH_INSERT_SIZE) {
                     inserted += insertarLote(insertBatch);
@@ -575,6 +588,11 @@ public class FetchService implements FetchMarketDataUseCase {
     /** Tope de espera entre reintentos de una página: un 418 (baneo) puede pedir horas y no se espera. */
     private static final long MAX_ESPERA_REINTENTO_MS = 60_000L;
 
+    /**
+     * Una página de velas. Se reintenta (MAX_RETRIES, 1 s, 2 s, 4 s o el Retry-After de Binance) lo que puede
+     * arreglarse solo: red caída o timeout, 429/418/5xx y un cuerpo que no es la lista de velas (HTML de un
+     * proxy, JSON cortado). Un 4xx (símbolo inválido, parámetros) falla a la primera, con el code/msg de Binance.
+     */
     JsonArray requestKlines(HttpClient client,
             String symbol,
             String timeframe,
@@ -583,33 +601,69 @@ public class FetchService implements FetchMarketDataUseCase {
         URI uri = buildKlinesUri(symbol, timeframe, startTime, endTime);
         HttpRequest request = HttpRequest.newBuilder(uri).GET().timeout(BINANCE_HTTP_TIMEOUT).build();
         for (int intento = 1; ; intento++) {
-            HttpResponse<String> response = enviar(client, request);
-            int status = response.statusCode();
-            if (status == 200) {
-                return JsonParser.parseString(response.body()).getAsJsonArray();
+            long espera = 1000L << (intento - 1);
+            String fallo;
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                int status = response.statusCode();
+                if (status == 200) {
+                    JsonArray klines = comoLista(response.body());
+                    if (klines != null) {
+                        return klines;
+                    }
+                    fallo = "respuesta que no es una lista de velas: " + recortar(response.body());
+                } else if (status == 429 || status == 418 || status >= 500) {
+                    espera = esperaReintentoMs(response, intento);
+                    if (espera > MAX_ESPERA_REINTENTO_MS) {
+                        throw new DataFetchException("Binance returned HTTP " + status + " con Retry-After de "
+                                + espera / 1000 + " s: no se espera" + detalleBinance(response.body()));
+                    }
+                    fallo = "HTTP " + status;
+                } else {
+                    throw new DataFetchException("Binance returned HTTP " + status + detalleBinance(response.body()));
+                }
+            } catch (IOException e) {
+                // Un timeout o un corte de red no es una interrupción: marcarla rompía las operaciones bloqueantes siguientes.
+                fallo = "error de red: " + e;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new DataFetchException("Interrupted requesting klines for range", e);
             }
-            // 429/418 = límite de peticiones, 5xx = fallo transitorio: se reintenta respetando Retry-After.
-            boolean transitorio = status == 429 || status == 418 || status >= 500;
-            long espera = esperaReintentoMs(response, intento);
-            if (!transitorio || intento >= MAX_RETRIES || espera > MAX_ESPERA_REINTENTO_MS) {
-                throw new DataFetchException("Binance returned HTTP " + status);
+            if (intento >= MAX_RETRIES) {
+                throw new DataFetchException("Binance sigue fallando tras " + intento + " intentos (" + fallo + ")");
             }
-            log.warn("Binance devolvió HTTP {} para {} [{}]: reintento {}/{} en {} ms",
-                    status, symbol, timeframe, intento, MAX_RETRIES, espera);
+            log.warn("Binance para {} [{}]: {}; reintento {}/{} en {} ms",
+                    symbol, timeframe, fallo, intento, MAX_RETRIES, espera);
             pausar(espera);
         }
     }
 
-    private HttpResponse<String> enviar(HttpClient client, HttpRequest request) {
+    /** El cuerpo como lista JSON, o null si no lo es. */
+    private static JsonArray comoLista(String body) {
         try {
-            return client.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            // Un timeout de red no es una interrupción: marcarla rompía las operaciones bloqueantes siguientes.
-            throw new DataFetchException("Error requesting klines for range", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new DataFetchException("Interrupted requesting klines for range", e);
+            JsonElement parsed = JsonParser.parseString(body);
+            return parsed.isJsonArray() ? parsed.getAsJsonArray() : null;
+        } catch (JsonParseException e) {
+            return null;
         }
+    }
+
+    private static String recortar(String body) {
+        String limpio = body == null ? "" : body.strip().replaceAll("\\s+", " ");
+        return limpio.length() > 100 ? limpio.substring(0, 100) + "..." : limpio;
+    }
+
+    /** « (code=-1121: Invalid symbol.)» si el cuerpo es el error JSON de Binance; vacío si no. */
+    private static String detalleBinance(String body) {
+        try {
+            JsonObject error = JsonParser.parseString(body).getAsJsonObject();
+            if (error.has("code") && error.has("msg")) {
+                return " (code=" + error.get("code").getAsString() + ": " + error.get("msg").getAsString() + ")";
+            }
+        } catch (JsonParseException | IllegalStateException | NullPointerException e) {
+            log.debug("Cuerpo de error sin formato de Binance: {}", recortar(body));
+        }
+        return "";
     }
 
     /** Retry-After en segundos (si es una fecha HTTP no se interpreta); sin él, 1 s, 2 s, 4 s... */
@@ -636,7 +690,7 @@ public class FetchService implements FetchMarketDataUseCase {
                 + "&startTime=" + startTime
                 + "&endTime=" + endTime
                 + "&limit=" + BINANCE_PAGE_LIMIT;
-        return URI.create(BINANCE_KLINES_URL + "?" + query);
+        return URI.create(klinesUrl + "?" + query);
     }
 
     /** Un timeframe no soportado falla: antes caía a 1 min y la detección de huecos re-descargaba todo cada vez. */

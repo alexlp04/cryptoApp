@@ -646,11 +646,13 @@ class FetchServiceTest {
         @Test
         @DisplayName("✓ Un IOException de red no deja el hilo marcado como interrumpido (#118)")
         void io_error_does_not_set_the_interrupt_flag() throws Exception {
+            FetchService spy = org.mockito.Mockito.spy(fetchService);
+            org.mockito.Mockito.doNothing().when(spy).pausar(anyLong());
             java.net.http.HttpClient client = mock(java.net.http.HttpClient.class);
             doThrow(new java.io.IOException("timeout")).when(client).send(any(), any());
 
             assertThrows(com.bottrading.shared.exceptions.DataFetchException.class,
-                    () -> fetchService.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L));
+                    () -> spy.requestKlines(client, SYMBOL, INTERVAL, 0L, 1L));
 
             assertThat(Thread.currentThread().isInterrupted(), is(false));
         }
